@@ -296,6 +296,34 @@ describe("TelegramOutboxWorker", () => {
     expect(called).toBe(false);
     expect(database.inspect().outbox.failed).toBe(1);
   });
+
+  test("redacts payload text again immediately before delivery", async () => {
+    const database = await createDatabase();
+    database.enqueueOutbox({
+      idempotencyKey: "event_1",
+      chatId: "123456789",
+      payload: JSON.stringify({
+        text: "token=sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+        parseMode: "HTML",
+      }),
+      priority: 1,
+      nextAttemptAt: 1_000,
+      expiresAt: 10_000,
+      createdAt: 1_000,
+    });
+    const sends: Record<string, unknown>[] = [];
+    const worker = new TelegramOutboxWorker({
+      api: createApi(async (method, body) => {
+        if (method !== "sendMessage") throw new Error("unexpected method");
+        sends.push(body);
+        return ok(message(1, 123456789, "ok"));
+      }),
+      database,
+    });
+
+    expect(await worker.deliverBatch(1_000)).toBe(1);
+    expect(sends[0]?.text).toBe("[redacted]");
+  });
 });
 
 function createApi(

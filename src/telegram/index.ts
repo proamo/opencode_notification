@@ -25,3 +25,11 @@ export {
   type TelegramPollerOptions,
   type UpdateDisposition,
 } from "./poller";
+export {
+  type RenderedTelegramPayload,
+  redactText,
+  renderTelegramNotification,
+  sanitizeTelegramText,
+  TelegramRenderError,
+  type TelegramRenderOptions,
+} from "./render";

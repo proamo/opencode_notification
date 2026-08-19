@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { StateDatabase } from "../state";
 import { TelegramApiError, type TelegramBotApi } from "./api";
+import { sanitizeTelegramText } from "./render";
 
 export const TelegramOutboxPayloadSchema = z.object({
   text: z.string().min(1).max(4096),
@@ -46,9 +47,14 @@ export class TelegramOutboxWorker {
       }
 
       try {
+        const text = sanitizeTelegramText(payload.data.text);
+        if (!text) {
+          this.#database.finishOutbox(record.id, "failed", "EMPTY_PAYLOAD", now);
+          continue;
+        }
         await this.#api.sendMessage({
           chatId: record.chatId,
-          text: payload.data.text,
+          text,
           ...(payload.data.parseMode ? { parseMode: payload.data.parseMode } : {}),
           ...(payload.data.disableNotification !== undefined
             ? { disableNotification: payload.data.disableNotification }
