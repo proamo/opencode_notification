@@ -21,6 +21,7 @@ export {
   type InteractionValidationResult,
   type InteractionValidatorOptions,
   submitCompletedSessionReply,
+  submitQuestionReply,
   type ValidatedTelegramInteraction,
   validateTelegramInteraction,
 } from "./interaction";

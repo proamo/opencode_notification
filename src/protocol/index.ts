@@ -71,7 +71,7 @@ export const BrokerCommandSchema = z.discriminatedUnion("type", [
     route: RouteKeySchema,
     interactionId: z.string().min(1).max(256),
     answers: z
-      .array(z.array(z.string().max(2048)).max(20))
+      .array(z.array(z.string().min(1).max(2048)).min(1).max(20))
       .min(1)
       .max(20),
   }),

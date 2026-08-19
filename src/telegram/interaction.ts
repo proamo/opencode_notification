@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 import type { BrokerCommand, CommandResult, RouteKey } from "../protocol";
 import type { MessageRouteKind, MessageRouteRecord, StateDatabase } from "../state";
 import type { TelegramUpdate } from "./api";
@@ -44,6 +45,13 @@ export type InteractionValidatorOptions = {
 export type BrokerCommandDispatcher = {
   sendCommand(command: BrokerCommand): Promise<CommandResult>;
 };
+
+const QuestionAnswersSchema = z
+  .array(z.array(z.string().trim().min(1).max(2048)).min(1).max(20))
+  .min(1)
+  .max(20);
+
+const QuestionCallbackPayloadSchema = z.object({ answers: QuestionAnswersSchema });
 
 export function validateTelegramInteraction(
   update: TelegramUpdate,
@@ -114,6 +122,28 @@ export async function submitCompletedSessionReply(
     commandId: randomUUID(),
     route: interaction.route,
     text,
+  });
+}
+
+export async function submitQuestionReply(
+  dispatcher: BrokerCommandDispatcher,
+  interaction: ValidatedTelegramInteraction,
+): Promise<CommandResult> {
+  const commandId = randomUUID();
+  if (interaction.kind !== "question_reply") {
+    return { commandId, status: "rejected", reason: "not a question binding" };
+  }
+  if (!interaction.interactionId) {
+    return { commandId, status: "rejected", reason: "question request is missing" };
+  }
+  const answers = questionAnswers(interaction);
+  if (!answers) return { commandId, status: "rejected", reason: "invalid question answer" };
+  return await dispatcher.sendCommand({
+    type: "question.reply",
+    commandId,
+    route: interaction.route,
+    interactionId: interaction.interactionId,
+    answers,
   });
 }
 
@@ -201,4 +231,21 @@ function rejected(
       payloadHash: createHash("sha256").update(`${update.update_id}:${reason}`).digest("hex"),
     },
   };
+}
+
+function questionAnswers(interaction: ValidatedTelegramInteraction): string[][] | undefined {
+  const text = interaction.text?.trim();
+  if (text) {
+    const parsed = QuestionAnswersSchema.safeParse([[text]]);
+    return parsed.success ? parsed.data : undefined;
+  }
+  if (!interaction.callbackAction?.startsWith("question.")) return undefined;
+  const payload = interaction.callbackPayload;
+  if (!payload) return undefined;
+  try {
+    const parsed = QuestionCallbackPayloadSchema.safeParse(JSON.parse(payload));
+    return parsed.success ? parsed.data.answers : undefined;
+  } catch {
+    return undefined;
+  }
 }

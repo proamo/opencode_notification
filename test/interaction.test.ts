@@ -7,6 +7,7 @@ import { StateDatabase } from "../src/state";
 import {
   createValidatedInteractionHandler,
   submitCompletedSessionReply,
+  submitQuestionReply,
   TelegramUpdateAuthorizer,
   TelegramUpdateSchema,
   validateTelegramInteraction,
@@ -304,6 +305,89 @@ describe("validateTelegramInteraction", () => {
         text: "   ",
       }),
     ).resolves.toMatchObject({ status: "rejected", reason: "empty prompt" });
+    expect(dispatched).toBe(false);
+  });
+
+  test("submits question callbacks as constrained question reply commands", async () => {
+    const database = await createDatabase();
+    const route = routeKey();
+    saveRoute(database, route, "question_reply", { interactionId: "question_1" });
+    database.saveCallbackToken({
+      token: "opaque-token",
+      chatId: String(USER_ID),
+      messageId: 77,
+      action: "question.option",
+      payload: JSON.stringify({ answers: [["Option A", "Option B"]] }),
+      createdAt: 1_000,
+      expiresAt: 10_000,
+    });
+    const validation = validateTelegramInteraction(
+      parseUpdate(callbackUpdate()),
+      subject("callback_query"),
+      {
+        database,
+        isRouteLive: () => true,
+        now: () => 2_000,
+      },
+    );
+    if (!validation.accepted) throw new Error("expected accepted interaction");
+    let command: BrokerCommand | undefined;
+
+    const result = await submitQuestionReply(
+      {
+        sendCommand: async (input) => {
+          command = input;
+          return { commandId: input.commandId, status: "accepted" };
+        },
+      },
+      validation.interaction,
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(command).toMatchObject({
+      type: "question.reply",
+      route,
+      interactionId: "question_1",
+      answers: [["Option A", "Option B"]],
+    });
+  });
+
+  test("submits free-text question replies and rejects invalid question answers", async () => {
+    const route = routeKey();
+    let dispatched = false;
+    const dispatcher = {
+      sendCommand: async (input: BrokerCommand) => {
+        dispatched = true;
+        return { commandId: input.commandId, status: "accepted" as const };
+      },
+    };
+
+    await expect(
+      submitQuestionReply(dispatcher, {
+        updateId: 3,
+        chatId: String(USER_ID),
+        messageId: 78,
+        kind: "question_reply",
+        route,
+        interactionId: "question_1",
+        text: "  custom answer  ",
+      }),
+    ).resolves.toMatchObject({ status: "accepted" });
+    expect(dispatched).toBe(true);
+
+    dispatched = false;
+    await expect(
+      submitQuestionReply(dispatcher, {
+        updateId: 4,
+        chatId: String(USER_ID),
+        messageId: 79,
+        kind: "question_reply",
+        route,
+        interactionId: "question_1",
+        callbackAction: "question.option",
+        callbackPayload: "0:0",
+      }),
+    ).resolves.toMatchObject({ status: "rejected", reason: "invalid question answer" });
     expect(dispatched).toBe(false);
   });
 });
