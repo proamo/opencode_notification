@@ -1,6 +1,7 @@
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { assertSecureTokenFile, ConfigValidationError, redactSensitiveText } from "../config";
+import { formatDoctorReport, runDoctor } from "../doctor";
 import { loadOrCreateStateIdentity, StateDatabase } from "../state";
 import { TelegramBotApi } from "../telegram";
 import {
@@ -50,6 +51,7 @@ export async function runBrokerCli(options: BrokerCliOptions = {}): Promise<numb
     if (command === "test-notification") {
       return await runTestNotificationCommand(flags, env, streams, options.fetch);
     }
+    if (command === "doctor") return await runDoctorCommand(flags, env, streams, options.fetch);
     if (command === "--help" || command === "help") {
       streams.stdout.write(commandHelp());
       return 0;
@@ -61,6 +63,22 @@ export async function runBrokerCli(options: BrokerCliOptions = {}): Promise<numb
     streams.stderr.write(`Command failed: ${sanitizeError(error)}\n`);
     return 1;
   }
+}
+
+async function runDoctorCommand(
+  flags: Map<string, string | true>,
+  env: NodeJS.ProcessEnv,
+  streams: CommandStreams,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<number> {
+  const brokerOptions = brokerOptionsFrom(flags, env);
+  const report = await runDoctor({
+    env,
+    fetch: fetchImplementation,
+    ...brokerOptions,
+  });
+  streams.stdout.write(formatDoctorReport(report));
+  return report.checks.some((check) => check.status === "fail") ? 1 : report.ready ? 0 : 2;
 }
 
 async function runStartCommand(
@@ -264,7 +282,7 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 
 function commandHelp(): string {
   return [
-    "Usage: opencode-telegram-broker [start|status|stop|test-notification|purge-state|rotate-credential] [options]",
+    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential] [options]",
     "",
     "Common options: --state-dir PATH --port PORT",
     "test-notification options: --chat-id ID --locale en|zh-TW",

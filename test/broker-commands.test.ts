@@ -125,6 +125,28 @@ describe("broker lifecycle commands", () => {
       },
     ]);
   });
+
+  test("runs doctor and returns warnings when broker is stopped", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const output = captureOutput();
+
+    const status = await runBrokerCli({
+      argv: ["doctor", "--state-dir", stateDirectory, "--port", String(await availablePort())],
+      env: {
+        OPENCODE_TELEGRAM_BOT_TOKEN: TOKEN,
+        OPENCODE_TELEGRAM_USER_ID: "123456789",
+        OPENCODE_TELEGRAM_CHAT_ID: "123456789",
+        OPENCODE_VERSION: "1.18.18",
+      },
+      fetch: telegramFetch([]),
+      ...output.streams,
+    });
+
+    expect(status).toBe(2);
+    expect(output.stdout).toContain("Doctor readiness: not ready");
+    expect(output.stdout).toContain("WARN broker-reachability");
+    expect(output.stdout).not.toContain(TOKEN);
+  });
 });
 
 async function createTemporaryDirectory(): Promise<string> {

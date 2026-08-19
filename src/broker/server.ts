@@ -33,6 +33,12 @@ const HealthResponseSchema = z.object({
   protocol: z.object({ major: z.number().int(), minor: z.number().int() }),
 });
 
+const BrokerStatusSchema = HealthResponseSchema.extend({
+  bindHost: z.literal(LOOPBACK_HOST),
+  connections: z.number().int().nonnegative(),
+  routes: z.number().int().nonnegative(),
+});
+
 export type StartBrokerOptions = {
   stateDirectory?: string;
   port?: number;
@@ -165,6 +171,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
           const url = new URL(request.url);
           if (
             url.pathname !== "/v1/health" &&
+            url.pathname !== "/v1/status" &&
             url.pathname !== "/v1/connect" &&
             url.pathname !== "/v1/control/stop"
           ) {
@@ -178,6 +185,16 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               service: "opencode-telegram-link",
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
+            });
+          }
+          if (url.pathname === "/v1/status") {
+            return Response.json({
+              service: "opencode-telegram-link",
+              machineId: state.machineId,
+              protocol: PROTOCOL_VERSION,
+              bindHost: LOOPBACK_HOST,
+              connections: registry.connectionCount,
+              routes: registry.routeCount,
             });
           }
           if (url.pathname === "/v1/control/stop") {
@@ -315,6 +332,22 @@ export async function probeBroker(
     });
     if (!response.ok) return undefined;
     return HealthResponseSchema.parse(await response.json());
+  } catch {
+    return undefined;
+  }
+}
+
+export async function fetchBrokerStatus(
+  port: number,
+  brokerSecret: string,
+): Promise<z.infer<typeof BrokerStatusSchema> | undefined> {
+  try {
+    const response = await fetch(`http://${LOOPBACK_HOST}:${port}/v1/status`, {
+      headers: { authorization: `Bearer ${brokerSecret}` },
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return undefined;
+    return BrokerStatusSchema.parse(await response.json());
   } catch {
     return undefined;
   }

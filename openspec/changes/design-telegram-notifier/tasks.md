@@ -45,7 +45,7 @@
 - [x] 6.1 Implement guided BotFather setup with explicit identities and optional short-lived nonce pairing with local confirmation
 - [x] 6.2 Implement configuration validation, secure token-file support, configuration fingerprint checks, and sanitized errors
 - [x] 6.3 Implement broker start, stop, status, test-notification, state purge, and credential-rotation commands
-- [ ] 6.4 Implement doctor checks for permissions, singleton state, loopback binding, Telegram connectivity, registration, catalogs, and OpenCode compatibility
+- [x] 6.4 Implement doctor checks for permissions, singleton state, loopback binding, Telegram connectivity, registration, catalogs, and OpenCode compatibility
 - [ ] 6.5 Add setup and doctor tests for healthy, incomplete, insecure, incompatible, conflicting, and offline installations
 - [ ] 6.6 Publish a minimal non-root Broker image with persistent-volume, runtime-secret, host-loopback port, and container smoke-test coverage
 
