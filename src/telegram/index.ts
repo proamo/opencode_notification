@@ -15,6 +15,14 @@ export {
   TelegramUpdateAuthorizer,
 } from "./authorization";
 export {
+  createValidatedInteractionHandler,
+  type InteractionValidationReason,
+  type InteractionValidationResult,
+  type InteractionValidatorOptions,
+  type ValidatedTelegramInteraction,
+  validateTelegramInteraction,
+} from "./interaction";
+export {
   type TelegramOutboxPayload,
   TelegramOutboxPayloadSchema,
   TelegramOutboxWorker,

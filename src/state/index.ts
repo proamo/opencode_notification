@@ -4,6 +4,7 @@ export {
   type DatabaseIntegrity,
   DatabaseVersionError,
   DEFAULT_RETENTION_POLICY,
+  type InboundUpdateRecord,
   inspectDatabaseIntegrity,
   type MessageRouteKind,
   type MessageRouteRecord,

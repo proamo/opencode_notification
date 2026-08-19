@@ -33,7 +33,7 @@
 ## 5. Remote Session Interaction
 
 - [x] 5.1 Persist actionable Telegram message bindings and opaque one-time callback tokens after successful delivery
-- [ ] 5.2 Implement reply authorization, exact message binding, route freshness, state, action-kind, TTL, and idempotency validation
+- [x] 5.2 Implement reply authorization, exact message binding, route freshness, state, action-kind, TTL, and idempotency validation
 - [ ] 5.3 Implement completed-session replies through the exact bound OpenCode session prompt API
 - [ ] 5.4 Implement constrained single- and multi-select and free-text answers through the exact pending OpenCode question reply API
 - [ ] 5.5 Implement non-actionable permission notices and localized terminal-intervention feedback for every attempted Telegram reply

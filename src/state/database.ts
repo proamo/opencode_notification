@@ -50,6 +50,14 @@ export type OutboxRecord = {
   updatedAt: number;
 };
 
+export type InboundUpdateRecord = {
+  updateId: number;
+  actionId?: string;
+  disposition: "rejected" | "acknowledged" | "failed";
+  payloadHash?: string;
+  occurredAt: number;
+};
+
 export type RetentionPolicy = {
   terminalRouteRetentionMs: number;
   terminalOutboxRetentionMs: number;
@@ -196,6 +204,14 @@ export class StateDatabase {
         .run(String(nextOffset));
       return true;
     })();
+  }
+
+  getInboundUpdate(updateId: number): InboundUpdateRecord | undefined {
+    this.#assertOpen();
+    const row = this.#database
+      .query("SELECT * FROM inbound_updates WHERE update_id = ?")
+      .get(updateId) as InboundUpdateRow | null;
+    return row ? inboundUpdateFromRow(row) : undefined;
   }
 
   saveMessageRoute(record: MessageRouteRecord): void {
@@ -612,6 +628,14 @@ type OutboxRow = {
   updated_at: number;
 };
 
+type InboundUpdateRow = {
+  update_id: number;
+  action_id: string | null;
+  disposition: InboundUpdateRecord["disposition"];
+  payload_hash: string | null;
+  occurred_at: number;
+};
+
 function migrate(database: Database, fromVersion: number): void {
   database.transaction(() => {
     let version = fromVersion;
@@ -717,6 +741,16 @@ function outboxFromRow(row: OutboxRow): OutboxRecord {
     resultCode: row.result_code,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function inboundUpdateFromRow(row: InboundUpdateRow): InboundUpdateRecord {
+  return {
+    updateId: row.update_id,
+    ...(row.action_id ? { actionId: row.action_id } : {}),
+    disposition: row.disposition,
+    ...(row.payload_hash ? { payloadHash: row.payload_hash } : {}),
+    occurredAt: row.occurred_at,
   };
 }
 
