@@ -42,7 +42,7 @@
 
 ## 6. Setup and Operations
 
-- [ ] 6.1 Implement guided BotFather setup with explicit identities and optional short-lived nonce pairing with local confirmation
+- [x] 6.1 Implement guided BotFather setup with explicit identities and optional short-lived nonce pairing with local confirmation
 - [ ] 6.2 Implement configuration validation, secure token-file support, configuration fingerprint checks, and sanitized errors
 - [ ] 6.3 Implement broker start, stop, status, test-notification, state purge, and credential-rotation commands
 - [ ] 6.4 Implement doctor checks for permissions, singleton state, loopback binding, Telegram connectivity, registration, catalogs, and OpenCode compatibility

@@ -1,6 +1,12 @@
+import { runSetupCli } from "../setup";
 import { startOrReuseBroker } from "./server";
 
 export async function runBroker(): Promise<void> {
+  if (process.argv[2] === "setup") {
+    process.exitCode = await runSetupCli({ argv: process.argv.slice(3) });
+    return;
+  }
+
   const port = parsePositiveInteger(process.env.OPENCODE_TELEGRAM_BROKER_PORT);
   const idleTimeoutMs = parsePositiveInteger(process.env.OPENCODE_TELEGRAM_BROKER_IDLE_TIMEOUT_MS);
   const result = await startOrReuseBroker({
