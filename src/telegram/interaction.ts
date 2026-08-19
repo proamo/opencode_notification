@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { type SupportedLocale, translate } from "../i18n";
 import type { BrokerCommand, CommandResult, RouteKey } from "../protocol";
 import type { MessageRouteKind, MessageRouteRecord, StateDatabase } from "../state";
 import type { TelegramUpdate } from "./api";
@@ -44,6 +45,19 @@ export type InteractionValidatorOptions = {
 
 export type BrokerCommandDispatcher = {
   sendCommand(command: BrokerCommand): Promise<CommandResult>;
+};
+
+export type InteractionFeedbackCode =
+  | "accepted"
+  | "expired"
+  | "invalid"
+  | "offline"
+  | "reply_required"
+  | "terminal_only";
+
+export type InteractionSubmissionOutcome = {
+  result: CommandResult;
+  feedback: InteractionFeedbackCode;
 };
 
 const QuestionAnswersSchema = z
@@ -147,6 +161,77 @@ export async function submitQuestionReply(
   });
 }
 
+export async function submitTelegramInteraction(
+  dispatcher: BrokerCommandDispatcher,
+  interaction: ValidatedTelegramInteraction,
+): Promise<InteractionSubmissionOutcome> {
+  if (interaction.kind === "session_prompt") {
+    const result = await submitCompletedSessionReply(dispatcher, interaction);
+    return { result, feedback: commandResultFeedback(result) };
+  }
+  if (interaction.kind === "question_reply") {
+    const result = await submitQuestionReply(dispatcher, interaction);
+    return { result, feedback: commandResultFeedback(result) };
+  }
+  if (interaction.kind === "permission_notice") {
+    return {
+      result: {
+        commandId: randomUUID(),
+        status: "rejected",
+        reason: "terminal intervention required",
+      },
+      feedback: "terminal_only",
+    };
+  }
+  return {
+    result: {
+      commandId: randomUUID(),
+      status: "rejected",
+      reason: "notification is not actionable",
+    },
+    feedback: "reply_required",
+  };
+}
+
+export function validationFeedback(reason: InteractionValidationReason): InteractionFeedbackCode {
+  switch (reason) {
+    case "MESSAGE_BINDING_EXPIRED":
+    case "CALLBACK_TOKEN_EXPIRED":
+      return "expired";
+    case "ROUTE_STALE":
+      return "offline";
+    case "MESSAGE_BINDING_REQUIRED":
+    case "MESSAGE_BINDING_NOT_FOUND":
+    case "ALREADY_HANDLED":
+      return "reply_required";
+    case "MESSAGE_BINDING_INACTIVE":
+    case "CALLBACK_TOKEN_INVALID":
+    case "CALLBACK_TOKEN_MESSAGE_MISMATCH":
+    case "ACTION_KIND_MISMATCH":
+      return "invalid";
+  }
+}
+
+export function interactionFeedbackText(
+  locale: SupportedLocale,
+  feedback: InteractionFeedbackCode,
+): string {
+  switch (feedback) {
+    case "accepted":
+      return translate(locale, "interaction.accepted");
+    case "expired":
+      return translate(locale, "interaction.expired");
+    case "invalid":
+      return translate(locale, "interaction.invalid");
+    case "offline":
+      return translate(locale, "interaction.offline");
+    case "reply_required":
+      return translate(locale, "interaction.replyRequired");
+    case "terminal_only":
+      return translate(locale, "interaction.terminalOnly");
+  }
+}
+
 type BindingResult =
   | {
       accepted: true;
@@ -248,4 +333,11 @@ function questionAnswers(interaction: ValidatedTelegramInteraction): string[][] 
   } catch {
     return undefined;
   }
+}
+
+function commandResultFeedback(result: CommandResult): InteractionFeedbackCode {
+  if (result.status === "accepted") return "accepted";
+  if (result.status === "stale") return "offline";
+  if (result.reason === "terminal intervention required") return "terminal_only";
+  return "invalid";
 }

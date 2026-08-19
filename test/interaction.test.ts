@@ -6,11 +6,14 @@ import type { BrokerCommand, RouteKey } from "../src/protocol";
 import { StateDatabase } from "../src/state";
 import {
   createValidatedInteractionHandler,
+  interactionFeedbackText,
   submitCompletedSessionReply,
   submitQuestionReply,
+  submitTelegramInteraction,
   TelegramUpdateAuthorizer,
   TelegramUpdateSchema,
   validateTelegramInteraction,
+  validationFeedback,
 } from "../src/telegram";
 
 const USER_ID = 123456789;
@@ -389,6 +392,55 @@ describe("validateTelegramInteraction", () => {
       }),
     ).resolves.toMatchObject({ status: "rejected", reason: "invalid question answer" });
     expect(dispatched).toBe(false);
+  });
+
+  test("keeps permission replies terminal-only with localized feedback", async () => {
+    const database = await createDatabase();
+    const route = routeKey();
+    saveRoute(database, route, "permission_notice");
+    const validation = validateTelegramInteraction(
+      parseUpdate(messageReply()),
+      subject("message"),
+      {
+        database,
+        isRouteLive: () => true,
+        now: () => 2_000,
+      },
+    );
+    if (!validation.accepted) throw new Error("expected accepted interaction");
+    let dispatched = false;
+
+    const outcome = await submitTelegramInteraction(
+      {
+        sendCommand: async (input) => {
+          dispatched = true;
+          return { commandId: input.commandId, status: "accepted" };
+        },
+      },
+      validation.interaction,
+    );
+
+    expect(outcome).toMatchObject({
+      result: { status: "rejected", reason: "terminal intervention required" },
+      feedback: "terminal_only",
+    });
+    expect(dispatched).toBe(false);
+    expect(interactionFeedbackText("en", outcome.feedback)).toBe(
+      "This action must be handled in the OpenCode terminal.",
+    );
+    expect(interactionFeedbackText("zh-TW", outcome.feedback)).toBe(
+      "此操作必須在 OpenCode 終端機中處理。",
+    );
+  });
+
+  test("maps rejected validation reasons to localized guidance categories", async () => {
+    expect(validationFeedback("MESSAGE_BINDING_REQUIRED")).toBe("reply_required");
+    expect(validationFeedback("MESSAGE_BINDING_EXPIRED")).toBe("expired");
+    expect(validationFeedback("ROUTE_STALE")).toBe("offline");
+    expect(validationFeedback("ACTION_KIND_MISMATCH")).toBe("invalid");
+    expect(interactionFeedbackText("en", validationFeedback("MESSAGE_BINDING_REQUIRED"))).toBe(
+      "Reply directly to an actionable notification.",
+    );
   });
 });
 

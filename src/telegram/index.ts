@@ -17,13 +17,18 @@ export {
 export {
   type BrokerCommandDispatcher,
   createValidatedInteractionHandler,
+  type InteractionFeedbackCode,
+  type InteractionSubmissionOutcome,
   type InteractionValidationReason,
   type InteractionValidationResult,
   type InteractionValidatorOptions,
+  interactionFeedbackText,
   submitCompletedSessionReply,
   submitQuestionReply,
+  submitTelegramInteraction,
   type ValidatedTelegramInteraction,
   validateTelegramInteraction,
+  validationFeedback,
 } from "./interaction";
 export {
   type TelegramOutboxPayload,
