@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   BrokerPortConflictError,
   type BrokerServer,
+  type StartBrokerOptions,
   startBroker,
   startOrReuseBroker,
 } from "../src/broker";
@@ -14,8 +15,17 @@ import {
   BrokerEnvelopeSchema,
   PROTOCOL_VERSION,
   type RouteKey,
+  type TelegramRuntimeConfig,
 } from "../src/protocol";
 import { createRouteKey, loadOrCreateStateIdentity } from "../src/state";
+import {
+  type SendMessageInput,
+  type TelegramBot,
+  TelegramBotApi,
+  type TelegramUpdate,
+} from "../src/telegram";
+
+const TOKEN = "123456:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 const temporaryDirectories: string[] = [];
 const brokers: BrokerServer[] = [];
@@ -268,11 +278,86 @@ describe("local broker", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ bindHost: "0.0.0.0" });
   });
+
+  test("publishes Telegram notifications and routes replies back to the owning session", async () => {
+    const sent: SendMessageInput[] = [];
+    const updates: TelegramUpdate[] = [];
+    const { broker, secret } = await createBroker({
+      telegramApiFactory: () => new FakeTelegramBotApi(sent, updates),
+      telegramPollLongPollSeconds: 1,
+    });
+    const socket = await connectClient(broker.port, secret);
+    const instanceId = crypto.randomUUID();
+    await registerClient(socket, broker.machineId, instanceId, "a".repeat(64), telegramConfig());
+    const route = createRouteKey({
+      machineId: broker.machineId,
+      instanceId,
+      projectId: "opaque-project-id",
+      sessionId: "ses_123",
+    });
+    await registerRoute(socket, route, "backend", "Implement auth");
+
+    const published = waitForMessage(socket);
+    socket.send(
+      JSON.stringify({
+        ...envelope("notification.publish"),
+        payload: {
+          notification: {
+            kind: "session.completed",
+            eventId: "event_1",
+            route,
+            locale: "en",
+            projectLabel: "backend",
+            sessionLabel: "Implement auth",
+            occurredAt: new Date(1_000).toISOString(),
+          },
+        },
+      }),
+    );
+
+    expect(await published).toMatchObject({
+      type: "notification.published",
+      payload: { eventId: "event_1", status: "queued" },
+    });
+    await waitUntil(() => sent.length === 1);
+    expect(sent[0]).toMatchObject({
+      chatId: "123456789",
+      parseMode: "HTML",
+      disableNotification: true,
+    });
+    expect(broker.database.getMessageRoute("123456789", 77)).toMatchObject({
+      kind: "session_prompt",
+      route,
+      status: "active",
+    });
+
+    const command = waitForMessage(socket);
+    updates.push(messageReply({ updateId: 10, replyToMessageId: 77, text: "Continue from TG" }));
+    const commandEnvelope = await command;
+    expect(commandEnvelope).toMatchObject({
+      type: "command",
+      payload: { type: "session.prompt", route, text: "Continue from TG" },
+    });
+    if (commandEnvelope.type !== "command") throw new Error("expected command envelope");
+    socket.send(
+      JSON.stringify({
+        ...envelopeForRequest("command.result", commandEnvelope.requestId),
+        payload: { commandId: commandEnvelope.payload.commandId, status: "accepted" },
+      }),
+    );
+    await waitUntil(() => sent.length === 2);
+    expect(sent[1]?.text).toBe("Your response was delivered.");
+  });
 });
 
-async function createBroker(): Promise<{ broker: BrokerServer; secret: string }> {
+async function createBroker(
+  options: Pick<
+    StartBrokerOptions,
+    "telegramApiFactory" | "telegramPollLongPollSeconds" | "telegramDeliveryIntervalMs"
+  > = {},
+): Promise<{ broker: BrokerServer; secret: string }> {
   const stateDirectory = await createTemporaryDirectory();
-  const broker = await startBroker({ stateDirectory, port: 0 });
+  const broker = await startBroker({ stateDirectory, port: 0, ...options });
   brokers.push(broker);
   const identity = await loadOrCreateStateIdentity(stateDirectory);
   return { broker, secret: identity.brokerSecret };
@@ -297,6 +382,7 @@ async function registerClient(
   machineId: string,
   instanceId: string,
   configFingerprint = "a".repeat(64),
+  telegram?: TelegramRuntimeConfig,
 ): Promise<void> {
   const response = waitForMessage(socket);
   socket.send(
@@ -309,12 +395,105 @@ async function registerClient(
         instanceId,
         configFingerprint,
         capabilities: [...BROKER_CAPABILITIES],
+        ...(telegram ? { telegram } : {}),
       },
     }),
   );
   expect(await response).toMatchObject({
     type: "registered",
     payload: { machineId, capabilities: [...BROKER_CAPABILITIES] },
+  });
+}
+
+function envelopeForRequest(
+  type: string,
+  requestId: string,
+): {
+  protocol: typeof PROTOCOL_VERSION;
+  type: string;
+  requestId: string;
+  sentAt: string;
+} {
+  return { ...envelope(type), requestId };
+}
+
+function telegramConfig(): TelegramRuntimeConfig {
+  return {
+    botToken: TOKEN,
+    userId: "123456789",
+    chatId: "123456789",
+    locale: "en",
+    sessionPromptTtlMinutes: 60,
+    questionTtlMinutes: 30,
+  };
+}
+
+class FakeTelegramBotApi extends TelegramBotApi {
+  readonly #sent: SendMessageInput[];
+  readonly #updates: TelegramUpdate[];
+  #nextMessageId = 77;
+
+  constructor(sent: SendMessageInput[], updates: TelegramUpdate[]) {
+    super({ token: TOKEN, baseUrl: "https://telegram.invalid" });
+    this.#sent = sent;
+    this.#updates = updates;
+  }
+
+  override async getMe(): Promise<TelegramBot> {
+    return { id: 987654321, is_bot: true, first_name: "TestBot" };
+  }
+
+  override async deleteWebhook(): Promise<void> {}
+
+  override async getUpdates(input: {
+    offset: number;
+    timeoutSeconds?: number;
+    signal?: AbortSignal;
+  }): Promise<TelegramUpdate[]> {
+    if (this.#updates.length === 0) await abortableSleep(20, input.signal);
+    return this.#updates.splice(0).filter((update) => update.update_id >= input.offset);
+  }
+
+  override async sendMessage(
+    input: SendMessageInput,
+  ): Promise<{ messageId: number; chatId: string }> {
+    this.#sent.push(input);
+    return { messageId: this.#nextMessageId++, chatId: input.chatId };
+  }
+}
+
+function messageReply(options: { updateId: number; replyToMessageId: number; text: string }) {
+  return {
+    update_id: options.updateId,
+    message: {
+      message_id: options.updateId + 1_000,
+      from: { id: 123456789, is_bot: false, first_name: "User" },
+      chat: { id: 123456789, type: "private" as const },
+      date: 1_700_000_000,
+      text: options.text,
+      reply_to_message: {
+        message_id: options.replyToMessageId,
+        chat: { id: 123456789, type: "private" as const },
+      },
+    },
+  } satisfies TelegramUpdate;
+}
+
+async function abortableSleep(
+  milliseconds: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, milliseconds);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
   });
 }
 

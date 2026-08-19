@@ -291,6 +291,29 @@ describe("OpenCodeEventBridge", () => {
     expect(notifications).toHaveLength(0);
   });
 
+  test("flushes a debounced completion before plugin shutdown", async () => {
+    const broker = new FakeRouteClient();
+    const notifications: NormalizedNotification[] = [];
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      completionDebounceMs: 30_000,
+      onNotification: (notification) => {
+        notifications.push(notification);
+      },
+    });
+    await bridge.handle(sessionCreated("ses_root", "Main task"));
+    await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_root" } });
+
+    await bridge.flush();
+    bridge.dispose();
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({ kind: "session.completed" });
+  });
+
   test("deduplicates repeated observations of the same source event and route", async () => {
     const broker = new FakeRouteClient();
     const notifications: NormalizedNotification[] = [];

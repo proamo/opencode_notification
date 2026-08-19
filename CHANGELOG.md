@@ -4,6 +4,7 @@ All notable changes to this project are documented here. Run `bun run release:ch
 
 ## 0.1.0 - 2026-08-19
 
+- Wire OpenCode plugin notifications to broker-managed Telegram delivery and reply polling.
 - Fix OpenCode plugin loading by keeping the plugin entrypoint default-export only.
 - Fix detached broker startup when OpenCode is hosted by a non-`bun` executable.
 - Suppress benign broker client shutdown rejections during plugin disposal.

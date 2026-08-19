@@ -122,6 +122,20 @@ export class OpenCodeEventBridge {
     this.#notificationFlushTimer = undefined;
   }
 
+  async flush(): Promise<void> {
+    for (const pending of this.#pendingCompletions.values()) {
+      clearTimeout(pending.timer);
+      this.#emitSourceEvent(pending.event, pending.occurredAt, false);
+    }
+    this.#pendingCompletions.clear();
+    if (this.#sourceFlushTimer) {
+      clearTimeout(this.#sourceFlushTimer);
+      this.#sourceFlushTimer = undefined;
+      this.#flushSourceBuffer();
+    }
+    await this.#flushNotificationBuffer();
+  }
+
   async handle(input: unknown): Promise<void> {
     const result = normalizeOpenCodeEvent(input);
     if (result.status === "ignored") return;

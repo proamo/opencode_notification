@@ -8,7 +8,9 @@ import {
   ClientEnvelopeSchema,
   type CommandResult,
   MAX_FRAME_BYTES,
+  type NormalizedNotification,
   PROTOCOL_VERSION,
+  type TelegramRuntimeConfig,
 } from "../protocol";
 import {
   defaultStateDirectory,
@@ -17,6 +19,18 @@ import {
   StateDatabase,
   writeDiscoveryRecord,
 } from "../state";
+import {
+  createValidatedInteractionHandler,
+  interactionFeedbackText,
+  renderTelegramNotification,
+  submitTelegramInteraction,
+  TelegramBotApi,
+  type TelegramOutboxPayload,
+  TelegramOutboxWorker,
+  TelegramPoller,
+  TelegramUpdateAuthorizer,
+  type UpdateDisposition,
+} from "../telegram";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -27,6 +41,8 @@ const DEFAULT_HEARTBEAT_TIMEOUT_MS = 45_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
+const DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2_000;
+const NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60_000;
 
 const HealthResponseSchema = z.object({
   service: z.literal("opencode-telegram-link"),
@@ -48,6 +64,10 @@ export type StartBrokerOptions = {
   heartbeatTimeoutMs?: number;
   idleTimeoutMs?: number;
   maintenanceIntervalMs?: number;
+  telegramApiFactory?: (botToken: string) => TelegramBotApi;
+  telegramDeliveryIntervalMs?: number;
+  telegramPollLongPollSeconds?: number;
+  now?: () => number;
 };
 
 export type StartOrReuseBrokerResult =
@@ -68,6 +88,7 @@ export class BrokerServer {
   readonly #maintenanceTimer: ReturnType<typeof setInterval>;
   readonly #removeDiscovery: () => Promise<void>;
   #resolveFinished!: () => void;
+  readonly #telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined };
   #stopped = false;
 
   constructor(input: {
@@ -80,6 +101,7 @@ export class BrokerServer {
     maintenanceTimer: ReturnType<typeof setInterval>;
     removeDiscovery: () => Promise<void>;
     pendingCommands: Map<string, PendingBrokerCommand>;
+    telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined };
   }) {
     this.#server = input.server;
     this.machineId = input.machineId;
@@ -91,6 +113,7 @@ export class BrokerServer {
     this.#maintenanceTimer = input.maintenanceTimer;
     this.#removeDiscovery = input.removeDiscovery;
     this.#pendingCommands = input.pendingCommands;
+    this.#telegramRuntimeRef = input.telegramRuntimeRef;
     this.finished = new Promise((resolve) => {
       this.#resolveFinished = resolve;
     });
@@ -102,6 +125,7 @@ export class BrokerServer {
     clearInterval(this.#livenessTimer);
     clearInterval(this.#maintenanceTimer);
     failPendingCommands(this.#pendingCommands, "broker stopped");
+    await this.#telegramRuntimeRef.value?.stop();
     await this.#server.stop(true);
     this.#connections.clear();
     await this.#removeDiscovery();
@@ -161,9 +185,38 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const maintenanceIntervalMs = options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
+  const deliveryIntervalMs =
+    options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
+  const now = options.now ?? Date.now;
   let lastNonIdleAt = Date.now();
   let broker: BrokerServer | undefined;
+  const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
   const bindHost = options.bindHost ?? LOOPBACK_HOST;
+  const ensureTelegramRuntime = (config: TelegramRuntimeConfig): BrokerTelegramRuntime => {
+    telegramRuntimeRef.value ??= new BrokerTelegramRuntime({
+      config,
+      database,
+      registry,
+      dispatcher: {
+        sendCommand: async (command) => {
+          if (!broker) {
+            return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
+          }
+          return await broker.sendCommand(command);
+        },
+      },
+      api: (options.telegramApiFactory ?? ((botToken) => new TelegramBotApi({ token: botToken })))(
+        config.botToken,
+      ),
+      deliveryIntervalMs,
+      ...(options.telegramPollLongPollSeconds !== undefined
+        ? { pollLongPollSeconds: options.telegramPollLongPollSeconds }
+        : {}),
+      now,
+    });
+    telegramRuntimeRef.value.start();
+    return telegramRuntimeRef.value;
+  };
 
   const server = (() => {
     try {
@@ -231,6 +284,8 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               registry,
               pendingCommands,
               activeConfigFingerprint,
+              ensureTelegramRuntime,
+              () => telegramRuntimeRef.value,
             );
           },
           close(socket) {
@@ -293,6 +348,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
       livenessTimer,
       maintenanceTimer,
       pendingCommands,
+      telegramRuntimeRef,
       removeDiscovery: () => removeDiscoveryRecord(state.stateDirectory, discovery.nonce),
     });
     return broker;
@@ -363,6 +419,234 @@ export class BrokerPortConflictError extends Error {
   }
 }
 
+class BrokerTelegramRuntime {
+  readonly #config: TelegramRuntimeConfig;
+  readonly #database: StateDatabase;
+  readonly #registry: RouteRegistry;
+  readonly #api: TelegramBotApi;
+  readonly #outbox: TelegramOutboxWorker;
+  readonly #poller: TelegramPoller;
+  readonly #deliveryIntervalMs: number;
+  readonly #now: () => number;
+  #started = false;
+  #deliveryTimer: ReturnType<typeof setInterval> | undefined;
+  #delivering = false;
+
+  constructor(input: {
+    config: TelegramRuntimeConfig;
+    database: StateDatabase;
+    registry: RouteRegistry;
+    dispatcher: { sendCommand(command: BrokerCommand): Promise<CommandResult> };
+    api: TelegramBotApi;
+    deliveryIntervalMs: number;
+    pollLongPollSeconds?: number;
+    now: () => number;
+  }) {
+    this.#config = input.config;
+    this.#database = input.database;
+    this.#registry = input.registry;
+    this.#api = input.api;
+    this.#deliveryIntervalMs = input.deliveryIntervalMs;
+    this.#now = input.now;
+    this.#outbox = new TelegramOutboxWorker({ api: input.api, database: input.database });
+    const authorizer = new TelegramUpdateAuthorizer({
+      userId: input.config.userId,
+      chatId: input.config.chatId,
+    });
+    this.#poller = new TelegramPoller({
+      api: input.api,
+      database: input.database,
+      handleUpdate: createValidatedInteractionHandler(
+        authorizer,
+        {
+          database: input.database,
+          isRouteLive: (route) => input.registry.resolve(route) !== undefined,
+          now: input.now,
+        },
+        async (interaction) => {
+          const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
+          await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
+          return {
+            disposition: outcome.result.status === "accepted" ? "acknowledged" : "failed",
+            actionId: outcome.result.commandId,
+            payloadHash: createHash("sha256")
+              .update(`${outcome.result.status}:${outcome.result.reason ?? ""}`)
+              .digest("hex"),
+          } satisfies UpdateDisposition;
+        },
+      ),
+      ...(input.pollLongPollSeconds !== undefined
+        ? { longPollSeconds: input.pollLongPollSeconds }
+        : {}),
+      now: input.now,
+    });
+  }
+
+  start(): void {
+    if (this.#started) return;
+    this.#started = true;
+    this.#deliveryTimer = setInterval(() => this.#deliverSoon(), this.#deliveryIntervalMs);
+    this.#deliveryTimer.unref();
+    void this.#poller.start().catch((error) => logTelegramRuntimeError("poller", error));
+    this.#deliverSoon();
+  }
+
+  async stop(): Promise<void> {
+    if (this.#deliveryTimer) clearInterval(this.#deliveryTimer);
+    this.#deliveryTimer = undefined;
+    await this.#poller.stop();
+  }
+
+  publish(notification: NormalizedNotification): "queued" | "duplicate" {
+    if (!this.#registry.resolve(notification.route)) {
+      throw new RouteRegistrationError("ROUTE_STALE", "notification route is offline");
+    }
+    const now = this.#now();
+    const idempotencyKey = notificationIdempotencyKey(notification);
+    const expiresAt = notificationExpiresAt(notification, this.#config, now);
+    if (!this.#database.claimNotification(idempotencyKey, now + NOTIFICATION_DEDUPE_TTL_MS, now)) {
+      return "duplicate";
+    }
+    const rendered = renderTelegramNotification(notification);
+    this.#database.enqueueOutbox({
+      idempotencyKey,
+      chatId: this.#config.chatId,
+      payload: JSON.stringify({
+        ...rendered,
+        disableNotification: notification.kind === "session.completed",
+        ...notificationBinding(notification, expiresAt),
+      }),
+      priority: notificationPriority(notification.kind),
+      nextAttemptAt: now,
+      expiresAt,
+      createdAt: now,
+    });
+    this.#deliverSoon();
+    return "queued";
+  }
+
+  #deliverSoon(): void {
+    if (this.#delivering) return;
+    this.#delivering = true;
+    void this.#outbox
+      .deliverBatch(this.#now())
+      .catch((error) => logTelegramRuntimeError("delivery", error))
+      .finally(() => {
+        this.#delivering = false;
+      });
+  }
+
+  async #sendInteractionFeedback(
+    chatId: string,
+    feedback: Parameters<typeof interactionFeedbackText>[1],
+  ): Promise<void> {
+    await this.#api
+      .sendMessage({
+        chatId,
+        text: interactionFeedbackText(this.#config.locale, feedback),
+        disableNotification: true,
+      })
+      .catch((error) => logTelegramRuntimeError("feedback", error));
+  }
+}
+
+function notificationBinding(
+  notification: NormalizedNotification,
+  expiresAt: number,
+): { binding?: NonNullable<TelegramOutboxPayload["binding"]> } {
+  switch (notification.kind) {
+    case "session.completed":
+      return { binding: { route: notification.route, kind: "session_prompt", expiresAt } };
+    case "question.pending":
+      return {
+        binding: {
+          route: notification.route,
+          kind: "question_reply",
+          interactionId: notification.interactionId,
+          expiresAt,
+          ...questionCallbackButtons(notification),
+        },
+      };
+    case "permission.pending":
+      return {
+        binding: {
+          route: notification.route,
+          kind: "permission_notice",
+          interactionId: notification.interactionId,
+          expiresAt,
+        },
+      };
+    case "session.error":
+      return {};
+  }
+}
+
+function questionCallbackButtons(
+  notification: Extract<NormalizedNotification, { kind: "question.pending" }>,
+): { callbackButtons?: Array<{ text: string; action: string; payload: string }> } {
+  if (notification.questions.length !== 1) return {};
+  const question = notification.questions[0];
+  if (!question || question.multiple || question.options.length === 0) return {};
+  return {
+    callbackButtons: question.options.slice(0, 10).map((option) => ({
+      text: truncateButtonText(option.label),
+      action: "question.option",
+      payload: JSON.stringify({ answers: [[option.label]] }),
+    })),
+  };
+}
+
+function notificationExpiresAt(
+  notification: NormalizedNotification,
+  config: TelegramRuntimeConfig,
+  now: number,
+): number {
+  if (notification.kind === "question.pending" || notification.kind === "permission.pending") {
+    return now + config.questionTtlMinutes * 60_000;
+  }
+  if (notification.kind === "session.completed") {
+    return now + config.sessionPromptTtlMinutes * 60_000;
+  }
+  return now + 24 * 60 * 60_000;
+}
+
+function notificationPriority(kind: NormalizedNotification["kind"]): number {
+  switch (kind) {
+    case "question.pending":
+    case "permission.pending":
+      return 3;
+    case "session.error":
+      return 2;
+    case "session.completed":
+      return 1;
+  }
+}
+
+function notificationIdempotencyKey(notification: NormalizedNotification): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        notification.route.machineId,
+        notification.route.instanceId,
+        notification.route.projectId,
+        notification.route.sessionId,
+        notification.route.routeGeneration,
+        notification.kind,
+        notification.eventId,
+      ]),
+    )
+    .digest("hex");
+}
+
+function truncateButtonText(text: string): string {
+  return text.length <= 64 ? text : `${text.slice(0, 61)}...`;
+}
+
+function logTelegramRuntimeError(component: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : "unknown error";
+  process.stderr.write(`opencode-telegram-link: Telegram ${component} failed: ${message}\n`);
+}
+
 function handleMessage(
   socket: Bun.ServerWebSocket<BrokerConnectionData>,
   message: string | Buffer<ArrayBuffer>,
@@ -370,6 +654,8 @@ function handleMessage(
   registry: RouteRegistry,
   pendingCommands: Map<string, PendingBrokerCommand>,
   activeConfigFingerprint: { value: string | undefined },
+  ensureTelegramRuntime: (config: TelegramRuntimeConfig) => BrokerTelegramRuntime,
+  currentTelegramRuntime: () => BrokerTelegramRuntime | undefined,
 ): void {
   const text = typeof message === "string" ? message : message.toString("utf8");
   if (Buffer.byteLength(text, "utf8") > MAX_FRAME_BYTES) {
@@ -417,6 +703,7 @@ function handleMessage(
           envelope.payload.instanceId,
           envelope.payload.machineId,
         );
+        if (envelope.payload.telegram) ensureTelegramRuntime(envelope.payload.telegram);
         activeConfigFingerprint.value ??= envelope.payload.configFingerprint;
         socket.data.lastHeartbeatAt = Date.now();
         send(socket, {
@@ -446,6 +733,24 @@ function handleMessage(
           );
         }
         send(socket, responseFor(envelope, "route.unregistered"));
+        return;
+      }
+      case "notification.publish": {
+        const runtime = currentTelegramRuntime();
+        if (!runtime) {
+          throw new RouteRegistrationError(
+            "TELEGRAM_NOT_CONFIGURED",
+            "Telegram runtime has not been registered",
+          );
+        }
+        const status = runtime.publish(envelope.payload.notification);
+        send(socket, {
+          protocol: PROTOCOL_VERSION,
+          type: "notification.published",
+          requestId: envelope.requestId,
+          sentAt: new Date().toISOString(),
+          payload: { eventId: envelope.payload.notification.eventId, status },
+        });
         return;
       }
       case "heartbeat": {

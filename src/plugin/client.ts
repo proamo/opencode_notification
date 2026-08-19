@@ -11,8 +11,10 @@ import {
   type ClientEnvelope,
   ClientEnvelopeSchema,
   type CommandResult,
+  type NormalizedNotification,
   PROTOCOL_VERSION,
   type RouteKey,
+  type TelegramRuntimeConfig,
 } from "../protocol";
 import {
   createRouteKey,
@@ -49,6 +51,7 @@ export type BrokerClientOptions = {
   random?: () => number;
   onCommand?: (command: BrokerCommand) => CommandResult | Promise<CommandResult>;
   onDiagnostic?: (code: string, message: string) => void;
+  telegram?: TelegramRuntimeConfig;
 };
 
 type PendingRequest = {
@@ -79,6 +82,7 @@ export class BrokerClient {
     stateDirectory: string;
     port: number;
     spawnBroker: BrokerClientOptions["spawnBroker"] | undefined;
+    telegram: TelegramRuntimeConfig | undefined;
   };
   readonly #routes = new Map<string, RouteIntent>();
   readonly #activeRoutes = new Map<string, RouteKey>();
@@ -108,6 +112,7 @@ export class BrokerClient {
       random: options.random ?? Math.random,
       onCommand: options.onCommand ?? rejectUnsupportedCommand,
       onDiagnostic: options.onDiagnostic ?? (() => undefined),
+      telegram: options.telegram,
     };
   }
 
@@ -181,6 +186,17 @@ export class BrokerClient {
     return this.#activeRoutes.get(routeIntentKey({ projectId, sessionId }));
   }
 
+  async publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate"> {
+    const response = await this.#request({
+      type: "notification.publish",
+      payload: { notification },
+    });
+    if (response.type !== "notification.published") {
+      throw new Error("notification publish was rejected");
+    }
+    return response.payload.status;
+  }
+
   async #run(): Promise<void> {
     let attempt = 0;
     while (!this.#stopped) {
@@ -248,6 +264,7 @@ export class BrokerClient {
           instanceId: this.instanceId,
           configFingerprint: this.#options.configFingerprint,
           capabilities: [...BROKER_CAPABILITIES],
+          ...(this.#options.telegram ? { telegram: this.#options.telegram } : {}),
         },
       });
       if (registered.type !== "registered" || registered.payload.machineId !== identity.machineId) {

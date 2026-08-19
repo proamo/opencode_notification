@@ -2,13 +2,39 @@ import { z } from "zod";
 
 export const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 export const MAX_FRAME_BYTES = 256 * 1024;
-export const BROKER_CAPABILITIES = ["route-registration", "heartbeat"] as const;
+export const BROKER_CAPABILITIES = [
+  "route-registration",
+  "heartbeat",
+  "notification-publish",
+] as const;
 export const ConfigFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const TelegramBotTokenSchema = z
+  .string()
+  .regex(/^\d+:[A-Za-z0-9_-]{20,}$/, "Telegram bot token format is invalid");
+const TelegramIdSchema = z.string().regex(/^[1-9]\d*$/);
 
 export const ProtocolVersionSchema = z.object({
   major: z.literal(PROTOCOL_VERSION.major),
   minor: z.number().int().nonnegative(),
 });
+
+export const TelegramRuntimeConfigSchema = z.object({
+  botToken: TelegramBotTokenSchema,
+  userId: TelegramIdSchema,
+  chatId: TelegramIdSchema,
+  locale: z.enum(["en", "zh-TW"]),
+  sessionPromptTtlMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+  questionTtlMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 60),
+});
+export type TelegramRuntimeConfig = z.infer<typeof TelegramRuntimeConfigSchema>;
 
 export const RouteKeySchema = z.object({
   machineId: z.uuid(),
@@ -35,6 +61,7 @@ export const RegisterEnvelopeSchema = z.object({
     instanceId: z.uuid(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: z.array(z.string().min(1).max(64)).max(64),
+    telegram: TelegramRuntimeConfigSchema.optional(),
   }),
 });
 
@@ -93,15 +120,6 @@ export const CommandResultEnvelopeSchema = z.object({
   payload: CommandResultSchema,
 });
 
-export const ClientEnvelopeSchema = z.discriminatedUnion("type", [
-  RegisterEnvelopeSchema,
-  RouteRegisterEnvelopeSchema,
-  RouteUnregisterEnvelopeSchema,
-  HeartbeatEnvelopeSchema,
-  CommandResultEnvelopeSchema,
-]);
-export type ClientEnvelope = z.infer<typeof ClientEnvelopeSchema>;
-
 export const BrokerEnvelopeSchema = z.discriminatedUnion("type", [
   z.object({
     ...EnvelopeFields,
@@ -120,6 +138,14 @@ export const BrokerEnvelopeSchema = z.discriminatedUnion("type", [
     ...EnvelopeFields,
     type: z.literal("route.unregistered"),
     payload: z.object({ route: RouteKeySchema }),
+  }),
+  z.object({
+    ...EnvelopeFields,
+    type: z.literal("notification.published"),
+    payload: z.object({
+      eventId: z.string().min(1).max(256),
+      status: z.enum(["queued", "duplicate"]),
+    }),
   }),
   z.object({
     ...EnvelopeFields,
@@ -186,6 +212,22 @@ export const NormalizedNotificationSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type NormalizedNotification = z.infer<typeof NormalizedNotificationSchema>;
+
+export const NotificationPublishEnvelopeSchema = z.object({
+  ...EnvelopeFields,
+  type: z.literal("notification.publish"),
+  payload: z.object({ notification: NormalizedNotificationSchema }),
+});
+
+export const ClientEnvelopeSchema = z.discriminatedUnion("type", [
+  RegisterEnvelopeSchema,
+  RouteRegisterEnvelopeSchema,
+  RouteUnregisterEnvelopeSchema,
+  NotificationPublishEnvelopeSchema,
+  HeartbeatEnvelopeSchema,
+  CommandResultEnvelopeSchema,
+]);
+export type ClientEnvelope = z.infer<typeof ClientEnvelopeSchema>;
 
 export const DiagnosticSchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"]),
