@@ -254,6 +254,20 @@ describe("local broker", () => {
       await occupied.stop(true);
     }
   });
+
+  test("can explicitly bind the container interface for Docker port publishing", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const broker = await startBroker({ stateDirectory, port: 0, bindHost: "0.0.0.0" });
+    brokers.push(broker);
+    const identity = await loadOrCreateStateIdentity(stateDirectory);
+
+    const response = await fetch(`http://127.0.0.1:${broker.port}/v1/status`, {
+      headers: { authorization: `Bearer ${identity.brokerSecret}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ bindHost: "0.0.0.0" });
+  });
 });
 
 async function createBroker(): Promise<{ broker: BrokerServer; secret: string }> {

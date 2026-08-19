@@ -212,12 +212,22 @@ function brokerOptionsFrom(
 ): StartBrokerOptions {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const port = parsePositiveInteger(stringFlag(flags, "port") ?? env.OPENCODE_TELEGRAM_BROKER_PORT);
+  const bindHost = parseBindHost(
+    stringFlag(flags, "bind-host") ?? env.OPENCODE_TELEGRAM_BROKER_BIND_HOST,
+  );
   const idleTimeoutMs = parsePositiveInteger(env.OPENCODE_TELEGRAM_BROKER_IDLE_TIMEOUT_MS);
   return {
     ...(stateDirectory ? { stateDirectory } : {}),
+    ...(bindHost ? { bindHost } : {}),
     ...(port ? { port } : {}),
     ...(idleTimeoutMs ? { idleTimeoutMs } : {}),
   };
+}
+
+function parseBindHost(value: string | undefined): "127.0.0.1" | "0.0.0.0" | undefined {
+  if (!value) return undefined;
+  if (value === "127.0.0.1" || value === "0.0.0.0") return value;
+  return undefined;
 }
 
 async function readSecretToken(env: NodeJS.ProcessEnv): Promise<string> {

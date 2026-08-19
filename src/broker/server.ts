@@ -20,6 +20,7 @@ import {
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
+const CONTAINER_HOST = "0.0.0.0";
 const DEFAULT_PORT = 42617;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 45_000;
@@ -34,13 +35,14 @@ const HealthResponseSchema = z.object({
 });
 
 const BrokerStatusSchema = HealthResponseSchema.extend({
-  bindHost: z.literal(LOOPBACK_HOST),
+  bindHost: z.enum([LOOPBACK_HOST, CONTAINER_HOST]),
   connections: z.number().int().nonnegative(),
   routes: z.number().int().nonnegative(),
 });
 
 export type StartBrokerOptions = {
   stateDirectory?: string;
+  bindHost?: typeof LOOPBACK_HOST | typeof CONTAINER_HOST;
   port?: number;
   registrationTimeoutMs?: number;
   heartbeatTimeoutMs?: number;
@@ -161,11 +163,12 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
   const maintenanceIntervalMs = options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
   let lastNonIdleAt = Date.now();
   let broker: BrokerServer | undefined;
+  const bindHost = options.bindHost ?? LOOPBACK_HOST;
 
   const server = (() => {
     try {
       return Bun.serve<BrokerConnectionData>({
-        hostname: LOOPBACK_HOST,
+        hostname: bindHost,
         port: options.port ?? DEFAULT_PORT,
         fetch(request, bunServer) {
           const url = new URL(request.url);
@@ -192,7 +195,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               service: "opencode-telegram-link",
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
-              bindHost: LOOPBACK_HOST,
+              bindHost,
               connections: registry.connectionCount,
               routes: registry.routeCount,
             });

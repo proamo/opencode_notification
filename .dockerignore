@@ -1,0 +1,10 @@
+.git
+.gitnexus
+node_modules
+test
+src
+openspec
+AGENTS.md
+CLAUDE.md
+coverage
+*.log
