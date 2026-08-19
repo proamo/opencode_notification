@@ -25,7 +25,7 @@ export const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   const broker = new BrokerClient({
     port: config.data.broker.port,
     configFingerprint: computeNotifierConfigFingerprint(config.data),
-    packageVersion: "0.0.0",
+    packageVersion: "0.1.0",
     openCodeVersion: "1.18.x",
     onCommand: async (command) => runOpenCodeCommand(client, directory, command),
     onDiagnostic: (code, message) => {

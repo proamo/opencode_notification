@@ -30,11 +30,12 @@ describe("release configuration", () => {
   });
 
   test("keeps changelog and release smoke checks in source control", async () => {
+    const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
     const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8");
     const smoke = await readFile(join(root, "scripts", "release-smoke.ts"), "utf8");
 
     expect(changelog).toContain("# Changelog");
-    expect(changelog).toContain("## 0.0.0 - Unreleased");
+    expect(changelog).toContain(`## ${packageJson.version} - `);
     expect(smoke).toContain("publishConfig.provenance must be true");
     expect(smoke).toContain("packed artifact is missing");
     expect(smoke).toContain("plugin default export is missing");
