@@ -148,6 +148,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
   });
   const connections = new Set<Bun.ServerWebSocket<BrokerConnectionData>>();
   const pendingCommands = new Map<string, PendingBrokerCommand>();
+  const activeConfigFingerprint: { value: string | undefined } = { value: undefined };
   const registrationTimeoutMs = options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -193,11 +194,19 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             connections.add(socket);
           },
           message(socket, message) {
-            handleMessage(socket, message, state.machineId, registry, pendingCommands);
+            handleMessage(
+              socket,
+              message,
+              state.machineId,
+              registry,
+              pendingCommands,
+              activeConfigFingerprint,
+            );
           },
           close(socket) {
             connections.delete(socket);
             registry.removeConnection(socket.data.connectionId);
+            if (registry.connectionCount === 0) activeConfigFingerprint.value = undefined;
             failPendingCommands(pendingCommands, "route disconnected", socket.data.connectionId);
           },
         },
@@ -314,6 +323,7 @@ function handleMessage(
   machineId: string,
   registry: RouteRegistry,
   pendingCommands: Map<string, PendingBrokerCommand>,
+  activeConfigFingerprint: { value: string | undefined },
 ): void {
   const text = typeof message === "string" ? message : message.toString("utf8");
   if (Buffer.byteLength(text, "utf8") > MAX_FRAME_BYTES) {
@@ -347,11 +357,21 @@ function handleMessage(
             `required capability is missing: ${missingCapability}`,
           );
         }
+        if (
+          activeConfigFingerprint.value &&
+          activeConfigFingerprint.value !== envelope.payload.configFingerprint
+        ) {
+          throw new RouteRegistrationError(
+            "CONFIG_FINGERPRINT_MISMATCH",
+            "connection configuration does not match the active local broker configuration",
+          );
+        }
         registry.registerConnection(
           socket,
           envelope.payload.instanceId,
           envelope.payload.machineId,
         );
+        activeConfigFingerprint.value ??= envelope.payload.configFingerprint;
         socket.data.lastHeartbeatAt = Date.now();
         send(socket, {
           protocol: PROTOCOL_VERSION,

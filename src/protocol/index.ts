@@ -3,6 +3,7 @@ import { z } from "zod";
 export const PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const BROKER_CAPABILITIES = ["route-registration", "heartbeat"] as const;
+export const ConfigFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const ProtocolVersionSchema = z.object({
   major: z.literal(PROTOCOL_VERSION.major),
@@ -32,6 +33,7 @@ export const RegisterEnvelopeSchema = z.object({
     openCodeVersion: z.string().min(1).max(64),
     machineId: z.uuid(),
     instanceId: z.uuid(),
+    configFingerprint: ConfigFingerprintSchema,
     capabilities: z.array(z.string().min(1).max(64)).max(64),
   }),
 });

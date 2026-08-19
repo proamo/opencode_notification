@@ -38,6 +38,7 @@ describe("protocol schemas", () => {
         openCodeVersion: "1.18.18",
         machineId: route.machineId,
         instanceId: route.instanceId,
+        configFingerprint: "a".repeat(64),
         capabilities: ["notifications"],
       },
     });

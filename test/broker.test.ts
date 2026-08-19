@@ -146,6 +146,7 @@ describe("local broker", () => {
           openCodeVersion: "1.18.18",
           machineId: broker.machineId,
           instanceId: crypto.randomUUID(),
+          configFingerprint: "a".repeat(64),
           capabilities: ["route-registration"],
         },
       }),
@@ -157,6 +158,34 @@ describe("local broker", () => {
     });
     await waitUntil(() => broker.registry.connectionCount === 0);
     expect(broker.registry.connectionCount).toBe(0);
+  });
+
+  test("rejects connections whose configuration fingerprint differs from the active broker", async () => {
+    const { broker, secret } = await createBroker();
+    const first = await connectClient(broker.port, secret);
+    const second = await connectClient(broker.port, secret);
+
+    await registerClient(first, broker.machineId, crypto.randomUUID(), "a".repeat(64));
+    const response = waitForMessage(second);
+    second.send(
+      JSON.stringify({
+        ...envelope("register"),
+        payload: {
+          packageVersion: "0.0.0",
+          openCodeVersion: "1.18.18",
+          machineId: broker.machineId,
+          instanceId: crypto.randomUUID(),
+          configFingerprint: "b".repeat(64),
+          capabilities: [...BROKER_CAPABILITIES],
+        },
+      }),
+    );
+
+    expect(await response).toMatchObject({
+      type: "error",
+      payload: { code: "CONFIG_FINGERPRINT_MISMATCH" },
+    });
+    expect(broker.registry.connectionCount).toBe(1);
   });
 
   test("removes every route when its owning connection closes", async () => {
@@ -253,6 +282,7 @@ async function registerClient(
   socket: WebSocket,
   machineId: string,
   instanceId: string,
+  configFingerprint = "a".repeat(64),
 ): Promise<void> {
   const response = waitForMessage(socket);
   socket.send(
@@ -263,6 +293,7 @@ async function registerClient(
         openCodeVersion: "1.18.18",
         machineId,
         instanceId,
+        configFingerprint,
         capabilities: [...BROKER_CAPABILITIES],
       },
     }),

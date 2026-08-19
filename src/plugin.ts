@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { NotifierConfigSchema } from "./config";
+import { computeNotifierConfigFingerprint, NotifierConfigSchema } from "./config";
 import { resolveLocale } from "./i18n";
 import { OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";
@@ -24,6 +24,7 @@ export const TelegramLinkPlugin = (async ({ client, directory }, options) => {
 
   const broker = new BrokerClient({
     port: config.data.broker.port,
+    configFingerprint: computeNotifierConfigFingerprint(config.data),
     packageVersion: "0.0.0",
     openCodeVersion: "1.18.x",
     onCommand: async (command) => runOpenCodeCommand(client, directory, command),

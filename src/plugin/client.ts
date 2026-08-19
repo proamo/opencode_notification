@@ -24,6 +24,7 @@ const DEFAULT_PORT = 42617;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+const DEFAULT_CONFIG_FINGERPRINT = "0".repeat(64);
 
 export type RouteIntent = {
   projectId: string;
@@ -42,6 +43,7 @@ export type BrokerClientOptions = {
   heartbeatIntervalMs?: number;
   reconnectMinDelayMs?: number;
   reconnectMaxDelayMs?: number;
+  configFingerprint?: string;
   spawnBroker?: (input: { stateDirectory: string; port: number }) => void | Promise<void>;
   random?: () => number;
   onCommand?: (command: BrokerCommand) => CommandResult | Promise<CommandResult>;
@@ -67,6 +69,7 @@ export class BrokerClient {
       | "heartbeatIntervalMs"
       | "reconnectMinDelayMs"
       | "reconnectMaxDelayMs"
+      | "configFingerprint"
       | "random"
       | "onCommand"
       | "onDiagnostic"
@@ -99,6 +102,7 @@ export class BrokerClient {
       heartbeatIntervalMs: options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
       reconnectMinDelayMs: options.reconnectMinDelayMs ?? 100,
       reconnectMaxDelayMs: options.reconnectMaxDelayMs ?? 5_000,
+      configFingerprint: options.configFingerprint ?? DEFAULT_CONFIG_FINGERPRINT,
       spawnBroker: options.spawnBroker,
       random: options.random ?? Math.random,
       onCommand: options.onCommand ?? rejectUnsupportedCommand,
@@ -239,6 +243,7 @@ export class BrokerClient {
           openCodeVersion: this.#options.openCodeVersion,
           machineId: identity.machineId,
           instanceId: this.instanceId,
+          configFingerprint: this.#options.configFingerprint,
           capabilities: [...BROKER_CAPABILITIES],
         },
       });
