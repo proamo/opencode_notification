@@ -133,5 +133,6 @@ V1 不支援同一個 Telegram Bot 同時連接多台電腦。Telegram long poll
 - [Local broker protocol](protocol.md)
 - [Data retention](data-retention.md)
 - [Contributor guide](contributing.md)
+- [GitNexus release readiness](gitnexus-release-readiness.md)
 
 需求、行為與安全邊界以英文 OpenSpec 文件為準；本頁必須與正式規格保持一致。

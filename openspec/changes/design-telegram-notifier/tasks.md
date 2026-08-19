@@ -56,4 +56,4 @@
 - [x] 7.3 Maintain an English canonical reference and a matching Traditional Chinese overview
 - [x] 7.4 Add threat-model, protocol, data-retention, compatibility, and contributor documentation
 - [x] 7.5 Configure reproducible npm publishing, provenance, changelog generation, license checks, and release smoke tests
-- [ ] 7.6 Index the implemented code with GitNexus and run graph-backed impact checks before the first public release
+- [x] 7.6 Index the implemented code with GitNexus and run graph-backed impact checks before the first public release

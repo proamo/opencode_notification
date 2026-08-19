@@ -294,6 +294,7 @@ The broker and plugin negotiate protocol major version `1`. Incompatible upgrade
 - [Local broker protocol](docs/protocol.md)
 - [Data retention](docs/data-retention.md)
 - [Contributor guide](docs/contributing.md)
+- [GitNexus release readiness](docs/gitnexus-release-readiness.md)
 
 The OpenSpec artifacts are the current source of truth. Requirements use RFC 2119 language and testable scenarios.
 
