@@ -6,3 +6,5 @@ coverage/
 .env.*
 !.env.example
 telegram.env
+.opencode/opencode.json
+.opencode/opencode.jsonc
