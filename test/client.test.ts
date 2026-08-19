@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, probeBroker, startBroker } from "../src/broker";
-import { BrokerClient, type BrokerClientOptions } from "../src/plugin/client";
+import { BrokerClient, type BrokerClientOptions, brokerRuntimeCommand } from "../src/plugin/client";
 import type { BrokerCommand, RouteKey } from "../src/protocol";
 import { discoveryRecordPath, loadOrCreateStateIdentity } from "../src/state";
 import {
@@ -27,6 +27,10 @@ afterEach(async () => {
 });
 
 describe("BrokerClient lifecycle", () => {
+  test("uses a Bun runtime command for detached broker spawn", () => {
+    expect(brokerRuntimeCommand().command).toMatch(/bun|npx/);
+  });
+
   test("starts a missing broker and registers routes that were declared before connection", async () => {
     const stateDirectory = await createTemporaryDirectory();
     const port = await availablePort();

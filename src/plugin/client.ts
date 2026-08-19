@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { probeBroker } from "../broker/server";
 import {
@@ -141,8 +142,10 @@ export class BrokerClient {
     this.#stopped = true;
     this.#clearHeartbeat();
     this.#socket?.terminate();
-    this.#rejectPending(new Error("broker client stopped"));
-    await this.#runPromise;
+    if (this.#connected) this.#dropPending();
+    else this.#rejectPending(new Error("broker client stopped"));
+    const runPromise = this.#runPromise;
+    if (runPromise) await runPromise.catch(() => undefined);
     this.#runPromise = undefined;
     this.#connected = false;
   }
@@ -312,6 +315,7 @@ export class BrokerClient {
       }, this.#options.requestTimeoutMs);
       this.#pending.set(requestId, { resolve, reject, timeout });
     });
+    response.catch(() => undefined);
     socket.send(JSON.stringify(envelope));
     return await response;
   }
@@ -393,6 +397,11 @@ export class BrokerClient {
     this.#pending.clear();
   }
 
+  #dropPending(): void {
+    for (const request of this.#pending.values()) clearTimeout(request.timeout);
+    this.#pending.clear();
+  }
+
   #requireIdentity(): StateIdentity {
     if (!this.#identity) throw new Error("broker client identity is not initialized");
     return this.#identity;
@@ -401,7 +410,8 @@ export class BrokerClient {
 
 export function spawnDetachedBroker(input: { stateDirectory: string; port: number }): void {
   const brokerEntry = fileURLToPath(new URL("./broker/main.js", import.meta.url));
-  const child = spawn(process.execPath, [brokerEntry], {
+  const runtime = brokerRuntimeCommand();
+  const child = spawn(runtime.command, [...runtime.args, brokerEntry], {
     detached: true,
     stdio: "ignore",
     env: {
@@ -411,6 +421,16 @@ export function spawnDetachedBroker(input: { stateDirectory: string; port: numbe
     },
   });
   child.unref();
+}
+
+export function brokerRuntimeCommand(): { command: string; args: string[] } {
+  if (process.versions.bun && basename(process.execPath).startsWith("bun")) {
+    return { command: process.execPath, args: [] };
+  }
+  if (process.env.OPENCODE_TELEGRAM_BUN) {
+    return { command: process.env.OPENCODE_TELEGRAM_BUN, args: [] };
+  }
+  return { command: "npx", args: ["--yes", "bun"] };
 }
 
 function routeIntentKey(input: Pick<RouteIntent, "projectId" | "sessionId">): string {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PluginInput } from "@opencode-ai/plugin";
-import { runOpenCodeCommand } from "../src/plugin";
+import { runOpenCodeCommand } from "../src/plugin/commands";
 import type { BrokerCommand } from "../src/protocol";
 
 describe("runOpenCodeCommand", () => {
