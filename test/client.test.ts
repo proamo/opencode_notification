@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, probeBroker, startBroker } from "../src/broker";
-import { BrokerClient } from "../src/plugin/client";
+import { BrokerClient, type BrokerClientOptions } from "../src/plugin/client";
+import type { BrokerCommand } from "../src/protocol";
 import { discoveryRecordPath, loadOrCreateStateIdentity } from "../src/state";
 
 const temporaryDirectories: string[] = [];
@@ -67,6 +68,41 @@ describe("BrokerClient lifecycle", () => {
 
     expect(client.connected).toBe(true);
     expect(brokers[0]?.registry.routeCount).toBe(0);
+  });
+
+  test("dispatches broker commands only to the exact owning route", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    const handled: BrokerCommand[] = [];
+    const client = createClient(stateDirectory, port, {
+      onCommand: (command) => {
+        handled.push(command);
+        return { commandId: command.commandId, status: "accepted" };
+      },
+    });
+    clients.push(client);
+    await client.start();
+    await client.upsertRoute(routeIntent());
+    const route = client.activeRoute("opaque-project-id", "ses_123");
+    if (!route || !brokers[0]) throw new Error("expected active route");
+
+    const result = await brokers[0].sendCommand({
+      type: "session.prompt",
+      commandId: crypto.randomUUID(),
+      route,
+      text: "Continue safely",
+    });
+    const stale = await brokers[0].sendCommand({
+      type: "session.prompt",
+      commandId: crypto.randomUUID(),
+      route: { ...route, routeGeneration: crypto.randomUUID() },
+      text: "Must not reroute",
+    });
+
+    expect(result.status).toBe("accepted");
+    expect(handled).toHaveLength(1);
+    expect(handled[0]).toMatchObject({ type: "session.prompt", route, text: "Continue safely" });
+    expect(stale).toMatchObject({ status: "stale", reason: "route is offline" });
   });
 
   test("keeps a broker alive while connected and lets it idle out after disconnect", async () => {
@@ -161,7 +197,11 @@ describe("BrokerClient lifecycle", () => {
   });
 });
 
-function createClient(stateDirectory: string, port: number): BrokerClient {
+function createClient(
+  stateDirectory: string,
+  port: number,
+  options: Pick<BrokerClientOptions, "onCommand"> = {},
+): BrokerClient {
   return new BrokerClient({
     stateDirectory,
     port,
@@ -173,6 +213,7 @@ function createClient(stateDirectory: string, port: number): BrokerClient {
     reconnectMinDelayMs: 5,
     reconnectMaxDelayMs: 20,
     random: () => 0,
+    ...options,
     spawnBroker: async () => {
       const broker = await startBroker({ stateDirectory, port, idleTimeoutMs: 5_000 });
       brokers.push(broker);

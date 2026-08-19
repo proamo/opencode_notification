@@ -1,9 +1,10 @@
 import { basename } from "node:path";
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { NotifierConfigSchema } from "./config";
 import { resolveLocale } from "./i18n";
 import { OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";
+import type { BrokerCommand, CommandResult } from "./protocol";
 import { deriveProjectId, loadOrCreateStateIdentity } from "./state";
 
 export const TelegramLinkPlugin = (async ({ client, directory }, options) => {
@@ -25,6 +26,7 @@ export const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     port: config.data.broker.port,
     packageVersion: "0.0.0",
     openCodeVersion: "1.18.x",
+    onCommand: async (command) => runOpenCodeCommand(client, directory, command),
     onDiagnostic: (code, message) => {
       void client.app.log({
         body: {
@@ -101,3 +103,30 @@ export const TelegramLinkPlugin = (async ({ client, directory }, options) => {
 }) satisfies Plugin;
 
 export default TelegramLinkPlugin;
+
+async function runOpenCodeCommand(
+  client: PluginInput["client"],
+  directory: string,
+  command: BrokerCommand,
+): Promise<CommandResult> {
+  if (command.type !== "session.prompt") {
+    return { commandId: command.commandId, status: "rejected", reason: "unsupported command" };
+  }
+  try {
+    const response = await client.session.prompt({
+      path: { id: command.route.sessionId },
+      query: { directory },
+      body: { parts: [{ type: "text", text: command.text }] },
+    });
+    if (response.error) {
+      return { commandId: command.commandId, status: "rejected", reason: "session prompt failed" };
+    }
+    return { commandId: command.commandId, status: "accepted" };
+  } catch {
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: "session prompt failed",
+    };
+  }
+}

@@ -15,10 +15,12 @@ export {
   TelegramUpdateAuthorizer,
 } from "./authorization";
 export {
+  type BrokerCommandDispatcher,
   createValidatedInteractionHandler,
   type InteractionValidationReason,
   type InteractionValidationResult,
   type InteractionValidatorOptions,
+  submitCompletedSessionReply,
   type ValidatedTelegramInteraction,
   validateTelegramInteraction,
 } from "./interaction";

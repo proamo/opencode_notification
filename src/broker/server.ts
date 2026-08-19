@@ -2,9 +2,11 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   BROKER_CAPABILITIES,
+  type BrokerCommand,
   type BrokerEnvelope,
   type ClientEnvelope,
   ClientEnvelopeSchema,
+  type CommandResult,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
 } from "../protocol";
@@ -23,6 +25,7 @@ const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 45_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 
 const HealthResponseSchema = z.object({
   service: z.literal("opencode-telegram-link"),
@@ -52,6 +55,7 @@ export class BrokerServer {
 
   readonly #server: Bun.Server<BrokerConnectionData>;
   readonly #connections = new Set<Bun.ServerWebSocket<BrokerConnectionData>>();
+  readonly #pendingCommands: Map<string, PendingBrokerCommand>;
   readonly #livenessTimer: ReturnType<typeof setInterval>;
   readonly #maintenanceTimer: ReturnType<typeof setInterval>;
   readonly #removeDiscovery: () => Promise<void>;
@@ -67,6 +71,7 @@ export class BrokerServer {
     livenessTimer: ReturnType<typeof setInterval>;
     maintenanceTimer: ReturnType<typeof setInterval>;
     removeDiscovery: () => Promise<void>;
+    pendingCommands: Map<string, PendingBrokerCommand>;
   }) {
     this.#server = input.server;
     this.machineId = input.machineId;
@@ -77,6 +82,7 @@ export class BrokerServer {
     this.#livenessTimer = input.livenessTimer;
     this.#maintenanceTimer = input.maintenanceTimer;
     this.#removeDiscovery = input.removeDiscovery;
+    this.#pendingCommands = input.pendingCommands;
     this.finished = new Promise((resolve) => {
       this.#resolveFinished = resolve;
     });
@@ -87,11 +93,49 @@ export class BrokerServer {
     this.#stopped = true;
     clearInterval(this.#livenessTimer);
     clearInterval(this.#maintenanceTimer);
+    failPendingCommands(this.#pendingCommands, "broker stopped");
     await this.#server.stop(true);
     this.#connections.clear();
     await this.#removeDiscovery();
     this.database.close();
     this.#resolveFinished();
+  }
+
+  async sendCommand(
+    command: BrokerCommand,
+    timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  ): Promise<CommandResult> {
+    const socket = this.registry.owner(command.route);
+    if (!socket) {
+      return { commandId: command.commandId, status: "stale", reason: "route is offline" };
+    }
+
+    const requestId = randomUUID();
+    const result = new Promise<CommandResult>((resolve) => {
+      const timeout = setTimeout(() => {
+        this.#pendingCommands.delete(requestId);
+        resolve({
+          commandId: command.commandId,
+          status: "indeterminate",
+          reason: "command timed out",
+        });
+      }, timeoutMs);
+      timeout.unref();
+      this.#pendingCommands.set(requestId, {
+        connectionId: socket.data.connectionId,
+        commandId: command.commandId,
+        resolve,
+        timeout,
+      });
+    });
+    send(socket, {
+      protocol: PROTOCOL_VERSION,
+      type: "command",
+      requestId,
+      sentAt: new Date().toISOString(),
+      payload: command,
+    });
+    return await result;
   }
 }
 
@@ -103,6 +147,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
     machineId: state.machineId,
   });
   const connections = new Set<Bun.ServerWebSocket<BrokerConnectionData>>();
+  const pendingCommands = new Map<string, PendingBrokerCommand>();
   const registrationTimeoutMs = options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -148,11 +193,12 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             connections.add(socket);
           },
           message(socket, message) {
-            handleMessage(socket, message, state.machineId, registry);
+            handleMessage(socket, message, state.machineId, registry, pendingCommands);
           },
           close(socket) {
             connections.delete(socket);
             registry.removeConnection(socket.data.connectionId);
+            failPendingCommands(pendingCommands, "route disconnected", socket.data.connectionId);
           },
         },
       });
@@ -207,6 +253,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
       connections,
       livenessTimer,
       maintenanceTimer,
+      pendingCommands,
       removeDiscovery: () => removeDiscoveryRecord(state.stateDirectory, discovery.nonce),
     });
     return broker;
@@ -266,6 +313,7 @@ function handleMessage(
   message: string | Buffer<ArrayBuffer>,
   machineId: string,
   registry: RouteRegistry,
+  pendingCommands: Map<string, PendingBrokerCommand>,
 ): void {
   const text = typeof message === "string" ? message : message.toString("utf8");
   if (Buffer.byteLength(text, "utf8") > MAX_FRAME_BYTES) {
@@ -345,6 +393,22 @@ function handleMessage(
         });
         return;
       }
+      case "command.result": {
+        const pending = pendingCommands.get(envelope.requestId);
+        if (!pending || pending.connectionId !== socket.data.connectionId) return;
+        pendingCommands.delete(envelope.requestId);
+        clearTimeout(pending.timeout);
+        pending.resolve(
+          envelope.payload.commandId === pending.commandId
+            ? envelope.payload
+            : {
+                commandId: pending.commandId,
+                status: "indeterminate",
+                reason: "command identity mismatch",
+              },
+        );
+        return;
+      }
     }
   } catch (error) {
     const code = error instanceof RouteRegistrationError ? error.code : "REQUEST_REJECTED";
@@ -352,6 +416,26 @@ function handleMessage(
       error instanceof RouteRegistrationError ? error.message : "protocol request was rejected";
     sendError(socket, envelope.requestId, code, messageText);
     if (envelope.type === "register") setTimeout(() => socket.terminate(), 0);
+  }
+}
+
+type PendingBrokerCommand = {
+  connectionId: string;
+  commandId: string;
+  resolve: (result: CommandResult) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+function failPendingCommands(
+  pendingCommands: Map<string, PendingBrokerCommand>,
+  reason: string,
+  connectionId?: string,
+): void {
+  for (const [requestId, pending] of pendingCommands) {
+    if (connectionId && pending.connectionId !== connectionId) continue;
+    pendingCommands.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.resolve({ commandId: pending.commandId, status: "stale", reason });
   }
 }
 

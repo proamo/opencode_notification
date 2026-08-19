@@ -2,10 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RouteKey } from "../src/protocol";
+import type { BrokerCommand, RouteKey } from "../src/protocol";
 import { StateDatabase } from "../src/state";
 import {
   createValidatedInteractionHandler,
+  submitCompletedSessionReply,
   TelegramUpdateAuthorizer,
   TelegramUpdateSchema,
   validateTelegramInteraction,
@@ -240,6 +241,70 @@ describe("validateTelegramInteraction", () => {
       actionId: "USER_MISMATCH",
     });
     expect(validated).toBe(1);
+  });
+
+  test("submits completed-session replies as session prompt commands", async () => {
+    const database = await createDatabase();
+    const route = routeKey();
+    saveRoute(database, route, "session_prompt");
+    const validation = validateTelegramInteraction(
+      parseUpdate(messageReply()),
+      subject("message"),
+      {
+        database,
+        isRouteLive: () => true,
+        now: () => 2_000,
+      },
+    );
+    if (!validation.accepted) throw new Error("expected accepted interaction");
+    let command: BrokerCommand | undefined;
+
+    const result = await submitCompletedSessionReply(
+      {
+        sendCommand: async (input) => {
+          command = input;
+          return { commandId: input.commandId, status: "accepted" };
+        },
+      },
+      validation.interaction,
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(command).toMatchObject({ type: "session.prompt", route, text: "Continue safely" });
+    expect(command?.commandId).toBe(result.commandId);
+  });
+
+  test("does not submit non-session or empty replies", async () => {
+    const route = routeKey();
+    let dispatched = false;
+    const dispatcher = {
+      sendCommand: async (input: BrokerCommand) => {
+        dispatched = true;
+        return { commandId: input.commandId, status: "accepted" as const };
+      },
+    };
+
+    await expect(
+      submitCompletedSessionReply(dispatcher, {
+        updateId: 1,
+        chatId: String(USER_ID),
+        messageId: 77,
+        kind: "question_reply",
+        route,
+        text: "Continue safely",
+      }),
+    ).resolves.toMatchObject({ status: "rejected", reason: "not a session prompt binding" });
+    await expect(
+      submitCompletedSessionReply(dispatcher, {
+        updateId: 2,
+        chatId: String(USER_ID),
+        messageId: 78,
+        kind: "session_prompt",
+        route,
+        text: "   ",
+      }),
+    ).resolves.toMatchObject({ status: "rejected", reason: "empty prompt" });
+    expect(dispatched).toBe(false);
   });
 });
 

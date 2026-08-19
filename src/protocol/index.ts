@@ -58,11 +58,45 @@ export const HeartbeatEnvelopeSchema = z.object({
   payload: z.object({}),
 });
 
+export const BrokerCommandSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("session.prompt"),
+    commandId: z.uuid(),
+    route: RouteKeySchema,
+    text: z.string().min(1).max(16_384),
+  }),
+  z.object({
+    type: z.literal("question.reply"),
+    commandId: z.uuid(),
+    route: RouteKeySchema,
+    interactionId: z.string().min(1).max(256),
+    answers: z
+      .array(z.array(z.string().max(2048)).max(20))
+      .min(1)
+      .max(20),
+  }),
+]);
+export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
+
+export const CommandResultSchema = z.object({
+  commandId: z.uuid(),
+  status: z.enum(["accepted", "rejected", "stale", "indeterminate"]),
+  reason: z.string().min(1).max(256).optional(),
+});
+export type CommandResult = z.infer<typeof CommandResultSchema>;
+
+export const CommandResultEnvelopeSchema = z.object({
+  ...EnvelopeFields,
+  type: z.literal("command.result"),
+  payload: CommandResultSchema,
+});
+
 export const ClientEnvelopeSchema = z.discriminatedUnion("type", [
   RegisterEnvelopeSchema,
   RouteRegisterEnvelopeSchema,
   RouteUnregisterEnvelopeSchema,
   HeartbeatEnvelopeSchema,
+  CommandResultEnvelopeSchema,
 ]);
 export type ClientEnvelope = z.infer<typeof ClientEnvelopeSchema>;
 
@@ -89,6 +123,11 @@ export const BrokerEnvelopeSchema = z.discriminatedUnion("type", [
     ...EnvelopeFields,
     type: z.literal("heartbeat.ack"),
     payload: z.object({}),
+  }),
+  z.object({
+    ...EnvelopeFields,
+    type: z.literal("command"),
+    payload: BrokerCommandSchema,
   }),
   z.object({
     ...EnvelopeFields,
@@ -145,33 +184,6 @@ export const NormalizedNotificationSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type NormalizedNotification = z.infer<typeof NormalizedNotificationSchema>;
-
-export const BrokerCommandSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("session.prompt"),
-    commandId: z.uuid(),
-    route: RouteKeySchema,
-    text: z.string().min(1).max(16_384),
-  }),
-  z.object({
-    type: z.literal("question.reply"),
-    commandId: z.uuid(),
-    route: RouteKeySchema,
-    interactionId: z.string().min(1).max(256),
-    answers: z
-      .array(z.array(z.string().max(2048)).max(20))
-      .min(1)
-      .max(20),
-  }),
-]);
-export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
-
-export const CommandResultSchema = z.object({
-  commandId: z.uuid(),
-  status: z.enum(["accepted", "rejected", "stale", "indeterminate"]),
-  reason: z.string().min(1).max(256).optional(),
-});
-export type CommandResult = z.infer<typeof CommandResultSchema>;
 
 export const DiagnosticSchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"]),

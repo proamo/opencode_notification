@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import { probeBroker } from "../broker/server";
 import {
   BROKER_CAPABILITIES,
+  type BrokerCommand,
   type BrokerEnvelope,
   BrokerEnvelopeSchema,
   type ClientEnvelope,
   ClientEnvelopeSchema,
+  type CommandResult,
   PROTOCOL_VERSION,
   type RouteKey,
 } from "../protocol";
@@ -42,6 +44,7 @@ export type BrokerClientOptions = {
   reconnectMaxDelayMs?: number;
   spawnBroker?: (input: { stateDirectory: string; port: number }) => void | Promise<void>;
   random?: () => number;
+  onCommand?: (command: BrokerCommand) => CommandResult | Promise<CommandResult>;
   onDiagnostic?: (code: string, message: string) => void;
 };
 
@@ -65,6 +68,7 @@ export class BrokerClient {
       | "reconnectMinDelayMs"
       | "reconnectMaxDelayMs"
       | "random"
+      | "onCommand"
       | "onDiagnostic"
     >
   > & {
@@ -97,6 +101,7 @@ export class BrokerClient {
       reconnectMaxDelayMs: options.reconnectMaxDelayMs ?? 5_000,
       spawnBroker: options.spawnBroker,
       random: options.random ?? Math.random,
+      onCommand: options.onCommand ?? rejectUnsupportedCommand,
       onDiagnostic: options.onDiagnostic ?? (() => undefined),
     };
   }
@@ -315,6 +320,11 @@ export class BrokerClient {
       return;
     }
 
+    if (envelope.type === "command") {
+      void this.#handleCommand(envelope.requestId, envelope.payload);
+      return;
+    }
+
     const pending = this.#pending.get(envelope.requestId);
     if (!pending) return;
     clearTimeout(pending.timeout);
@@ -324,6 +334,35 @@ export class BrokerClient {
     } else {
       pending.resolve(envelope);
     }
+  }
+
+  async #handleCommand(requestId: string, command: BrokerCommand): Promise<void> {
+    let result: CommandResult;
+    try {
+      result = await this.#options.onCommand(command);
+    } catch (error) {
+      result = {
+        commandId: command.commandId,
+        status: "indeterminate",
+        reason: error instanceof Error ? error.message.slice(0, 256) : "command handler failed",
+      };
+    }
+    this.#send({ type: "command.result", requestId, payload: result });
+  }
+
+  #send(input: {
+    type: Extract<ClientEnvelope["type"], "command.result">;
+    requestId: string;
+    payload: CommandResult;
+  }): void {
+    const socket = this.#socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const envelope = ClientEnvelopeSchema.parse({
+      protocol: PROTOCOL_VERSION,
+      sentAt: new Date().toISOString(),
+      ...input,
+    });
+    socket.send(JSON.stringify(envelope));
   }
 
   #startHeartbeat(): void {
@@ -371,6 +410,10 @@ export function spawnDetachedBroker(input: { stateDirectory: string; port: numbe
 
 function routeIntentKey(input: Pick<RouteIntent, "projectId" | "sessionId">): string {
   return JSON.stringify([input.projectId, input.sessionId]);
+}
+
+function rejectUnsupportedCommand(command: BrokerCommand): CommandResult {
+  return { commandId: command.commandId, status: "rejected", reason: "unsupported command" };
 }
 
 async function waitForOpen(socket: WebSocket, timeoutMs: number): Promise<void> {

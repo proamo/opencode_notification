@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import type { RouteKey } from "../protocol";
+import { createHash, randomUUID } from "node:crypto";
+import type { BrokerCommand, CommandResult, RouteKey } from "../protocol";
 import type { MessageRouteKind, MessageRouteRecord, StateDatabase } from "../state";
 import type { TelegramUpdate } from "./api";
 import type { AuthorizedUpdate, TelegramUpdateAuthorizer } from "./authorization";
@@ -39,6 +39,10 @@ export type InteractionValidatorOptions = {
   database: StateDatabase;
   isRouteLive: (route: RouteKey) => boolean;
   now?: () => number;
+};
+
+export type BrokerCommandDispatcher = {
+  sendCommand(command: BrokerCommand): Promise<CommandResult>;
 };
 
 export function validateTelegramInteraction(
@@ -93,6 +97,23 @@ export function createValidatedInteractionHandler(
     const result = validateTelegramInteraction(update, subject, options);
     if (!result.accepted) return result.disposition;
     return handleValidated(result.interaction, update);
+  });
+}
+
+export async function submitCompletedSessionReply(
+  dispatcher: BrokerCommandDispatcher,
+  interaction: ValidatedTelegramInteraction,
+): Promise<CommandResult> {
+  if (interaction.kind !== "session_prompt") {
+    return { commandId: randomUUID(), status: "rejected", reason: "not a session prompt binding" };
+  }
+  const text = interaction.text?.trim();
+  if (!text) return { commandId: randomUUID(), status: "rejected", reason: "empty prompt" };
+  return await dispatcher.sendCommand({
+    type: "session.prompt",
+    commandId: randomUUID(),
+    route: interaction.route,
+    text,
   });
 }
 

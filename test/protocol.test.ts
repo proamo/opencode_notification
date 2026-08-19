@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   BrokerCommandSchema,
+  BrokerEnvelopeSchema,
+  ClientEnvelopeSchema,
   NormalizedNotificationSchema,
   PROTOCOL_VERSION,
   RegisterEnvelopeSchema,
@@ -72,6 +74,36 @@ describe("protocol schemas", () => {
         answer: "allow",
       }).success,
     ).toBe(false);
+  });
+
+  test("validates broker command and client command-result envelopes", () => {
+    const commandId = crypto.randomUUID();
+    const requestId = crypto.randomUUID();
+
+    expect(
+      BrokerEnvelopeSchema.safeParse({
+        protocol: PROTOCOL_VERSION,
+        type: "command",
+        requestId,
+        sentAt: new Date().toISOString(),
+        payload: {
+          type: "session.prompt",
+          commandId,
+          route,
+          text: "Continue with the tests",
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      ClientEnvelopeSchema.safeParse({
+        protocol: PROTOCOL_VERSION,
+        type: "command.result",
+        requestId,
+        sentAt: new Date().toISOString(),
+        payload: { commandId, status: "accepted" },
+      }).success,
+    ).toBe(true);
   });
 
   test("accepts only allowlisted notification kinds", () => {
