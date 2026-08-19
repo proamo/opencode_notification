@@ -49,10 +49,14 @@ export type BrokerCommandDispatcher = {
 
 export type InteractionFeedbackCode =
   | "accepted"
+  | "already_handled"
   | "expired"
+  | "indeterminate"
   | "invalid"
   | "offline"
+  | "rejected"
   | "reply_required"
+  | "stale"
   | "terminal_only";
 
 export type InteractionSubmissionOutcome = {
@@ -201,10 +205,13 @@ export function validationFeedback(reason: InteractionValidationReason): Interac
     case "ROUTE_STALE":
       return "offline";
     case "MESSAGE_BINDING_REQUIRED":
-    case "MESSAGE_BINDING_NOT_FOUND":
-    case "ALREADY_HANDLED":
       return "reply_required";
+    case "MESSAGE_BINDING_NOT_FOUND":
+      return "rejected";
+    case "ALREADY_HANDLED":
+      return "already_handled";
     case "MESSAGE_BINDING_INACTIVE":
+      return "stale";
     case "CALLBACK_TOKEN_INVALID":
     case "CALLBACK_TOKEN_MESSAGE_MISMATCH":
     case "ACTION_KIND_MISMATCH":
@@ -219,14 +226,22 @@ export function interactionFeedbackText(
   switch (feedback) {
     case "accepted":
       return translate(locale, "interaction.accepted");
+    case "already_handled":
+      return translate(locale, "interaction.alreadyHandled");
     case "expired":
       return translate(locale, "interaction.expired");
+    case "indeterminate":
+      return translate(locale, "interaction.indeterminate");
     case "invalid":
       return translate(locale, "interaction.invalid");
     case "offline":
       return translate(locale, "interaction.offline");
+    case "rejected":
+      return translate(locale, "interaction.rejected");
     case "reply_required":
       return translate(locale, "interaction.replyRequired");
+    case "stale":
+      return translate(locale, "interaction.stale");
     case "terminal_only":
       return translate(locale, "interaction.terminalOnly");
   }
@@ -337,7 +352,14 @@ function questionAnswers(interaction: ValidatedTelegramInteraction): string[][] 
 
 function commandResultFeedback(result: CommandResult): InteractionFeedbackCode {
   if (result.status === "accepted") return "accepted";
-  if (result.status === "stale") return "offline";
+  if (result.status === "indeterminate") return "indeterminate";
+  if (result.status === "stale") {
+    return result.reason?.includes("offline") || result.reason?.includes("disconnected")
+      ? "offline"
+      : "stale";
+  }
   if (result.reason === "terminal intervention required") return "terminal_only";
+  if (result.reason === "invalid question answer") return "invalid";
+  if (result.status === "rejected") return "rejected";
   return "invalid";
 }

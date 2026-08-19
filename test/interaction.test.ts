@@ -435,12 +435,46 @@ describe("validateTelegramInteraction", () => {
 
   test("maps rejected validation reasons to localized guidance categories", async () => {
     expect(validationFeedback("MESSAGE_BINDING_REQUIRED")).toBe("reply_required");
+    expect(validationFeedback("MESSAGE_BINDING_NOT_FOUND")).toBe("rejected");
     expect(validationFeedback("MESSAGE_BINDING_EXPIRED")).toBe("expired");
+    expect(validationFeedback("MESSAGE_BINDING_INACTIVE")).toBe("stale");
+    expect(validationFeedback("ALREADY_HANDLED")).toBe("already_handled");
     expect(validationFeedback("ROUTE_STALE")).toBe("offline");
     expect(validationFeedback("ACTION_KIND_MISMATCH")).toBe("invalid");
     expect(interactionFeedbackText("en", validationFeedback("MESSAGE_BINDING_REQUIRED"))).toBe(
       "Reply directly to an actionable notification.",
     );
+    expect(interactionFeedbackText("en", validationFeedback("ALREADY_HANDLED"))).toBe(
+      "This response was already handled.",
+    );
+  });
+
+  test.each([
+    [{ status: "accepted" as const }, "accepted"],
+    [{ status: "rejected" as const, reason: "session prompt failed" }, "rejected"],
+    [{ status: "rejected" as const, reason: "invalid question answer" }, "invalid"],
+    [{ status: "stale" as const, reason: "route is offline" }, "offline"],
+    [{ status: "stale" as const, reason: "question already resolved" }, "stale"],
+    [{ status: "indeterminate" as const, reason: "command timed out" }, "indeterminate"],
+  ])("maps command result %o to %s feedback", async (result, feedback) => {
+    const route = routeKey();
+    const commandId = crypto.randomUUID();
+
+    await expect(
+      submitTelegramInteraction(
+        {
+          sendCommand: async () => ({ commandId, ...result }),
+        },
+        {
+          updateId: 5,
+          chatId: String(USER_ID),
+          messageId: 80,
+          kind: "session_prompt",
+          route,
+          text: "Continue safely",
+        },
+      ),
+    ).resolves.toMatchObject({ feedback });
   });
 });
 

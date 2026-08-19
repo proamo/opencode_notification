@@ -37,7 +37,7 @@
 - [x] 5.3 Implement completed-session replies through the exact bound OpenCode session prompt API
 - [x] 5.4 Implement constrained single- and multi-select and free-text answers through the exact pending OpenCode question reply API
 - [x] 5.5 Implement non-actionable permission notices and localized terminal-intervention feedback for every attempted Telegram reply
-- [ ] 5.6 Implement accepted, rejected, expired, offline, invalid, stale, and indeterminate Telegram outcome feedback
+- [x] 5.6 Implement accepted, rejected, expired, offline, invalid, stale, and indeterminate Telegram outcome feedback
 - [ ] 5.7 Add end-to-end tests with multiple fake OpenCode processes proving that replies never cross projects, instances, sessions, or interaction types
 
 ## 6. Setup and Operations
