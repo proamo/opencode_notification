@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, startBroker } from "../src/broker/server";
@@ -83,6 +83,75 @@ describe("doctor checks", () => {
       expect.objectContaining({ name: "telegram-api", status: "fail" }),
     );
     expect(formatDoctorReport(report)).not.toContain(TOKEN);
+  });
+
+  test("reports insecure token files as setup failures", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const tokenFile = join(stateDirectory, "token");
+    await writeFile(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+    await chmod(tokenFile, 0o644);
+
+    const report = await runDoctor({
+      stateDirectory,
+      port: await availablePort(),
+      rawConfig: { telegram: { tokenFile, userId: "123456789", chatId: "123456789" } },
+      fetch: telegramFetch(),
+      env: { OPENCODE_VERSION: "1.18.18" },
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ name: "secret-file", status: "fail" }),
+    );
+    expect(formatDoctorReport(report)).not.toContain(TOKEN);
+    expect(formatDoctorReport(report)).not.toContain(tokenFile);
+  });
+
+  test("reports incompatible OpenCode versions", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+
+    const report = await runDoctor({
+      stateDirectory,
+      port: await availablePort(),
+      rawConfig: validConfig(),
+      fetch: telegramFetch(),
+      env: { OPENCODE_VERSION: "1.17.9" },
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ name: "opencode-compatibility", status: "fail" }),
+    );
+  });
+
+  test("distinguishes offline and conflicting broker states", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const offline = await runDoctor({
+      stateDirectory,
+      port: await availablePort(),
+      rawConfig: validConfig(),
+      fetch: telegramFetch(),
+      env: { OPENCODE_VERSION: "1.18.18" },
+    });
+    expect(offline.checks).toContainEqual(
+      expect.objectContaining({ name: "broker-reachability", status: "warn" }),
+    );
+
+    const occupied = Bun.serve({ port: 0, fetch: () => new Response("not a broker") });
+    try {
+      const conflicting = await runDoctor({
+        stateDirectory,
+        port: occupied.port ?? 0,
+        rawConfig: validConfig(),
+        fetch: telegramFetch(),
+        env: { OPENCODE_VERSION: "1.18.18" },
+      });
+      expect(conflicting.checks).toContainEqual(
+        expect.objectContaining({ name: "broker-singleton", status: "fail" }),
+      );
+    } finally {
+      await occupied.stop(true);
+    }
   });
 });
 

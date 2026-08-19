@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGuidedSetup, runSetupCli, SetupError } from "../src/setup";
@@ -56,6 +56,23 @@ describe("guided Telegram setup", () => {
     expect(error).toMatchObject({ code: "SETUP_IDENTITY_MISSING" });
     expect(String(error.message)).not.toContain(TOKEN);
     expect(await Bun.file(join(stateDirectory, "telegram-bot-token")).exists()).toBe(false);
+  });
+
+  test("fails closed when setup state permissions are insecure", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    await chmod(stateDirectory, 0o777);
+
+    const error = await runGuidedSetup({
+      botToken: TOKEN,
+      userId: "123456789",
+      chatId: "123456789",
+      stateDirectory,
+      fetch: telegramFetch([], { getMe: bot(42) }),
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(SetupError);
+    expect(error).toMatchObject({ code: "SETUP_PERMISSIONS_UNSAFE" });
+    expect(String(error.message)).not.toContain(TOKEN);
   });
 
   test("pairs a private Telegram chat only after local nonce confirmation", async () => {

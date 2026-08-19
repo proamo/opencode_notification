@@ -109,6 +109,23 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
   const port = options.port ?? 42617;
   const health = await probeBroker(port, state.brokerSecret);
   if (!health) {
+    if (await isPortOccupiedByNonBroker(port)) {
+      checks.push(
+        fail(
+          "broker-singleton",
+          "Configured broker port is occupied by a process that is not the authenticated local broker.",
+          "Stop the conflicting process or choose a different local broker port.",
+        ),
+      );
+      checks.push(
+        warn(
+          "plugin-registration",
+          "No authenticated broker is available to inspect plugin registration.",
+        ),
+      );
+      checks.push(warn("loopback-binding", "Broker binding could not be verified."));
+      return { checks };
+    }
     checks.push(
       warn("broker-reachability", "Broker is stopped or unreachable.", "Start the local broker."),
     );
@@ -157,6 +174,17 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
     );
   }
   return { checks };
+}
+
+async function isPortOccupiedByNonBroker(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      signal: AbortSignal.timeout(500),
+    });
+    return response.status !== 401;
+  } catch {
+    return false;
+  }
 }
 
 async function checkTelegram(
