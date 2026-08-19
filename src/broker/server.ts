@@ -163,7 +163,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
         port: options.port ?? DEFAULT_PORT,
         fetch(request, bunServer) {
           const url = new URL(request.url);
-          if (url.pathname !== "/v1/health" && url.pathname !== "/v1/connect") {
+          if (
+            url.pathname !== "/v1/health" &&
+            url.pathname !== "/v1/connect" &&
+            url.pathname !== "/v1/control/stop"
+          ) {
             return new Response("Not found", { status: 404 });
           }
           if (!isAuthorized(request.headers.get("authorization"), state.brokerSecret)) {
@@ -175,6 +179,12 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
             });
+          }
+          if (url.pathname === "/v1/control/stop") {
+            if (request.method !== "POST")
+              return new Response("Method not allowed", { status: 405 });
+            setTimeout(() => void broker?.stop(), 0);
+            return Response.json({ status: "stopping" });
           }
 
           const upgraded = bunServer.upgrade(request, {
