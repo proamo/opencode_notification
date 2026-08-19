@@ -2,7 +2,7 @@
 
 OpenCode Telegram Notifier 是一個以隱私與精確路由為優先的 OpenCode Telegram 外掛。它讓同時執行多個專案的使用者可以離開終端機，並在工作完成、發生異常、需要回答問題或需要介入時收到通知。
 
-> 目前狀態：規格與架構設計階段，尚未提供可安裝版本。英文 OpenSpec 文件為正式規格。
+> 目前狀態：pre-release implementation，尚未發布 npm 公開版本。正式安裝與操作細節以英文 `README.md` 為準。
 
 ## V1 範圍
 
@@ -41,13 +41,61 @@ machine + OpenCode instance + project + session + route generation
 
 ## 單一 Docker 部署
 
-除了預設的本機執行模式，Broker 也會提供單一 Docker container。OpenCode 與外掛仍在 host 執行，container 只負責 Telegram、SQLite 與路由。
+除了預設的本機執行模式，Broker 也提供單一 Docker container。OpenCode 與外掛仍在 host 執行，container 只負責 Telegram、SQLite 與路由。
 
 - Broker state 使用持久化 volume。
 - Token 與 secret 在執行時掛載，不寫入 image。
 - Port 必須使用 `127.0.0.1:42617:42617` 形式發布。
 - 不允許省略 host IP，避免 Docker 將 Broker 公開到 `0.0.0.0`。
 - 同一份 state 與 Bot 不可同時啟動 native Broker 和 Docker Broker。
+
+## 安裝與設定摘要
+
+目前套件尚未發布到 npm；從原始碼使用時先執行：
+
+```sh
+bun install
+bun run build
+```
+
+透過 BotFather 建立自己的 Telegram Bot，將 token 放入只有目前使用者可讀的檔案，然後執行 guided setup：
+
+```sh
+OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+  opencode-telegram-broker setup --pair --locale zh-TW
+```
+
+Setup 會要求你把一次性短碼傳給 Bot，並在本機終端機輸入 `YES` 確認。完成後，將輸出的 `userId`、`chatId` 與 `tokenFile` 放入 OpenCode plugin options。建議使用 `tokenFile`，不要直接把 bot token 寫進設定檔。
+
+常用 Broker 指令：
+
+```sh
+opencode-telegram-broker start
+opencode-telegram-broker status
+opencode-telegram-broker doctor
+opencode-telegram-broker test-notification --chat-id 123456789 --locale zh-TW
+opencode-telegram-broker stop
+```
+
+`doctor` 會檢查設定、token file 權限、Broker singleton、loopback 綁定、Telegram API、授權身分、catalog 與 OpenCode 相容性，輸出應已遮蔽敏感資訊。
+
+## 回覆行為
+
+必須直接回覆原本的 Bot 訊息。Broker 只使用持久化的 Telegram message binding 與不透明 route ID 進行路由，不會根據專案名稱、session 標題或使用者輸入的 ID 猜測目的地。
+
+支援的 Telegram 回覆：
+
+- 回覆可互動的 root session 完成通知，讓同一個 OpenCode session 繼續執行。
+- 回覆待回答問題通知，送出該問題允許的答案。
+- 回覆權限通知時只會得到「回到終端機處理」提示；V1 不支援 Telegram 權限核准或拒絕。
+
+過期、離線、重複、未授權、無法路由或被 OpenCode 拒絕的回覆都會 fail closed，且離線指令不排隊。
+
+## 更新與移除摘要
+
+更新時先更新套件或重新 build，重啟 Broker，必要時重啟 OpenCode processes，最後執行 `doctor` 與 `test-notification`。若出現 protocol 或 OpenCode compatibility mismatch，必須重啟相關 OpenCode processes，不會自動降級協定。
+
+移除時先刪除 OpenCode plugin 設定，再執行 `opencode-telegram-broker stop`。如需移除路由與 delivery 狀態，可在 Broker 停止後執行 `opencode-telegram-broker purge-state`；如需完全移除，再刪除 state directory 與 token file。若 token 可能外洩，請到 BotFather revoke 或 rotate token。
 
 ## 安全與隱私
 

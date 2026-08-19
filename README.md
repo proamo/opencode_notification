@@ -1,8 +1,8 @@
 # OpenCode Telegram Notifier
 
-OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications and safe remote replies. It is being designed for developers who run several OpenCode projects at the same time and need every Telegram response to return to the exact originating process and session.
+OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications and safe remote replies. It is designed for developers who run several OpenCode projects at the same time and need every Telegram response to return to the exact originating process and session.
 
-> Status: specification and architecture phase. No installable release exists yet.
+> Status: pre-release implementation. The package is not published to npm yet; install from a release tarball or source checkout until the first public release exists.
 
 [繁體中文總覽](docs/README.zh-TW.md)
 
@@ -16,7 +16,7 @@ V1 targets one computer with:
 - multiple projects and sessions;
 - English and Traditional Chinese notifications.
 
-The notifier will report session completion, errors, questions, and permission requests. Users will be able to reply to an eligible completion notification to continue that session and answer a pending OpenCode question from Telegram.
+The notifier reports session completion, errors, questions, and permission requests. Users can reply to an eligible completion notification to continue that session and answer a pending OpenCode question from Telegram.
 
 Remote permission approval is intentionally excluded from V1. Permission notifications direct the user back to the terminal.
 
@@ -30,7 +30,7 @@ OpenCode: project C ─┘
 
 Every OpenCode plugin connects to the same loopback-only broker. The broker is the only Telegram long-polling consumer, so concurrent OpenCode processes do not compete for updates.
 
-The Broker will also support an optional single Docker container. OpenCode plugins remain on the host and connect through a port published only on `127.0.0.1`; the state directory is mounted as a persistent volume. Native mode remains the default.
+The Broker also supports an optional single Docker container. OpenCode plugins remain on the host and connect through a port published only on `127.0.0.1`; the state directory is mounted as a persistent volume. Native mode remains the default.
 
 Each actionable message is bound to an opaque route containing machine, instance, project, session, and route-generation identities. A Telegram reply must reference the original bot message; display names and user-provided route text are never used for routing.
 
@@ -49,6 +49,236 @@ V1 does not support using the same Telegram bot on multiple computers. Telegram 
 
 A future version may offer a separately designed remote-broker mode selected during installation. V1 contains no dormant LAN listener or unaudited remote access path.
 
+## Installation
+
+Requirements:
+
+- Bun `>=1.3.0`.
+- OpenCode with `@opencode-ai/plugin` `>=1.18.0 <2`.
+- A user-owned Telegram bot token from BotFather.
+- One computer per bot token.
+
+From source while the package is pre-release:
+
+```sh
+bun install
+bun run build
+```
+
+After npm publication, install the package in the same environment OpenCode uses for plugins:
+
+```sh
+bun add opencode-telegram-link
+```
+
+The npm package exports the plugin as `opencode-telegram-link` and installs the broker CLI as `opencode-telegram-broker`.
+
+## BotFather Setup
+
+1. Open Telegram and start a chat with `@BotFather`.
+2. Send `/newbot`, choose the bot name and username, and copy the token.
+3. Keep the bot private to you. Do not add it to groups for V1.
+4. Store the token in a private file instead of putting it directly in OpenCode config:
+
+```sh
+mkdir -p ~/.local/state/opencode-telegram-link
+chmod 700 ~/.local/state/opencode-telegram-link
+printf '%s\n' '123456:REPLACE_WITH_BOTFATHER_TOKEN' > ~/.local/state/opencode-telegram-link/telegram-bot-token
+chmod 600 ~/.local/state/opencode-telegram-link/telegram-bot-token
+```
+
+Run guided setup with nonce pairing:
+
+```sh
+OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+  opencode-telegram-broker setup --pair --locale en
+```
+
+The setup command prints a short code. Send that code to your bot in a private Telegram chat, then type `YES` in the local terminal to confirm the discovered Telegram user and chat. Setup validates the bot with `getMe`, pins the private `userId` and `chatId`, and keeps the token in a `0600` token file.
+
+If you already know your Telegram private user/chat ID, you can skip pairing:
+
+```sh
+OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+  opencode-telegram-broker setup --user-id 123456789 --chat-id 123456789 --locale en
+```
+
+## Configuration
+
+Configure the OpenCode plugin with the same pinned Telegram identity returned by setup. The exact OpenCode plugin file format depends on your OpenCode installation; the plugin options object is:
+
+```jsonc
+{
+  "mode": "local",
+  "locale": "auto",
+  "telegram": {
+    "tokenFile": "/home/you/.local/state/opencode-telegram-link/telegram-bot-token",
+    "userId": "123456789",
+    "chatId": "123456789"
+  },
+  "notifications": {
+    "completion": true,
+    "error": true,
+    "question": true,
+    "permission": true,
+    "includeChildLifecycle": false,
+    "completionDebounceMs": 1500,
+    "pluginBufferSize": 100
+  },
+  "broker": {
+    "host": "127.0.0.1",
+    "port": 42617
+  },
+  "interaction": {
+    "sessionPromptTtlMinutes": 1440,
+    "questionTtlMinutes": 30
+  }
+}
+```
+
+Use exactly one of `telegram.tokenFile` or `telegram.botToken`. `tokenFile` is recommended because the file permission checker rejects group-readable, world-readable, non-regular, and wrong-owner token files on non-Windows platforms. Inline tokens are accepted for constrained environments but are easier to leak through config sharing.
+
+## Broker Commands
+
+Start or reuse the native loopback broker:
+
+```sh
+opencode-telegram-broker start
+```
+
+Check readiness and diagnostics:
+
+```sh
+opencode-telegram-broker status
+opencode-telegram-broker doctor
+```
+
+Send a credential and chat connectivity test without creating a routable session action:
+
+```sh
+OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+  opencode-telegram-broker test-notification --chat-id 123456789 --locale en
+```
+
+Stop the broker without terminating OpenCode sessions:
+
+```sh
+opencode-telegram-broker stop
+```
+
+Purge operational routing state only after the broker is stopped:
+
+```sh
+opencode-telegram-broker purge-state
+```
+
+Rotate the stored token file after changing the token through BotFather:
+
+```sh
+OPENCODE_TELEGRAM_BOT_TOKEN='123456:NEW_TOKEN' \
+  opencode-telegram-broker rotate-credential --token-file ~/.local/state/opencode-telegram-link/telegram-bot-token
+opencode-telegram-broker stop
+opencode-telegram-broker start
+```
+
+## Notification Examples
+
+Completion notification:
+
+```text
+OpenCode completed
+Project: api-server
+Session: Fix flaky checkout test
+Reply to this message to continue the session.
+```
+
+Question notification:
+
+```text
+OpenCode needs input
+Project: api-server
+Question: Which migration strategy should be used?
+Reply with one allowed answer, or use the terminal for full context.
+```
+
+Permission notification:
+
+```text
+OpenCode needs terminal permission
+Project: api-server
+Return to the terminal to approve or reject this request.
+Telegram approval is disabled in V1.
+```
+
+Notification bodies are intentionally minimal. They omit transcripts, source code, tool output, local paths, and secrets by default.
+
+## Reply Behavior
+
+Reply directly to the original bot message. The broker routes only by the persisted Telegram message binding and opaque route identifiers; project names, session titles, and user-written IDs are never used for routing.
+
+Supported replies:
+
+- Reply to an eligible completed root-session notification with text to continue that exact OpenCode session.
+- Reply to a pending question notification with a valid text answer or option syntax for that exact question.
+- Reply to a permission notice to receive terminal-only guidance. The broker never approves or rejects permissions from Telegram in V1.
+
+Rejected replies receive localized feedback when the route is expired, offline, stale, unauthorized, ambiguous, already handled, not actionable, or rejected by OpenCode. Offline commands are not queued.
+
+## Docker Broker
+
+Native mode is recommended. Docker mode runs only the broker in a container; OpenCode and plugins continue to run on the host.
+
+Build the image from a built checkout:
+
+```sh
+bun run build
+docker build -f container/broker.Dockerfile -t opencode-telegram-broker:local .
+```
+
+Run with persistent state and runtime secrets:
+
+```sh
+docker run --rm \
+  --name opencode-telegram-broker \
+  -p 127.0.0.1:42617:42617 \
+  -v opencode-telegram-state:/state \
+  -v "$HOME/.local/state/opencode-telegram-link/telegram-bot-token:/run/secrets/telegram-bot-token:ro" \
+  -e OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token \
+  opencode-telegram-broker:local start
+```
+
+Do not publish the port as `42617:42617`; include the `127.0.0.1` host IP so Docker does not expose the broker on every host interface. Do not run native and Docker brokers at the same time for one state directory and bot token.
+
+## Diagnostics
+
+Use `opencode-telegram-broker doctor` first when setup fails or notifications stop. It checks configuration validity, token-file permissions, broker reachability, singleton conflicts, loopback binding, Telegram API connectivity, allowed identities, catalogs, and OpenCode compatibility. Output is sanitized and should not include bot tokens, broker secrets, reply text, source code, or file contents.
+
+Common outcomes:
+
+- `ready: true`: setup is usable.
+- `warning`: setup can run but has an operational limitation, such as no active plugin registration yet.
+- `failure`: fix the reported remediation before expecting notifications or replies.
+- Telegram `409 Conflict`: the same bot is being polled elsewhere; stop the other consumer or use a different bot.
+
+## Update
+
+1. Stop idle OpenCode sessions or leave them running if you only update a compatible patch release.
+2. Update the package or rebuild the checkout.
+3. Restart the broker with `opencode-telegram-broker stop` and `opencode-telegram-broker start`.
+4. Restart OpenCode processes if doctor reports a protocol or compatibility mismatch.
+5. Run `opencode-telegram-broker doctor` and `opencode-telegram-broker test-notification --chat-id <id>`.
+
+The broker and plugin negotiate protocol major version `1`. Incompatible upgrades fail closed instead of silently downgrading routing or reply behavior.
+
+## Uninstall
+
+1. Remove the OpenCode plugin configuration.
+2. Stop the broker with `opencode-telegram-broker stop`.
+3. Optionally purge operational routing state with `opencode-telegram-broker purge-state`.
+4. Delete the state directory if you want to remove machine identity, broker secret, SQLite state, and token files.
+5. Revoke or rotate the Telegram bot token in BotFather if the token may have been exposed.
+6. Verify polling has ceased by running `opencode-telegram-broker status` or by checking that BotFather no longer reports unexpected bot activity.
+
 ## Specifications
 
 - [Proposal](openspec/changes/design-telegram-notifier/proposal.md)
@@ -63,7 +293,7 @@ A future version may offer a separately designed remote-broker mode selected dur
 
 The OpenSpec artifacts are the current source of truth. Requirements use RFC 2119 language and testable scenarios.
 
-## Planned Technology
+## Technology
 
 - TypeScript and Bun
 - `@opencode-ai/plugin` and the OpenCode SDK
