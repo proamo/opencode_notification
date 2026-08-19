@@ -28,7 +28,7 @@
 - [x] 4.3 Implement event normalization for completion, error, question, and permission events across supported OpenCode versions
 - [x] 4.4 Implement root-session filtering, blocking subagent context, completion debounce, source-event deduplication, and bounded plugin buffering
 - [x] 4.5 Implement allowlisted notification models, double redaction, HTML escaping, truncation, and safe plain-text fallback
-- [ ] 4.6 Add Telegram transport and notification contract tests using recorded API fixtures without real credentials
+- [x] 4.6 Add Telegram transport and notification contract tests using recorded API fixtures without real credentials
 
 ## 5. Remote Session Interaction
 
