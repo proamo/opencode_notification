@@ -27,7 +27,7 @@ describe("StateDatabase", () => {
     const stateDirectory = await createTemporaryDirectory();
     const database = await openDatabase(stateDirectory);
 
-    expect(database.schemaVersion).toBe(1);
+    expect(database.schemaVersion).toBe(2);
     if (process.platform !== "win32") {
       expect((await stat(database.path)).mode & 0o777).toBe(0o600);
     }
@@ -44,6 +44,51 @@ describe("StateDatabase", () => {
     await expect(
       StateDatabase.open({ stateDirectory, machineId: crypto.randomUUID() }),
     ).rejects.toBeInstanceOf(DatabaseVersionError);
+  });
+
+  test("migrates a v1 database to callback-token capable v2 state", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const path = join(stateDirectory, "state.sqlite");
+    const machineId = crypto.randomUUID();
+    const legacy = new Database(path, { create: true, strict: true });
+    legacy.exec(LEGACY_SCHEMA_VERSION_1);
+    legacy.query("INSERT INTO meta (key, value) VALUES ('machine_id', ?)").run(machineId);
+    legacy
+      .query(
+        "INSERT INTO outbox (idempotency_key, chat_id, payload, priority, next_attempt_at, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("event_1", "123456789", "redacted payload", 1, 1_000, 10_000, 1_000, 1_000);
+    legacy.close(false);
+    await chmod(path, 0o600);
+
+    const database = await StateDatabase.open({ stateDirectory, machineId });
+    databases.push(database);
+
+    expect(database.schemaVersion).toBe(2);
+    expect(database.nextOutbox(1_000, 10)).toHaveLength(1);
+    database.saveMessageRoute({
+      chatId: "123456789",
+      messageId: 1,
+      route: {
+        machineId,
+        instanceId: crypto.randomUUID(),
+        projectId: "opaque-project-id",
+        sessionId: "ses_123",
+        routeGeneration: crypto.randomUUID(),
+      },
+      kind: "informational",
+      createdAt: 1_000,
+      expiresAt: 2_000,
+      status: "active",
+    });
+    database.saveCallbackToken({
+      token: "opaque-token",
+      chatId: "123456789",
+      messageId: 1,
+      action: "noop",
+      createdAt: 1_000,
+      expiresAt: 2_000,
+    });
   });
 
   test.skipIf(process.platform === "win32")("rejects unsafe database permissions", async () => {
@@ -134,6 +179,66 @@ describe("StateDatabase", () => {
     });
     expect(database.setMessageRouteStatus("123456789", 77, "consumed")).toBe(true);
     expect(database.getMessageRoute("123456789", 77)?.status).toBe("consumed");
+  });
+
+  test("persists delivered bindings and callback tokens atomically", async () => {
+    const database = await openDatabase(await createTemporaryDirectory());
+    const route = {
+      machineId: crypto.randomUUID(),
+      instanceId: crypto.randomUUID(),
+      projectId: "opaque-project-id",
+      sessionId: "ses_123",
+      routeGeneration: crypto.randomUUID(),
+    };
+    const outbox = database.enqueueOutbox({
+      idempotencyKey: "event_1",
+      chatId: "123456789",
+      payload: "redacted payload",
+      priority: 1,
+      nextAttemptAt: 1_000,
+      expiresAt: 10_000,
+      createdAt: 1_000,
+    });
+
+    database.finishOutboxDeliveryWithBinding({
+      outboxId: outbox.id,
+      route: {
+        chatId: "123456789",
+        messageId: 77,
+        route,
+        kind: "question_reply",
+        interactionId: "question_1",
+        createdAt: 2_000,
+        expiresAt: 10_000,
+        status: "active",
+      },
+      callbackTokens: [
+        {
+          token: "opaque-token",
+          chatId: "123456789",
+          messageId: 77,
+          action: "question.option",
+          payload: "0:1",
+          createdAt: 2_000,
+          expiresAt: 10_000,
+        },
+      ],
+      now: 2_000,
+    });
+
+    expect(database.getMessageRoute("123456789", 77)).toMatchObject({
+      kind: "question_reply",
+      interactionId: "question_1",
+      route,
+    });
+    expect(database.getCallbackToken("opaque-token")).toMatchObject({
+      chatId: "123456789",
+      messageId: 77,
+      action: "question.option",
+      payload: "0:1",
+    });
+    expect(database.inspect().outbox.delivered).toBe(1);
+    expect(database.inspect().callbackTokens).toBe(1);
   });
 
   test("deduplicates and prioritizes the redacted outbound queue", async () => {
@@ -230,6 +335,7 @@ describe("StateDatabase", () => {
       terminalOutboxRetentionMs: 1_000,
       inboundUpdateRetentionMs: 500,
       maxMessageRoutes: 10,
+      maxCallbackTokens: 10,
       maxOutboxRecords: 10,
       maxInboundUpdates: 10,
       maxDedupeRecords: 10,
@@ -240,6 +346,7 @@ describe("StateDatabase", () => {
       expiredMessageRoutes: 1,
       expiredOutboxRecords: 1,
       deletedMessageRoutes: 0,
+      deletedCallbackTokens: 0,
       deletedOutboxRecords: 0,
       deletedInboundUpdates: 1,
       deletedDedupeRecords: 1,
@@ -267,6 +374,7 @@ describe("StateDatabase", () => {
       terminalOutboxRetentionMs: 10_000,
       inboundUpdateRetentionMs: 10_000,
       maxMessageRoutes: 0,
+      maxCallbackTokens: 0,
       maxOutboxRecords: 0,
       maxInboundUpdates: 2,
       maxDedupeRecords: 2,
@@ -294,7 +402,7 @@ describe("StateDatabase", () => {
     expect(removed.inboundUpdates).toBe(1);
     expect(removed.dedupeRecords).toBe(1);
     expect(database.inspect().machineId).toBe(machineId);
-    expect(database.inspect().schemaVersion).toBe(1);
+    expect(database.inspect().schemaVersion).toBe(2);
     expect(database.getTelegramUpdateOffset()).toBe(0);
   });
 
@@ -351,3 +459,59 @@ async function createTemporaryDirectory(): Promise<string> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   return directory;
 }
+
+const LEGACY_SCHEMA_VERSION_1 = `
+  CREATE TABLE meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  ) STRICT;
+
+  CREATE TABLE message_routes (
+    chat_id TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    machine_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    route_generation TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('session_prompt', 'question_reply', 'permission_notice', 'informational')),
+    interaction_id TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'consumed', 'expired', 'offline')),
+    PRIMARY KEY (chat_id, message_id)
+  ) STRICT;
+  CREATE INDEX message_routes_expiry ON message_routes(status, expires_at);
+  CREATE INDEX message_routes_route ON message_routes(machine_id, instance_id, project_id, session_id, route_generation);
+
+  CREATE TABLE outbox (
+    id INTEGER PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    chat_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'retry', 'delivered', 'failed')),
+    result_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX outbox_delivery ON outbox(status, next_attempt_at, priority, created_at);
+
+  CREATE TABLE inbound_updates (
+    update_id INTEGER PRIMARY KEY,
+    action_id TEXT,
+    disposition TEXT NOT NULL CHECK (disposition IN ('rejected', 'acknowledged', 'failed')),
+    payload_hash TEXT,
+    occurred_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE notification_dedupe (
+    idempotency_key TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX notification_dedupe_expiry ON notification_dedupe(expires_at);
+  PRAGMA user_version = 1;
+`;

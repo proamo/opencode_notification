@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { RouteKey } from "../protocol";
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 const DATABASE_FILENAME = "state.sqlite";
 
 export type MessageRouteKind =
@@ -22,6 +22,17 @@ export type MessageRouteRecord = {
   createdAt: number;
   expiresAt: number;
   status: MessageRouteStatus;
+};
+
+export type CallbackTokenRecord = {
+  token: string;
+  chatId: string;
+  messageId: number;
+  action: string;
+  payload?: string;
+  createdAt: number;
+  expiresAt: number;
+  consumedAt?: number;
 };
 
 export type OutboxRecord = {
@@ -44,6 +55,7 @@ export type RetentionPolicy = {
   terminalOutboxRetentionMs: number;
   inboundUpdateRetentionMs: number;
   maxMessageRoutes: number;
+  maxCallbackTokens: number;
   maxOutboxRecords: number;
   maxInboundUpdates: number;
   maxDedupeRecords: number;
@@ -53,6 +65,7 @@ export type CleanupResult = {
   expiredMessageRoutes: number;
   expiredOutboxRecords: number;
   deletedMessageRoutes: number;
+  deletedCallbackTokens: number;
   deletedOutboxRecords: number;
   deletedInboundUpdates: number;
   deletedDedupeRecords: number;
@@ -63,6 +76,7 @@ export type StateInspection = {
   machineId: string;
   telegramUpdateOffset: number;
   messageRoutes: Record<MessageRouteStatus, number>;
+  callbackTokens: number;
   outbox: Record<OutboxRecord["status"], number>;
   inboundUpdates: number;
   dedupeRecords: number;
@@ -73,6 +87,7 @@ export const DEFAULT_RETENTION_POLICY: RetentionPolicy = {
   terminalOutboxRetentionMs: 7 * 24 * 60 * 60_000,
   inboundUpdateRetentionMs: 7 * 24 * 60 * 60_000,
   maxMessageRoutes: 10_000,
+  maxCallbackTokens: 50_000,
   maxOutboxRecords: 10_000,
   maxInboundUpdates: 50_000,
   maxDedupeRecords: 50_000,
@@ -236,6 +251,19 @@ export class StateDatabase {
     );
   }
 
+  saveCallbackToken(record: CallbackTokenRecord): void {
+    this.#assertOpen();
+    this.#insertCallbackToken(record);
+  }
+
+  getCallbackToken(token: string): CallbackTokenRecord | undefined {
+    this.#assertOpen();
+    const row = this.#database
+      .query("SELECT * FROM callback_tokens WHERE token = ?")
+      .get(token) as CallbackTokenRow | null;
+    return row ? callbackTokenFromRow(row) : undefined;
+  }
+
   enqueueOutbox(input: {
     idempotencyKey: string;
     chatId: string;
@@ -307,6 +335,20 @@ export class StateDatabase {
       .run(status, resultCode, now, id);
   }
 
+  finishOutboxDeliveryWithBinding(input: {
+    outboxId: number;
+    route: MessageRouteRecord;
+    callbackTokens?: CallbackTokenRecord[];
+    now: number;
+  }): void {
+    this.#assertOpen();
+    this.#database.transaction(() => {
+      this.saveMessageRoute(input.route);
+      for (const token of input.callbackTokens ?? []) this.#insertCallbackToken(token);
+      this.finishOutbox(input.outboxId, "delivered", null, input.now);
+    })();
+  }
+
   claimNotification(idempotencyKey: string, expiresAt: number, now: number): boolean {
     this.#assertOpen();
     return this.#database.transaction(() => {
@@ -341,6 +383,9 @@ export class StateDatabase {
           .query("DELETE FROM message_routes WHERE status != 'active' AND created_at <= ?")
           .run(now - policy.terminalRouteRetentionMs).changes +
         trimRows(this.#database, "message_routes", "created_at", policy.maxMessageRoutes);
+      const deletedCallbackTokens =
+        this.#database.query("DELETE FROM callback_tokens WHERE expires_at <= ?").run(now).changes +
+        trimRows(this.#database, "callback_tokens", "created_at", policy.maxCallbackTokens);
       const deletedOutboxRecords =
         this.#database
           .query("DELETE FROM outbox WHERE status IN ('delivered', 'failed') AND updated_at <= ?")
@@ -360,6 +405,7 @@ export class StateDatabase {
         expiredMessageRoutes,
         expiredOutboxRecords,
         deletedMessageRoutes,
+        deletedCallbackTokens,
         deletedOutboxRecords,
         deletedInboundUpdates,
         deletedDedupeRecords,
@@ -379,6 +425,7 @@ export class StateDatabase {
         "expired",
         "offline",
       ]),
+      callbackTokens: countTable(this.#database, "callback_tokens"),
       outbox: countStatuses<OutboxRecord["status"]>(this.#database, "outbox", [
         "pending",
         "retry",
@@ -395,6 +442,7 @@ export class StateDatabase {
     const before = this.inspect();
     this.#database.transaction(() => {
       this.#database.exec("DELETE FROM message_routes");
+      this.#database.exec("DELETE FROM callback_tokens");
       this.#database.exec("DELETE FROM outbox");
       this.#database.exec("DELETE FROM inbound_updates");
       this.#database.exec("DELETE FROM notification_dedupe");
@@ -417,6 +465,25 @@ export class StateDatabase {
 
   #assertOpen(): void {
     if (this.#closed) throw new Error("state database is closed");
+  }
+
+  #insertCallbackToken(record: CallbackTokenRecord): void {
+    this.#database
+      .query(
+        `INSERT OR REPLACE INTO callback_tokens (
+           token, chat_id, message_id, action, payload, created_at, expires_at, consumed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.token,
+        record.chatId,
+        record.messageId,
+        record.action,
+        record.payload ?? null,
+        record.createdAt,
+        record.expiresAt,
+        record.consumedAt ?? null,
+      );
   }
 
   #metaValue(key: string): string {
@@ -519,6 +586,17 @@ type MessageRouteRow = {
   status: MessageRouteStatus;
 };
 
+type CallbackTokenRow = {
+  token: string;
+  chat_id: string;
+  message_id: number;
+  action: string;
+  payload: string | null;
+  created_at: number;
+  expires_at: number;
+  consumed_at: number | null;
+};
+
 type OutboxRow = {
   id: number;
   idempotency_key: string;
@@ -540,6 +618,10 @@ function migrate(database: Database, fromVersion: number): void {
     if (version === 0) {
       database.exec(SCHEMA_VERSION_1);
       version = 1;
+    }
+    if (version === 1) {
+      database.exec(SCHEMA_VERSION_2);
+      version = 2;
     }
     database.exec(`PRAGMA user_version = ${version}`);
   })();
@@ -608,6 +690,19 @@ function messageRouteFromRow(row: MessageRouteRow): MessageRouteRecord {
   };
 }
 
+function callbackTokenFromRow(row: CallbackTokenRow): CallbackTokenRecord {
+  return {
+    token: row.token,
+    chatId: row.chat_id,
+    messageId: row.message_id,
+    action: row.action,
+    ...(row.payload ? { payload: row.payload } : {}),
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    ...(row.consumed_at ? { consumedAt: row.consumed_at } : {}),
+  };
+}
+
 function outboxFromRow(row: OutboxRow): OutboxRecord {
   return {
     id: row.id,
@@ -625,7 +720,12 @@ function outboxFromRow(row: OutboxRow): OutboxRecord {
   };
 }
 
-type MaintainedTable = "message_routes" | "outbox" | "inbound_updates" | "notification_dedupe";
+type MaintainedTable =
+  | "message_routes"
+  | "callback_tokens"
+  | "outbox"
+  | "inbound_updates"
+  | "notification_dedupe";
 type MaintenanceOrder = "created_at" | "occurred_at" | "expires_at";
 
 function trimRows(
@@ -737,4 +837,20 @@ const SCHEMA_VERSION_1 = `
     expires_at INTEGER NOT NULL
   ) STRICT;
   CREATE INDEX notification_dedupe_expiry ON notification_dedupe(expires_at);
+`;
+
+const SCHEMA_VERSION_2 = `
+  CREATE TABLE callback_tokens (
+    token TEXT PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    payload TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    consumed_at INTEGER,
+    FOREIGN KEY (chat_id, message_id) REFERENCES message_routes(chat_id, message_id) ON DELETE CASCADE
+  ) STRICT;
+  CREATE INDEX callback_tokens_message ON callback_tokens(chat_id, message_id);
+  CREATE INDEX callback_tokens_expiry ON callback_tokens(expires_at);
 `;

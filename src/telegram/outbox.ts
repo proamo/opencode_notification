@@ -1,14 +1,48 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { StateDatabase } from "../state";
+import { RouteKeySchema } from "../protocol";
+import type { CallbackTokenRecord, StateDatabase } from "../state";
 import { TelegramApiError, type TelegramBotApi } from "./api";
 import { sanitizeTelegramText } from "./render";
 
-export const TelegramOutboxPayloadSchema = z.object({
-  text: z.string().min(1).max(4096),
-  parseMode: z.literal("HTML").optional(),
-  disableNotification: z.boolean().optional(),
-  replyMarkup: z.record(z.string(), z.unknown()).optional(),
+const MessageRouteKindSchema = z.enum([
+  "session_prompt",
+  "question_reply",
+  "permission_notice",
+  "informational",
+]);
+
+const CallbackButtonSchema = z.object({
+  text: z.string().min(1).max(64),
+  action: z.string().min(1).max(64),
+  payload: z.string().max(512).optional(),
 });
+
+export const TelegramOutboxPayloadSchema = z
+  .object({
+    text: z.string().min(1).max(4096),
+    parseMode: z.literal("HTML").optional(),
+    disableNotification: z.boolean().optional(),
+    replyMarkup: z.record(z.string(), z.unknown()).optional(),
+    binding: z
+      .object({
+        route: RouteKeySchema,
+        kind: MessageRouteKindSchema,
+        interactionId: z.string().min(1).max(256).optional(),
+        expiresAt: z.number().int().nonnegative(),
+        callbackButtons: z.array(CallbackButtonSchema).max(100).optional(),
+      })
+      .optional(),
+  })
+  .superRefine((payload, context) => {
+    if (payload.replyMarkup && payload.binding?.callbackButtons?.length) {
+      context.addIssue({
+        code: "custom",
+        message: "replyMarkup cannot be combined with callbackButtons",
+        path: ["replyMarkup"],
+      });
+    }
+  });
 export type TelegramOutboxPayload = z.infer<typeof TelegramOutboxPayloadSchema>;
 
 export type TelegramOutboxWorkerOptions = {
@@ -52,16 +86,43 @@ export class TelegramOutboxWorker {
           this.#database.finishOutbox(record.id, "failed", "EMPTY_PAYLOAD", now);
           continue;
         }
-        await this.#api.sendMessage({
+        const prepared = preparePayload(payload.data);
+        const message = await this.#api.sendMessage({
           chatId: record.chatId,
           text,
           ...(payload.data.parseMode ? { parseMode: payload.data.parseMode } : {}),
           ...(payload.data.disableNotification !== undefined
             ? { disableNotification: payload.data.disableNotification }
             : {}),
-          ...(payload.data.replyMarkup ? { replyMarkup: payload.data.replyMarkup } : {}),
+          ...(prepared.replyMarkup ? { replyMarkup: prepared.replyMarkup } : {}),
         });
-        this.#database.finishOutbox(record.id, "delivered", null, now);
+        if (payload.data.binding) {
+          this.#database.finishOutboxDeliveryWithBinding({
+            outboxId: record.id,
+            route: {
+              chatId: message.chatId,
+              messageId: message.messageId,
+              route: payload.data.binding.route,
+              kind: payload.data.binding.kind,
+              ...(payload.data.binding.interactionId
+                ? { interactionId: payload.data.binding.interactionId }
+                : {}),
+              createdAt: now,
+              expiresAt: payload.data.binding.expiresAt,
+              status: "active",
+            },
+            callbackTokens: prepared.tokens.map((token) => ({
+              ...token,
+              chatId: message.chatId,
+              messageId: message.messageId,
+              createdAt: now,
+              expiresAt: payload.data.binding?.expiresAt ?? now,
+            })),
+            now,
+          });
+        } else {
+          this.#database.finishOutbox(record.id, "delivered", null, now);
+        }
       } catch (error) {
         const attempts = record.attempts + 1;
         if (
@@ -99,6 +160,33 @@ export class TelegramOutboxWorker {
     );
     return Math.floor(maximum * this.#random());
   }
+}
+
+function preparePayload(payload: TelegramOutboxPayload): {
+  replyMarkup?: Record<string, unknown>;
+  tokens: Array<Omit<CallbackTokenRecord, "chatId" | "messageId" | "createdAt" | "expiresAt">>;
+} {
+  const buttons = payload.binding?.callbackButtons;
+  if (!buttons?.length)
+    return { ...(payload.replyMarkup ? { replyMarkup: payload.replyMarkup } : {}), tokens: [] };
+
+  const tokens = buttons.map((button) => ({
+    token: randomToken(),
+    action: button.action,
+    ...(button.payload ? { payload: button.payload } : {}),
+  }));
+  return {
+    replyMarkup: {
+      inline_keyboard: buttons.map((button, index) => [
+        { text: button.text, callback_data: tokens[index]?.token },
+      ]),
+    },
+    tokens,
+  };
+}
+
+function randomToken(): string {
+  return randomBytes(32).toString("base64url");
 }
 
 function parseJson(value: string): unknown {

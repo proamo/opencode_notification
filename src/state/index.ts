@@ -1,4 +1,5 @@
 export {
+  type CallbackTokenRecord,
   type CleanupResult,
   type DatabaseIntegrity,
   DatabaseVersionError,

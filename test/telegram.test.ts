@@ -324,6 +324,101 @@ describe("TelegramOutboxWorker", () => {
     expect(await worker.deliverBatch(1_000)).toBe(1);
     expect(sends[0]?.text).toBe("[redacted]");
   });
+
+  test("persists actionable message bindings and opaque callback tokens after delivery", async () => {
+    const database = await createDatabase();
+    const route = {
+      machineId: crypto.randomUUID(),
+      instanceId: crypto.randomUUID(),
+      projectId: "opaque-project-id",
+      sessionId: "ses_123",
+      routeGeneration: crypto.randomUUID(),
+    };
+    database.enqueueOutbox({
+      idempotencyKey: "event_1",
+      chatId: "123456789",
+      payload: JSON.stringify({
+        text: "Choose one",
+        binding: {
+          route,
+          kind: "question_reply",
+          interactionId: "question_1",
+          expiresAt: 10_000,
+          callbackButtons: [{ text: "Option A", action: "question.option", payload: "0:0" }],
+        },
+      }),
+      priority: 10,
+      nextAttemptAt: 1_000,
+      expiresAt: 10_000,
+      createdAt: 1_000,
+    });
+    const sends: Record<string, unknown>[] = [];
+    const worker = new TelegramOutboxWorker({
+      api: createApi(async (method, body) => {
+        if (method !== "sendMessage") throw new Error("unexpected method");
+        sends.push(body);
+        return ok(message(77, 123456789, "ok"));
+      }),
+      database,
+    });
+
+    expect(await worker.deliverBatch(2_000)).toBe(1);
+    const replyMarkup = sends[0]?.reply_markup as
+      | { inline_keyboard?: Array<Array<{ callback_data?: string; text?: string }>> }
+      | undefined;
+    const token = replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data;
+    expect(token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(database.getMessageRoute("123456789", 77)).toMatchObject({
+      kind: "question_reply",
+      interactionId: "question_1",
+      route,
+      status: "active",
+    });
+    if (!token) throw new Error("expected callback token");
+    expect(database.getCallbackToken(token)).toMatchObject({
+      chatId: "123456789",
+      messageId: 77,
+      action: "question.option",
+      payload: "0:0",
+    });
+  });
+
+  test("does not persist bindings when Telegram delivery fails", async () => {
+    const database = await createDatabase();
+    database.enqueueOutbox({
+      idempotencyKey: "event_1",
+      chatId: "123456789",
+      payload: JSON.stringify({
+        text: "Choose one",
+        binding: {
+          route: {
+            machineId: crypto.randomUUID(),
+            instanceId: crypto.randomUUID(),
+            projectId: "opaque-project-id",
+            sessionId: "ses_123",
+            routeGeneration: crypto.randomUUID(),
+          },
+          kind: "question_reply",
+          interactionId: "question_1",
+          expiresAt: 10_000,
+          callbackButtons: [{ text: "Option A", action: "question.option", payload: "0:0" }],
+        },
+      }),
+      priority: 10,
+      nextAttemptAt: 1_000,
+      expiresAt: 10_000,
+      createdAt: 1_000,
+    });
+    const worker = new TelegramOutboxWorker({
+      api: createApi(async () => failed(400)),
+      database,
+    });
+
+    expect(await worker.deliverBatch(2_000)).toBe(1);
+    expect(database.inspect().messageRoutes.active).toBe(0);
+    expect(database.inspect().callbackTokens).toBe(0);
+    expect(database.inspect().outbox.failed).toBe(1);
+  });
 });
 
 function createApi(
