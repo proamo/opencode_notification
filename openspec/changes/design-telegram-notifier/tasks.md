@@ -54,6 +54,6 @@
 - [x] 7.1 Document installation, BotFather setup, configuration, notification examples, reply behavior, diagnostics, update, and uninstall procedures
 - [x] 7.2 Document the V1 single-computer limitation, Telegram privacy boundary, unsupported multi-computer polling, and future local/remote installation modes
 - [x] 7.3 Maintain an English canonical reference and a matching Traditional Chinese overview
-- [ ] 7.4 Add threat-model, protocol, data-retention, compatibility, and contributor documentation
+- [x] 7.4 Add threat-model, protocol, data-retention, compatibility, and contributor documentation
 - [ ] 7.5 Configure reproducible npm publishing, provenance, changelog generation, license checks, and release smoke tests
 - [ ] 7.6 Index the implemented code with GitNexus and run graph-backed impact checks before the first public release

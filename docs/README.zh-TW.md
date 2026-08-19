@@ -129,5 +129,9 @@ V1 不支援同一個 Telegram Bot 同時連接多台電腦。Telegram long poll
 - [提案](../openspec/changes/design-telegram-notifier/proposal.md)
 - [技術架構](../openspec/changes/design-telegram-notifier/design.md)
 - [實作工作清單](../openspec/changes/design-telegram-notifier/tasks.md)
+- [Threat model](threat-model.md)
+- [Local broker protocol](protocol.md)
+- [Data retention](data-retention.md)
+- [Contributor guide](contributing.md)
 
 需求、行為與安全邊界以英文 OpenSpec 文件為準；本頁必須與正式規格保持一致。
