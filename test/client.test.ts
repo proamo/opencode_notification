@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, probeBroker, startBroker } from "../src/broker";
 import { BrokerClient, type BrokerClientOptions } from "../src/plugin/client";
-import type { BrokerCommand } from "../src/protocol";
+import type { BrokerCommand, RouteKey } from "../src/protocol";
 import { discoveryRecordPath, loadOrCreateStateIdentity } from "../src/state";
+import {
+  submitTelegramInteraction,
+  TelegramUpdateSchema,
+  validateTelegramInteraction,
+} from "../src/telegram";
 
 const temporaryDirectories: string[] = [];
 const brokers: BrokerServer[] = [];
@@ -103,6 +108,189 @@ describe("BrokerClient lifecycle", () => {
     expect(handled).toHaveLength(1);
     expect(handled[0]).toMatchObject({ type: "session.prompt", route, text: "Continue safely" });
     expect(stale).toMatchObject({ status: "stale", reason: "route is offline" });
+  });
+
+  test("dispatches validated Telegram interactions only to the exact bound route", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    const handled = new Map<string, BrokerCommand[]>();
+
+    const routeSpecs = [
+      { owner: "target", projectId: "opaque-project-alpha", sessionId: "ses_shared" },
+      { owner: "other-project", projectId: "opaque-project-bravo", sessionId: "ses_shared" },
+      { owner: "other-session", projectId: "opaque-project-alpha", sessionId: "ses_other" },
+      { owner: "other-instance", projectId: "opaque-project-alpha", sessionId: "ses_shared" },
+      { owner: "question", projectId: "opaque-project-charlie", sessionId: "ses_question" },
+    ] as const;
+    const routes = new Map<(typeof routeSpecs)[number]["owner"], RouteKey>();
+
+    for (const spec of routeSpecs) {
+      handled.set(spec.owner, []);
+      const client = createClient(stateDirectory, port, {
+        onCommand: (command) => {
+          handled.get(spec.owner)?.push(command);
+          return { commandId: command.commandId, status: "accepted" };
+        },
+      });
+      clients.push(client);
+      await client.start();
+      const route = await client.upsertRoute(
+        routeIntent({
+          projectId: spec.projectId,
+          sessionId: spec.sessionId,
+          projectLabel: spec.owner,
+          sessionLabel: spec.sessionId,
+        }),
+      );
+      if (!route) throw new Error(`expected active route for ${spec.owner}`);
+      routes.set(spec.owner, route);
+    }
+    const broker = brokers[0];
+    if (!broker) throw new Error("expected broker");
+
+    const promptBindings = [
+      ["target", 77, "Continue target"],
+      ["other-project", 78, "Continue other project"],
+      ["other-session", 79, "Continue other session"],
+      ["other-instance", 80, "Continue other instance"],
+    ] as const;
+    for (const [owner, messageId] of promptBindings) {
+      saveRoute(broker, routes.get(owner), "session_prompt", { messageId });
+    }
+    saveRoute(broker, routes.get("question"), "question_reply", {
+      messageId: 81,
+      interactionId: "question_1",
+    });
+    broker.database.saveCallbackToken({
+      token: "question-token",
+      chatId: "123456789",
+      messageId: 81,
+      action: "question.option",
+      payload: JSON.stringify({ answers: [["Option A"]] }),
+      createdAt: 1_000,
+      expiresAt: 10_000,
+    });
+
+    for (const [owner, messageId, text] of promptBindings) {
+      const validation = validateTelegramInteraction(
+        parseUpdate(messageReply({ updateId: messageId, replyToMessageId: messageId, text })),
+        subject("message"),
+        {
+          database: broker.database,
+          isRouteLive: (route) => broker.registry.resolve(route) !== undefined,
+          now: () => 2_000,
+        },
+      );
+      if (!validation.accepted) throw new Error(`expected ${owner} interaction to validate`);
+
+      await expect(
+        submitTelegramInteraction(broker, validation.interaction),
+      ).resolves.toMatchObject({
+        feedback: "accepted",
+      });
+
+      for (const spec of routeSpecs) {
+        const commands = handled.get(spec.owner) ?? [];
+        expect(commands).toHaveLength(spec.owner === owner ? 1 : 0);
+      }
+      const commands = handled.get(owner) ?? [];
+      expect(commands[0]).toMatchObject({
+        type: "session.prompt",
+        route: routes.get(owner),
+        text,
+      });
+      commands.length = 0;
+    }
+
+    const questionValidation = validateTelegramInteraction(
+      parseUpdate(callbackUpdate({ updateId: 90, messageId: 81, token: "question-token" })),
+      subject("callback_query"),
+      {
+        database: broker.database,
+        isRouteLive: (route) => broker.registry.resolve(route) !== undefined,
+        now: () => 2_000,
+      },
+    );
+    if (!questionValidation.accepted) throw new Error("expected question interaction to validate");
+    await expect(
+      submitTelegramInteraction(broker, questionValidation.interaction),
+    ).resolves.toMatchObject({
+      feedback: "accepted",
+    });
+    expect(handled.get("question")).toHaveLength(1);
+    expect(handled.get("question")?.[0]).toMatchObject({
+      type: "question.reply",
+      route: routes.get("question"),
+      interactionId: "question_1",
+      answers: [["Option A"]],
+    });
+    for (const spec of routeSpecs.filter((spec) => spec.owner !== "question")) {
+      expect(handled.get(spec.owner)).toHaveLength(0);
+    }
+    const questionCommands = handled.get("question");
+    if (!questionCommands) throw new Error("expected question command log");
+    questionCommands.length = 0;
+
+    const targetRoute = routes.get("target");
+    if (!targetRoute) throw new Error("expected target route");
+    const staleRoute = { ...targetRoute, routeGeneration: crypto.randomUUID() };
+    saveRoute(broker, staleRoute, "session_prompt", { messageId: 82 });
+    expect(
+      validateTelegramInteraction(
+        parseUpdate(
+          messageReply({ updateId: 91, replyToMessageId: 82, text: "Must not dispatch" }),
+        ),
+        subject("message"),
+        {
+          database: broker.database,
+          isRouteLive: (route) => broker.registry.resolve(route) !== undefined,
+          now: () => 2_000,
+        },
+      ),
+    ).toMatchObject({ accepted: false, reason: "ROUTE_STALE" });
+
+    saveRoute(broker, routes.get("target"), "permission_notice", { messageId: 83 });
+    const permissionValidation = validateTelegramInteraction(
+      parseUpdate(messageReply({ updateId: 92, replyToMessageId: 83, text: "Allow" })),
+      subject("message"),
+      {
+        database: broker.database,
+        isRouteLive: (route) => broker.registry.resolve(route) !== undefined,
+        now: () => 2_000,
+      },
+    );
+    if (!permissionValidation.accepted)
+      throw new Error("expected permission interaction to validate");
+    await expect(
+      submitTelegramInteraction(broker, permissionValidation.interaction),
+    ).resolves.toMatchObject({
+      feedback: "terminal_only",
+      result: { status: "rejected", reason: "terminal intervention required" },
+    });
+
+    saveRoute(broker, routes.get("target"), "session_prompt", { messageId: 84 });
+    broker.database.saveCallbackToken({
+      token: "wrong-kind-token",
+      chatId: "123456789",
+      messageId: 84,
+      action: "question.option",
+      payload: JSON.stringify({ answers: [["Option B"]] }),
+      createdAt: 1_000,
+      expiresAt: 10_000,
+    });
+    expect(
+      validateTelegramInteraction(
+        parseUpdate(callbackUpdate({ updateId: 93, messageId: 84, token: "wrong-kind-token" })),
+        subject("callback_query"),
+        {
+          database: broker.database,
+          isRouteLive: (route) => broker.registry.resolve(route) !== undefined,
+          now: () => 2_000,
+        },
+      ),
+    ).toMatchObject({ accepted: false, reason: "ACTION_KIND_MISMATCH" });
+
+    for (const spec of routeSpecs) expect(handled.get(spec.owner)).toHaveLength(0);
   });
 
   test("keeps a broker alive while connected and lets it idle out after disconnect", async () => {
@@ -221,13 +409,83 @@ function createClient(
   });
 }
 
-function routeIntent() {
+function routeIntent(options: Partial<ReturnType<typeof routeIntentBase>> = {}) {
+  return { ...routeIntentBase(), ...options };
+}
+
+function routeIntentBase() {
   return {
     projectId: "opaque-project-id",
     sessionId: "ses_123",
     projectLabel: "backend",
     sessionLabel: "Implement auth",
   };
+}
+
+function saveRoute(
+  broker: BrokerServer,
+  route: RouteKey | undefined,
+  kind: "session_prompt" | "question_reply" | "permission_notice",
+  options: { messageId: number; interactionId?: string },
+): void {
+  if (!route) throw new Error("expected route");
+  broker.database.saveMessageRoute({
+    chatId: "123456789",
+    messageId: options.messageId,
+    route,
+    kind,
+    ...(options.interactionId ? { interactionId: options.interactionId } : {}),
+    createdAt: 1_000,
+    expiresAt: 10_000,
+    status: "active",
+  });
+}
+
+function parseUpdate(input: unknown) {
+  return TelegramUpdateSchema.parse(input);
+}
+
+function subject(kind: "message" | "callback_query") {
+  return { kind, userId: "123456789", chatId: "123456789" };
+}
+
+function messageReply(options: { updateId: number; replyToMessageId: number; text: string }) {
+  return {
+    update_id: options.updateId,
+    message: {
+      message_id: options.updateId + 1_000,
+      from: user(),
+      chat: chat(),
+      date: 1_700_000_000,
+      text: options.text,
+      reply_to_message: { message_id: options.replyToMessageId, chat: chat() },
+    },
+  };
+}
+
+function callbackUpdate(options: { updateId: number; messageId: number; token: string }) {
+  return {
+    update_id: options.updateId,
+    callback_query: {
+      id: `callback_${options.updateId}`,
+      from: user(),
+      message: {
+        message_id: options.messageId,
+        chat: chat(),
+        date: 1_700_000_000,
+        text: "Choose",
+      },
+      data: options.token,
+    },
+  };
+}
+
+function user() {
+  return { id: 123456789, is_bot: false, first_name: "User" };
+}
+
+function chat() {
+  return { id: 123456789, type: "private" as const };
 }
 
 async function availablePort(): Promise<number> {
