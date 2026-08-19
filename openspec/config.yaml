@@ -1,0 +1,36 @@
+schema: spec-driven
+
+context: |
+  Product: OpenCode Telegram notifier and remote-response plugin.
+  Runtime: TypeScript on Bun, using @opencode-ai/plugin and the Telegram Bot API.
+  V1 topology: one computer, one local broker, one user-owned Telegram bot,
+  multiple OpenCode processes, projects, and sessions.
+  Security: local-only broker, fail closed, least privilege, no central service,
+  and no sensitive session content in notifications by default.
+  Documentation and source code use English as the canonical language. A
+  Traditional Chinese overview is maintained for the initial audience.
+  Requirements use RFC 2119 terms and Given/When/Then scenarios.
+
+rules:
+  proposal:
+    - Always state V1 non-goals and privacy boundaries.
+  design:
+    - Include failure handling, trust boundaries, and routing invariants.
+    - Distinguish session prompts, question replies, and permission replies.
+  specs:
+    - Every externally visible behavior must have at least one scenario.
+    - Do not imply multi-computer support in V1.
+  tasks:
+    - Include automated tests and documentation work.
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
