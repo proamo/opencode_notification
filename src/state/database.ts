@@ -158,17 +158,23 @@ export class StateDatabase {
     return row?.value;
   }
 
-  pinTelegramBotFingerprint(botId: string): void {
+  pinTelegramBotFingerprint(botId: string, force = false): void {
     this.#assertOpen();
     this.#database.transaction(() => {
       const existing = this.getTelegramBotFingerprint();
-      if (existing && existing !== botId) {
+      if (existing && existing !== botId && !force) {
         throw new Error("configured Telegram bot does not match the pinned bot identity");
       }
       this.#database
-        .query("INSERT OR IGNORE INTO meta (key, value) VALUES ('telegram_bot_id', ?)")
+        .query(
+          "INSERT INTO meta (key, value) VALUES ('telegram_bot_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
         .run(botId);
     })();
+  }
+
+  setTelegramBotFingerprint(botId: string): void {
+    this.pinTelegramBotFingerprint(botId, true);
   }
 
   commitInboundUpdate(input: {
