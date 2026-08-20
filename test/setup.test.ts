@@ -259,7 +259,7 @@ describe("interactive setup wizard", () => {
     expect(stdout).toContain("已辨識 Bot: @test_bot (ID: 42)");
     expect(stdout).toContain("收到驗證訊息！來自 Telegram 用戶 (ID: 987654321");
     expect(stdout).toContain("安全 Token 檔案已儲存");
-    expect(stdout).toContain("OpenCode 設定檔已更新！");
+    expect(stdout).toContain("OpenCode 設定檔已更新");
     expect(stdout).toContain("已成功發送測試通知到您的 Telegram！");
     expect(stdout).toContain("安裝設定完成！");
 
