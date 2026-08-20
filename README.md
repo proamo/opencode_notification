@@ -107,34 +107,31 @@ OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-
 ```
 
 ## Configuration
-
-Configure the OpenCode plugin with the same pinned Telegram identity returned by setup. The exact OpenCode plugin file format depends on your OpenCode installation; the plugin options object is:
-
-```jsonc
+ 
+In your project `.opencode/opencode.json` or global `~/.config/opencode/opencode.json`:
+ 
+```json
 {
-  "mode": "local",
-  "locale": "auto",
-  "telegram": {
-    "tokenFile": "/home/you/.local/state/opencode-telegram-link/telegram-bot-token",
-    "userId": "123456789",
-    "chatId": "123456789"
-  },
-  "notifications": {
-    "completion": true,
-    "error": true,
-    "question": true,
-    "permission": true,
-    "includeChildLifecycle": false,
-    "completionDebounceMs": 1500,
-    "pluginBufferSize": 100
-  },
-  "broker": {
-    "host": "127.0.0.1",
-    "port": 42617
-  },
-  "interaction": {
-    "sessionPromptTtlMinutes": 1440,
-    "questionTtlMinutes": 30
+  "plugin": [
+    "/home/you/opencode_notification"
+  ]
+}
+```
+ 
+> 💡 **Source / Local Install**: Until published on npm registry, specify the absolute directory path to this repository. The plugin automatically reads the paired credentials from the secure local state directory.
+ 
+### Permission Configuration (Automatic Command Execution)
+ 
+To allow shell and file operations without manual approval prompts, configure permissions in `opencode.json` or in your `.opencode/agent/<agent-name>.md`:
+ 
+```json
+{
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow",
+    "task": "allow",
+    "external_directory": "allow"
   }
 }
 ```

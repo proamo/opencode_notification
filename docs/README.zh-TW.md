@@ -120,38 +120,33 @@ OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-
 
 ## 外掛設定範例（Configuration）
 
-OpenCode 外掛設定檔（`opencode.json`）的完整參數範例如下：
+在您的專案目錄下的 `.opencode/opencode.json` 或全域 `~/.config/opencode/opencode.json` 中加入：
 
-```jsonc
+```json
 {
-  "mode": "local",
-  "locale": "auto",
-  "telegram": {
-    "tokenFile": "/home/you/.local/state/opencode-telegram-link/telegram-bot-token",
-    "userId": "123456789",
-    "chatId": "123456789"
-  },
-  "notifications": {
-    "completion": true,
-    "error": true,
-    "question": true,
-    "permission": true,
-    "includeChildLifecycle": false,
-    "completionDebounceMs": 1500,
-    "pluginBufferSize": 100
-  },
-  "broker": {
-    "host": "127.0.0.1",
-    "port": 42617
-  },
-  "interaction": {
-    "sessionPromptTtlMinutes": 1440,
-    "questionTtlMinutes": 30
-  }
+  "plugin": [
+    "/home/you/opencode_notification"
+  ]
 }
 ```
 
-建議使用 `telegram.tokenFile` 而非直接寫入明文 Token，系統會自動在非 Windows 平台上驗證 Token 檔案的 `0600` 私有權限。
+> 💡 **本地安裝說明**：在套件發布至 npm 官方 registry 之前，請直接填入本專案的本機絕對目錄路徑。外掛會自動讀取配對產生的金鑰設定。
+
+### 權限設定（免手動確認 Allow）
+
+若希望 OpenCode 在執行指令時不需每次手動點擊 Allow，可在 `opencode.json` 或 `.opencode/agent/<agent-name>.md` 中將權限設為 `allow`：
+
+```json
+{
+  "permission": {
+    "edit": "allow",
+    "bash": "allow",
+    "webfetch": "allow",
+    "task": "allow",
+    "external_directory": "allow"
+  }
+}
+```
 
 ---
 
