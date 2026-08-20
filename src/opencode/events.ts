@@ -116,20 +116,28 @@ export function normalizeOpenCodeEvent(input: unknown): OpenCodeEventResult {
   }
 
   if (eventType === "session.idle") {
-    const parsed = z
-      .object({
-        ...EventIdentitySchema.shape,
-        type: z.literal("session.idle"),
-        properties: z.object({ sessionID: z.string().min(1).max(256) }),
-      })
-      .safeParse(input);
-    if (!parsed.success) return invalid(eventType);
+    const raw = input as Record<string, unknown> | null;
+    const props = (raw?.properties ?? {}) as Record<string, unknown>;
+    const sessionId =
+      typeof props.sessionID === "string"
+        ? props.sessionID
+        : typeof props.sessionId === "string"
+          ? props.sessionId
+          : typeof props.id === "string"
+            ? props.id
+            : typeof raw?.sessionID === "string"
+              ? raw.sessionID
+              : typeof raw?.sessionId === "string"
+                ? raw.sessionId
+                : undefined;
+    if (!sessionId || sessionId.length === 0) return invalid(eventType);
+    const sourceEventId = typeof raw?.id === "string" ? raw.id : undefined;
     return {
       status: "notification",
       event: {
         kind: "session.completed",
-        sessionId: parsed.data.properties.sessionID,
-        ...(parsed.data.id ? { sourceEventId: parsed.data.id } : {}),
+        sessionId,
+        ...(sourceEventId ? { sourceEventId } : {}),
       },
     };
   }
@@ -150,24 +158,27 @@ export function normalizeOpenCodeEvent(input: unknown): OpenCodeEventResult {
 }
 
 function normalizeSessionError(input: unknown, eventType: string): OpenCodeEventResult {
-  const parsed = z
-    .object({
-      ...EventIdentitySchema.shape,
-      type: z.literal("session.error"),
-      properties: z.object({
-        sessionID: z.string().min(1).max(256),
-        error: z.object({ name: z.string().max(128) }).optional(),
-      }),
-    })
-    .safeParse(input);
-  if (!parsed.success) return invalid(eventType);
+  const raw = input as Record<string, unknown> | null;
+  const props = (raw?.properties ?? {}) as Record<string, unknown>;
+  const sessionId =
+    typeof props.sessionID === "string"
+      ? props.sessionID
+      : typeof props.sessionId === "string"
+        ? props.sessionId
+        : typeof props.id === "string"
+          ? props.id
+          : undefined;
+  if (!sessionId || sessionId.length === 0) return invalid(eventType);
+  const errorObj = props.error as Record<string, unknown> | undefined;
+  const errorName = typeof errorObj?.name === "string" ? errorObj.name : undefined;
+  const sourceEventId = typeof raw?.id === "string" ? raw.id : undefined;
   return {
     status: "notification",
     event: {
       kind: "session.error",
-      sessionId: parsed.data.properties.sessionID,
-      errorCategory: errorCategory(parsed.data.properties.error?.name),
-      ...(parsed.data.id ? { sourceEventId: parsed.data.id } : {}),
+      sessionId,
+      errorCategory: errorCategory(errorName),
+      ...(sourceEventId ? { sourceEventId } : {}),
     },
   };
 }

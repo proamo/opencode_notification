@@ -197,13 +197,26 @@ export class OpenCodeEventBridge {
   }
 
   #createNotification(event: NotificationSourceEvent, occurredAt: Date): NotificationResult {
-    const session = this.#sessions.get(event.sessionId);
-    const route = this.#broker.activeRoute(this.#projectId, event.sessionId);
+    let session = this.#sessions.get(event.sessionId);
     if (!session) {
-      this.#onDiagnostic("SESSION_ROUTE_UNAVAILABLE", event.kind);
-      return { status: "drop" };
+      session = { title: "OpenCode Session" };
+      this.#sessions.set(event.sessionId, session);
+      void this.#broker.upsertRoute({
+        projectId: this.#projectId,
+        sessionId: event.sessionId,
+        projectLabel: this.#projectLabel,
+        sessionLabel: session.title,
+      });
+      return { status: "retry" };
     }
+    const route = this.#broker.activeRoute(this.#projectId, event.sessionId);
     if (!route) {
+      void this.#broker.upsertRoute({
+        projectId: this.#projectId,
+        sessionId: event.sessionId,
+        projectLabel: this.#projectLabel,
+        sessionLabel: session.title,
+      });
       return { status: "retry" };
     }
 
