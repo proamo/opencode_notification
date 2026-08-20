@@ -66,26 +66,28 @@ V1 不支援將同一個 Telegram Bot 同時用於多台電腦。Telegram Long P
 - 向 `@BotFather` 申請的 Telegram Bot Token
 - 一個 Bot Token 對應一台電腦
 
-從原始碼建置：
-
-```sh
-bun install
-bun run build
-```
-
-（發布至 npm 後可直接使用 `bun add opencode-telegram-link` 安裝）。
-
 ---
 
-## 一鍵快速安裝與設定（推薦）
+## 快速安裝與設定（新手 4 步到位）
 
-不論您偏好**本機原生模式**或 **Docker 容器模式**，皆可透過同一組一鍵安裝指令在背景全自動完成：
+在任何要啟用通知的主機（開發機或伺服器）上打開終端機，執行以下 4 行指令：
 
 ```sh
+# 1. 複製專案倉庫
+git clone https://github.com/proamo/opencode_notification.git
+cd opencode_notification
+
+# 2. 安裝依賴
+bun install
+
+# 3. 建置專案
+bun run build
+
+# 4. 啟動一鍵互動式安裝精靈
 bun run setup
-# 或發布至 npm 後：
-bunx opencode-telegram-link setup
 ```
+
+*(註：發布至 npm 後，可直接使用 `bunx opencode-telegram-link setup` 執行，免手動 git clone。)*
 
 安裝精靈將全程在終端機引導您：
 1. 🌐 **選擇語系**：繁體中文 (zh-TW) 或 English (en)。

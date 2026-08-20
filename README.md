@@ -58,31 +58,26 @@ Requirements:
 - A user-owned Telegram bot token from BotFather.
 - One computer per bot token.
 
-From source while the package is pre-release:
+## Quick Start (4-Step Setup)
+
+On any machine (development host or remote server) where you want to enable notifications:
 
 ```sh
+# 1. Clone the repository
+git clone https://github.com/proamo/opencode_notification.git
+cd opencode_notification
+
+# 2. Install dependencies
 bun install
+
+# 3. Build the project
 bun run build
-```
 
-After npm publication, install the package in the same environment OpenCode uses for plugins:
-
-```sh
-bun add opencode-telegram-link
-```
-
-The npm package exports the plugin as `opencode-telegram-link` and installs the broker CLI as `opencode-telegram-broker`.
-
-## Quick Start & Interactive Setup (Recommended)
-
-1. Get a Telegram Bot Token from `@BotFather` on Telegram (`/newbot`).
-2. Run the interactive setup wizard:
-
-```sh
+# 4. Run the interactive setup wizard
 bun run setup
-# Or after global install / npm publication:
-bunx opencode-telegram-link setup
 ```
+
+*(Note: Once published to npm, you will also be able to run `bunx opencode-telegram-link setup` directly).*
 
 The interactive wizard will:
 - Ask for your preferred language (Traditional Chinese / English).
