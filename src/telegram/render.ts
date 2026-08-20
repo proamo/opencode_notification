@@ -1,3 +1,4 @@
+import { type SupportedLocale, translate } from "../i18n";
 import type { NormalizedNotification } from "../protocol";
 import { NormalizedNotificationSchema } from "../protocol";
 
@@ -55,27 +56,33 @@ export function sanitizeTelegramText(text: string, options: TelegramRenderOption
 }
 
 function renderHtml(notification: NormalizedNotification, compact = false): string {
+  const loc = notification.locale;
   const lines = [
-    `<b>${escapeHtml(eventTitle(notification.kind))}</b>`,
-    `Project: ${escapeHtml(notification.projectLabel)}`,
-    `Session: ${escapeHtml(notification.sessionLabel)}`,
+    `<b>${escapeHtml(eventTitle(notification.kind, loc))}</b>`,
+    `${escapeHtml(translate(loc, "field.project"))}: ${escapeHtml(notification.projectLabel)}`,
+    `${escapeHtml(translate(loc, "field.session"))}: ${escapeHtml(notification.sessionLabel)}`,
   ];
   if (notification.rootSessionLabel)
-    lines.push(`Root: ${escapeHtml(notification.rootSessionLabel)}`);
-  lines.push(`Time: ${escapeHtml(notification.occurredAt)}`);
+    lines.push(
+      `${escapeHtml(translate(loc, "field.root"))}: ${escapeHtml(notification.rootSessionLabel)}`,
+    );
+  lines.push(`${escapeHtml(translate(loc, "field.time"))}: ${escapeHtml(notification.occurredAt)}`);
 
   switch (notification.kind) {
     case "session.completed":
-      lines.push("Status: complete", "Action: reply to this message to continue the root session.");
+      lines.push(
+        escapeHtml(translate(loc, "status.complete")),
+        escapeHtml(translate(loc, "action.reply")),
+      );
       break;
     case "session.error":
       lines.push(
-        `Status: error (${escapeHtml(notification.errorCategory)})`,
-        "Action: check the terminal before continuing.",
+        `${escapeHtml(translate(loc, "status.error"))} (${escapeHtml(notification.errorCategory)})`,
+        escapeHtml(translate(loc, "action.checkTerminal")),
       );
       break;
     case "question.pending":
-      lines.push("Status: waiting for your answer");
+      lines.push(escapeHtml(translate(loc, "status.waiting")));
       if (!compact) {
         for (const [index, question] of notification.questions.entries()) {
           lines.push(
@@ -91,14 +98,12 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
           }
         }
       }
-      lines.push(
-        "Action: answer this exact question or return to the terminal if it is ambiguous.",
-      );
+      lines.push(escapeHtml(translate(loc, "action.answerQuestion")));
       break;
     case "permission.pending":
       lines.push(
-        `Status: permission required (${escapeHtml(notification.permissionCategory)})`,
-        "Action: use the terminal. Telegram permission approval is disabled in V1.",
+        `${escapeHtml(translate(loc, "status.permission"))} (${escapeHtml(notification.permissionCategory)})`,
+        escapeHtml(translate(loc, "action.useTerminal")),
       );
       break;
   }
@@ -107,22 +112,23 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
 }
 
 function renderPlainTextFallback(notification: NormalizedNotification): string {
+  const loc = notification.locale;
   const context = notification.rootSessionLabel
     ? `${notification.projectLabel} / ${notification.rootSessionLabel} / ${notification.sessionLabel}`
     : `${notification.projectLabel} / ${notification.sessionLabel}`;
-  return `${eventTitle(notification.kind)}\n${context}\n${notification.occurredAt}\nUse the terminal if this message is incomplete.`;
+  return `${eventTitle(notification.kind, loc)}\n${context}\n${notification.occurredAt}\nUse the terminal if this message is incomplete.`;
 }
 
-function eventTitle(kind: NormalizedNotification["kind"]): string {
+function eventTitle(kind: NormalizedNotification["kind"], locale: SupportedLocale): string {
   switch (kind) {
     case "session.completed":
-      return "OpenCode session completed";
+      return translate(locale, "event.completed");
     case "session.error":
-      return "OpenCode session error";
+      return translate(locale, "event.error");
     case "question.pending":
-      return "OpenCode question pending";
+      return translate(locale, "event.question");
     case "permission.pending":
-      return "OpenCode permission required";
+      return translate(locale, "event.permission");
   }
 }
 

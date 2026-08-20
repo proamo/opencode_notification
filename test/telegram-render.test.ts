@@ -26,11 +26,27 @@ describe("renderTelegramNotification", () => {
     );
 
     expect(payload.parseMode).toBe("HTML");
-    expect(payload.text).toContain("<b>OpenCode session completed</b>");
+    expect(payload.text).toContain("<b>Task completed</b>");
     expect(payload.text).toContain("api &lt;prod&gt;");
     expect(payload.text).toContain("fix &amp; test");
     expect(payload.text).not.toContain("machineId");
     expect(payload.text).not.toContain(route.routeGeneration);
+  });
+
+  test("renders Traditional Chinese localization when locale is zh-TW", () => {
+    const payload = renderTelegramNotification(
+      notification({
+        kind: "session.completed",
+        locale: "zh-TW",
+        projectLabel: "api-service",
+        sessionLabel: "測試任務",
+      }),
+    );
+    expect(payload.parseMode).toBe("HTML");
+    expect(payload.text).toContain("<b>工作已完成</b>");
+    expect(payload.text).toContain("專案: api-service");
+    expect(payload.text).toContain("Session: 測試任務");
+    expect(payload.text).toContain("狀態：已完成");
   });
 
   test("fails closed for unsupported notification models", () => {
@@ -92,7 +108,7 @@ describe("renderTelegramNotification", () => {
     });
     expect(fallback.parseMode).toBeUndefined();
     expect(fallback.text.length).toBeLessThanOrEqual(80);
-    expect(fallback.text).toContain("OpenCode session completed");
+    expect(fallback.text).toContain("Task completed");
   });
 
   test("supports configured redaction patterns", () => {
