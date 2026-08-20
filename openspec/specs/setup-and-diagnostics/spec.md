@@ -137,3 +137,22 @@ Documentation SHALL explain how to stop the broker, disable the plugin, remove l
 - **WHEN** the user follows the documented uninstall procedure
 - **THEN** the broker SHALL no longer poll or accept local registrations and the documentation SHALL identify all user-owned state that can be removed
 
+### Requirement: Interactive setup wizard and deployment mode selection
+The product SHALL provide an interactive setup wizard (`setup`) that supports language selection, deployment mode selection (Native vs Docker Container), real-time Telegram Bot token verification, Nonce-based pairing, OpenCode configuration auto-injection with backup creation, and automated Docker container orchestration.
+
+#### Scenario: User runs interactive setup with Native mode
+- **WHEN** the user executes the interactive setup wizard and chooses Native mode
+- **THEN** the wizard SHALL verify the bot token, complete chat pairing, save the token file with secure permissions, inject plugin configuration into `opencode.json` with a `.bak` backup, and offer to send a test notification
+
+#### Scenario: User runs interactive setup with Docker mode
+- **WHEN** the user executes the interactive setup wizard and chooses Docker mode
+- **THEN** the wizard SHALL complete pairing, write configuration, and provide an option to automatically build and start the Docker Broker container in the background via Docker Compose
+
+### Requirement: Interactive uninstaller and automated cleanup
+The product SHALL provide a 1-command interactive uninstaller (`uninstall`) that safely shuts down active broker processes (native process and Docker containers), removes plugin configuration from discovered `opencode.json` files while preserving non-notifier settings, purges SQLite operational routing databases, and deletes private token files and state directories upon confirmation.
+
+#### Scenario: User executes interactive uninstallation
+- **WHEN** the user invokes the uninstaller wizard and confirms the cleanup steps
+- **THEN** any active native broker or Docker Broker container SHALL be terminated, `opencode-telegram-link` configuration SHALL be removed from `opencode.json`, operational SQLite databases SHALL be purged, and the private token file and state directory SHALL be removed
+
+
