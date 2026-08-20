@@ -39,17 +39,11 @@ machine + OpenCode instance + project + session + route generation
 
 使用者必須直接回覆原本的 Bot 訊息。系統不會根據專案顯示名稱、session 標題或使用者輸入的 ID 猜測目的地，因此同名專案與同時執行的多個 OpenCode 不會互相混淆。
 
-## 部署方式說明
+## 一鍵快速安裝與設定（推薦）
 
-系統支援兩種執行架構：
-1. **本機原生模式（Native Mode，推薦）**：Broker 作為本機常駐 Process 執行，由 OpenCode 外掛在需要時自動拉起（Auto-spawn），最省資源且免設定 Docker。
-2. **Docker 容器模式（Docker Container Mode，進階）**：Broker 封裝於單一輕量 Docker 容器中執行，負責 Telegram 輪詢、SQLite 狀態與路由分發；主機上的 OpenCode 透過 `127.0.0.1:42617` 與其通訊。
+不論您偏好**本機原生模式**或 **Docker 容器模式**，皆可透過同一組一鍵安裝指令在背景全自動完成：
 
----
-
-## 方式一：本機原生安裝與設定（推薦）
-
-1. **安裝依賴與建置**（發布至 npm 後可直接使用 `bunx opencode-telegram-link setup`）：
+1. **安裝依賴與建置**：
    ```sh
    bun install
    bun run build
@@ -58,43 +52,39 @@ machine + OpenCode instance + project + session + route generation
 2. **執行互動式安裝精靈**：
    ```sh
    bun run setup
-   # 或
-   opencode-telegram-broker setup
+   # 或發布至 npm 後：
+   bunx opencode-telegram-link setup
    ```
-   安裝精靈將引導您：
-   - 選擇介面語系（繁體中文 / 英文）。
-   - 輸入向 `@BotFather` 申請的 Telegram Bot Token（即時在線驗證）。
-   - 自動產生 Nonce 短碼並引導於 Telegram 私聊中進行配對綁定。
-   - 自動在背景建立安全目錄與 Token 檔案（權限設為 `0600`/`0700`，免手動處理）。
-   - 自動偵測系統上的 `opencode.json` 並一鍵寫入外掛設定（保留備份）。
-   - 自動發送 Telegram 測試通知確認連線！
+
+安裝精靈將全程在終端機引導您：
+- 🌐 **選擇語系**：繁體中文 (zh-TW) 或 English (en)。
+- ⚙️ **選擇部署模式**：
+  - `1) 本機原生模式 (Native Mode)`：Broker 作為本機輕量背景程序，OpenCode 啟動時自動在背景接管。
+  - `2) Docker 容器模式 (Docker Container)`：精靈會在設定完成後，**自動在背景執行 Docker Compose 建置並啟動容器**！
+- 🤖 **輸入 Bot Token**：輸入 `@BotFather` Token，即時在線連線驗證。
+- 🔗 **Telegram 帳號配對**：產生 Nonce 驗證短碼，在 Telegram 私聊中發送給 Bot 即自動綁定身分。
+- 📝 **自動寫入外掛設定**：自動偵測全域與專案的 `opencode.json` 一鍵注入配置（自動建立 `.bak` 備份）。
+- 🚀 **自動啟動 Broker**：選 Docker 模式時自動於背景啟動容器；選原生模式時完成配置。
+- 💬 **發送測試通知**：發送歡迎測試訊息到您的 Telegram，即刻驗收成果！
 
 ---
 
-## 方式二：Docker 容器模式部署（進階）
+## 手動 Docker 管理（進階可選）
 
-若您偏好將 Broker 隔離在 Docker 容器內執行：
+若您選擇 Docker 模式並希望手動管理容器生命週期：
 
-1. **建置 Docker 映像檔**：
-   ```sh
-   bun run build
-   docker build -f container/broker.Dockerfile -t opencode-telegram-broker:local .
-   ```
-
-2. **啟動 Broker 容器**：
-   ```sh
-   docker run -d --rm \
-     --name opencode-telegram-broker \
-     -p 127.0.0.1:42617:42617 \
-     -v opencode-telegram-state:/state \
-     -v "$HOME/.local/state/opencode-telegram-link/telegram-bot-token:/run/secrets/telegram-bot-token:ro" \
-     -e OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token \
-     opencode-telegram-broker:local start
-   ```
-
-> [!IMPORTANT]
-> - Port 綁定務必加上 `127.0.0.1`（即 `-p 127.0.0.1:42617:42617`），切勿直接寫 `42617:42617`，以防止 Docker 將 Broker 暴露至公開網路。
-> - 同一個 Bot Token 與 State 請勿同時啟動本機 Broker 與 Docker Broker，避免 Telegram Long Polling 衝突。
+- **啟動 / 建置容器**：
+  ```sh
+  docker compose up -d --build
+  ```
+- **停止容器**：
+  ```sh
+  docker compose down
+  ```
+- **查看容器狀態**：
+  ```sh
+  docker compose ps
+  ```
 
 ---
 

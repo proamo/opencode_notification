@@ -86,6 +86,9 @@ bunx opencode-telegram-link setup
 
 The interactive wizard will:
 - Ask for your preferred language (Traditional Chinese / English).
+- Ask for your preferred deployment mode:
+  - **1) Native Mode (Default)**: Broker runs as a lightweight background process, auto-spawned by OpenCode.
+  - **2) Docker Container Mode**: The wizard will **automatically build and start the Docker container in the background** via Docker Compose!
 - Prompt and instantly verify your Bot Token with Telegram.
 - Guide you through private chat pairing with a short-lived nonce code.
 - Automatically save the token in a secure private state file (`0600`/`0700`).
@@ -233,17 +236,24 @@ Rejected replies receive localized feedback when the route is expired, offline, 
 
 Native mode is recommended. Docker mode runs only the broker in a container; OpenCode and plugins continue to run on the host.
 
-Build the image from a built checkout:
+### Quick Start with Docker Compose (Recommended)
+
+```sh
+docker compose up -d --build
+```
+
+To stop:
+```sh
+docker compose down
+```
+
+### Manual Container Run
 
 ```sh
 bun run build
 docker build -f container/broker.Dockerfile -t opencode-telegram-broker:local .
-```
 
-Run with persistent state and runtime secrets:
-
-```sh
-docker run --rm \
+docker run -d --rm \
   --name opencode-telegram-broker \
   -p 127.0.0.1:42617:42617 \
   -v opencode-telegram-state:/state \
