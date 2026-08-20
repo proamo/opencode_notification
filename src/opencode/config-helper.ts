@@ -2,6 +2,7 @@ import { copyFile, lstat, mkdir, readFile, rename, writeFile } from "node:fs/pro
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "../config";
+import { defaultStateDirectory } from "../state/identity";
 
 export type DiscoveredConfigFile = {
   path: string;
@@ -159,6 +160,46 @@ export async function loadResolvedNotifierConfig(
       // Continue to next candidate
     }
   }
+
+  // Fallback: check stateDirectory for paired credentials
+  try {
+    const stateDir = defaultStateDirectory();
+    const identityPath = join(stateDir, "telegram-identity.json");
+    const tokenPath = join(stateDir, "telegram-bot-token");
+    let userId: string | undefined;
+    let chatId: string | undefined;
+    let locale: "auto" | "en" | "zh-TW" = "auto";
+
+    try {
+      const identityContent = await readFile(identityPath, "utf8");
+      const identityJson = JSON.parse(identityContent) as Record<string, unknown>;
+      if (typeof identityJson.userId === "string") userId = identityJson.userId;
+      if (typeof identityJson.chatId === "string") chatId = identityJson.chatId;
+      if (identityJson.locale === "zh-TW" || identityJson.locale === "en") {
+        locale = identityJson.locale;
+      }
+    } catch {}
+
+    if (!userId || !chatId) {
+      if (process.env.OPENCODE_TELEGRAM_USER_ID) userId = process.env.OPENCODE_TELEGRAM_USER_ID;
+      if (process.env.OPENCODE_TELEGRAM_CHAT_ID) chatId = process.env.OPENCODE_TELEGRAM_CHAT_ID;
+    }
+
+    if (userId && chatId) {
+      const parsed = NotifierConfigSchema.safeParse({
+        mode: "local",
+        locale,
+        telegram: {
+          tokenFile: tokenPath,
+          userId,
+          chatId,
+        },
+      });
+      if (parsed.success) {
+        return parsed.data;
+      }
+    }
+  } catch {}
 
   return undefined;
 }

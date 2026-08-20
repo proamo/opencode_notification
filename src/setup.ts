@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
 import { join } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
@@ -324,6 +324,12 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   // Step 4: Write secure token file
   const tokenFile = join(stateDirectory, "telegram-bot-token");
   await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
+  const identityFile = join(stateDirectory, "telegram-identity.json");
+  await writeFile(
+    identityFile,
+    `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
+    "utf8",
+  );
   stdout.write(
     isZh
       ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
