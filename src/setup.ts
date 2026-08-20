@@ -366,43 +366,48 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   // Step 5: OpenCode config detection & injection
   stdout.write("│\n");
   const discovered = await discoverOpenCodeConfigFiles(cwd);
-  const targetConfig = discovered.find((d) => d.exists) ?? discovered[0];
-  if (targetConfig) {
-    const existDesc = targetConfig.exists
-      ? isZh
-        ? "已存在"
-        : "existing"
-      : isZh
-        ? "將自動建立"
-        : "will create";
+  const existingConfigs = discovered.filter((d) => d.exists);
+  const targets =
+    existingConfigs.length > 0
+      ? existingConfigs
+      : [discovered.find((d) => !d.isWorkspace) ?? discovered[0]].filter(Boolean);
+
+  if (targets.length > 0) {
+    const descList = targets
+      .map(
+        (t) =>
+          `${t.path} [${t.exists ? (isZh ? "已存在" : "existing") : isZh ? "將自動建立" : "will create"}]`,
+      )
+      .join(", ");
     stdout.write(
       isZh
-        ? `◇  偵測到 OpenCode 設定檔 (${targetConfig.path} [${existDesc}])\n`
-        : `◇  Discovered OpenCode config file (${targetConfig.path} [${existDesc}])\n`,
+        ? `◇  偵測到 OpenCode 設定檔 (${descList})\n`
+        : `◇  Discovered OpenCode config file(s) (${descList})\n`,
     );
     const autoWrite = await reader.ask(
       isZh
         ? "│  是否自動寫入外掛設定？ [Y/n]: "
-        : "│  Automatically update OpenCode config file? [Y/n]: ",
+        : "│  Automatically update OpenCode config file(s)? [Y/n]: ",
       stdout,
       "Y",
     );
     if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
-      try {
-        const { backupPath } = await injectOpenCodeConfig(targetConfig.path, configData);
-        stdout.write(
-          isZh
-            ? `│  ✔ OpenCode 設定檔已更新！${backupPath ? ` (備份於 ${backupPath})` : ""}\n`
-            : `│  ✔ OpenCode config updated!${backupPath ? ` (backup at ${backupPath})` : ""}\n`,
-        );
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "failed to write config";
-        stdout.write(
-          isZh
-            ? `│  ✖ 設定檔寫入失敗: ${errMsg}，請手動複製下列設定。\n`
-            : `│  ✖ Failed to write config: ${errMsg}. Please configure manually.\n`,
-        );
-        stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
+      for (const target of targets) {
+        try {
+          const { backupPath } = await injectOpenCodeConfig(target.path, configData);
+          stdout.write(
+            isZh
+              ? `│  ✔ OpenCode 設定檔已更新: ${target.path}${backupPath ? ` (備份於 ${backupPath})` : ""}\n`
+              : `│  ✔ OpenCode config updated: ${target.path}${backupPath ? ` (backup at ${backupPath})` : ""}\n`,
+          );
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "failed to write config";
+          stdout.write(
+            isZh
+              ? `│  ✖ 設定檔寫入失敗 (${target.path}): ${errMsg}\n`
+              : `│  ✖ Failed to write config (${target.path}): ${errMsg}\n`,
+          );
+        }
       }
     } else {
       stdout.write(
