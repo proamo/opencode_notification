@@ -1,0 +1,19 @@
+services:
+  broker:
+    build:
+      context: .
+      dockerfile: container/broker.Dockerfile
+    image: opencode-telegram-broker:local
+    container_name: opencode-telegram-broker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:42617:42617"
+    volumes:
+      - opencode-telegram-state:/state
+      - ${HOME}/.local/state/opencode-telegram-link/telegram-bot-token:/run/secrets/telegram-bot-token:ro
+    environment:
+      - OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token
+    command: ["start"]
+
+volumes:
+  opencode-telegram-state:
