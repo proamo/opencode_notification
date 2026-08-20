@@ -36,8 +36,16 @@ export async function probeBroker(
       signal: AbortSignal.timeout(2_000),
     });
     if (!response.ok) return undefined;
-    const json = (await response.json()) as { status?: string; machineId?: string };
-    if (json && json.status === "ok" && typeof json.machineId === "string") {
+    const json = (await response.json()) as {
+      service?: string;
+      status?: string;
+      machineId?: string;
+    };
+    if (
+      json &&
+      (json.service === "opencode-telegram-link" || json.status === "ok") &&
+      typeof json.machineId === "string"
+    ) {
       return { status: "ok", machineId: json.machineId };
     }
     return undefined;
