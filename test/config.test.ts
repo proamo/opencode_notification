@@ -91,7 +91,7 @@ describe("NotifierConfigSchema", () => {
     ).toBe(false);
   });
 
-  test("loads only private regular token files", async () => {
+  test.skipIf(process.platform === "win32")("loads only private regular token files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "opencode-telegram-config-"));
     try {
       const tokenFile = join(directory, "token");

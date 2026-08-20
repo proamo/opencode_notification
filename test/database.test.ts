@@ -15,12 +15,20 @@ const databases: StateDatabase[] = [];
 
 afterEach(async () => {
   for (const database of databases.splice(0)) database.close();
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => safeRemove(directory)));
 });
+
+async function safeRemove(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  await rm(directory, { recursive: true, force: true });
+}
 
 describe("StateDatabase", () => {
   test("creates the current schema in a private database", async () => {

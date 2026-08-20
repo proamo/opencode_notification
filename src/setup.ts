@@ -4,6 +4,11 @@ import { platform } from "node:os";
 import { join } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
 import type { SupportedLocale } from "./i18n";
+import {
+  discoverOpenCodeConfigFiles,
+  generatePluginConfigSnippet,
+  injectOpenCodeConfig,
+} from "./opencode";
 import { defaultStateDirectory } from "./state";
 import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "./telegram/api";
 
@@ -48,6 +53,17 @@ export type GuidedSetupOptions = {
   };
 };
 
+export type InteractiveSetupOptions = {
+  stdin?: AsyncIterable<Buffer | string> | NodeJS.ReadableStream | undefined;
+  stdout?: Pick<NodeJS.WriteStream, "write"> | undefined;
+  stderr?: Pick<NodeJS.WriteStream, "write"> | undefined;
+  env?: NodeJS.ProcessEnv | undefined;
+  fetch?: typeof fetch | undefined;
+  stateDirectory?: string | undefined;
+  cwd?: string | undefined;
+  now?: (() => number) | undefined;
+};
+
 export class SetupError extends Error {
   readonly code: string;
 
@@ -55,6 +71,46 @@ export class SetupError extends Error {
     super(message);
     this.name = "SetupError";
     this.code = code;
+  }
+}
+
+export class AsyncPromptReader {
+  private iterator: AsyncIterator<Buffer | string>;
+  private buffer = "";
+
+  constructor(input: AsyncIterable<Buffer | string> | NodeJS.ReadableStream) {
+    this.iterator = (input as AsyncIterable<Buffer | string>)[Symbol.asyncIterator]();
+  }
+
+  async readLine(): Promise<string> {
+    while (true) {
+      const newlineIndex = this.buffer.indexOf("\n");
+      if (newlineIndex >= 0) {
+        const line = this.buffer.slice(0, newlineIndex);
+        this.buffer = this.buffer.slice(newlineIndex + 1);
+        return line.replace(/\r$/, "");
+      }
+      const { value, done } = await this.iterator.next();
+      if (done) {
+        const remaining = this.buffer;
+        this.buffer = "";
+        return remaining.replace(/\r$/, "");
+      }
+      this.buffer += String(value);
+    }
+  }
+
+  async ask(
+    promptText: string,
+    stdout: Pick<NodeJS.WriteStream, "write">,
+    defaultValue?: string,
+  ): Promise<string> {
+    stdout.write(promptText);
+    const line = (await this.readLine()).trim();
+    if (!line && defaultValue !== undefined) {
+      return defaultValue;
+    }
+    return line;
   }
 }
 
@@ -123,6 +179,265 @@ export async function runGuidedSetup(options: GuidedSetupOptions): Promise<Guide
   };
 }
 
+export async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promise<number> {
+  const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
+  const fetchImpl = options.fetch ?? fetch;
+  const reader = new AsyncPromptReader(options.stdin ?? process.stdin);
+  const now = options.now ?? Date.now;
+  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+  const cwd = options.cwd ?? process.cwd();
+
+  stdout.write("\n┌  OpenCode Telegram Notifier — Setup Wizard\n│\n");
+
+  // Step 1: Language / Locale
+  stdout.write("◇  Language / 語言:\n");
+  stdout.write("│  1) 繁體中文 (zh-TW) [預設/Default]\n");
+  stdout.write("│  2) English (en)\n");
+  const langChoice = await reader.ask("│  請選擇 / Select [1]: ", stdout, "1");
+  const locale: SupportedLocale =
+    langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
+  const isZh = locale === "zh-TW";
+
+  // Step 2: BotFather Token
+  let botToken = "";
+  let botInfo: TelegramBot | undefined;
+  let attempts = 0;
+  while (!botInfo) {
+    attempts += 1;
+    if (attempts > 5) {
+      stderr.write(isZh ? "✖ 超過重試次數，設定終止。\n" : "✖ Too many attempts. Aborted.\n");
+      return 1;
+    }
+    stdout.write("│\n");
+    if (isZh) {
+      stdout.write("◇  請輸入向 @BotFather 申請的 Telegram Bot Token:\n");
+      stdout.write("│  (範例: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+    } else {
+      stdout.write("◇  Enter your Telegram Bot Token from @BotFather:\n");
+      stdout.write("│  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+    }
+    botToken = await reader.ask("│  Token: ", stdout);
+    if (!botToken) {
+      stdout.write(isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n");
+      continue;
+    }
+    if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+      stdout.write(
+        isZh
+          ? "│  ✖ Token 格式不符合 Telegram 規範，請重新輸入。\n"
+          : "│  ✖ Invalid token format.\n",
+      );
+      continue;
+    }
+    stdout.write(
+      isZh
+        ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
+        : "│  ⠋ Verifying Bot Token with Telegram...\n",
+    );
+    const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+    try {
+      botInfo = await api.getMe();
+      const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
+      stdout.write(
+        isZh
+          ? `│  ✔ 連線成功！已辨識 Bot: ${botName} (ID: ${botInfo.id})\n`
+          : `│  ✔ Connected! Identified Bot: ${botName} (ID: ${botInfo.id})\n`,
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "connection failed";
+      stdout.write(
+        isZh
+          ? `│  ✖ Token 驗證失敗 (${errMsg})，請確認後重試。\n`
+          : `│  ✖ Verification failed (${errMsg}). Please retry.\n`,
+      );
+    }
+  }
+
+  // Step 3: Nonce Pairing
+  const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+  const nonce = createPairingNonce();
+  const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
+  stdout.write("│\n");
+  if (isZh) {
+    stdout.write("◇  [身分驗證配對]\n");
+    stdout.write(`│  請在 Telegram 打開與 ${botName} 的私聊視窗，並發送此驗證碼：\n`);
+    stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+    stdout.write("│  ⠋ 等待 Telegram 私訊中...\n");
+  } else {
+    stdout.write("◇  [Identity Pairing]\n");
+    stdout.write(`│  Open a private chat with ${botName} on Telegram and send this code:\n`);
+    stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+    stdout.write("│  ⠋ Waiting for Telegram private message...\n");
+  }
+
+  const expiresAt = now() + 120_000;
+  let pairing: PairingCandidate;
+  try {
+    pairing = await waitForPairingMessage(api, {
+      nonce,
+      expiresAt,
+      now,
+      pollTimeoutSeconds: 5,
+    });
+  } catch {
+    stdout.write(
+      isZh
+        ? "│  ✖ 配對超時或未收到有效訊息，設定中止。\n"
+        : "│  ✖ Pairing timed out or no valid message received. Aborted.\n",
+    );
+    return 1;
+  }
+
+  stdout.write(
+    isZh
+      ? `│  ✔ 收到驗證訊息！來自 Telegram 用戶 (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`
+      : `│  ✔ Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`,
+  );
+
+  const confirmBind = await reader.ask(
+    isZh
+      ? "│  是否將此 Telegram 帳號綁定為 OpenCode 管理員？ [Y/n]: "
+      : "│  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ",
+    stdout,
+    "Y",
+  );
+  if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
+    stdout.write(isZh ? "│  ✖ 已取消綁定。\n" : "│  ✖ Pairing cancelled.\n");
+    return 1;
+  }
+
+  // Step 4: Write secure token file
+  const tokenFile = join(stateDirectory, "telegram-bot-token");
+  await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
+  stdout.write(
+    isZh
+      ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
+      : `│  ✔ Secure token file saved (${tokenFile})\n`,
+  );
+
+  const configData: NotifierConfig = {
+    mode: "local",
+    locale,
+    telegram: {
+      tokenFile,
+      userId: pairing.userId,
+      chatId: pairing.chatId,
+    },
+    notifications: {
+      completion: true,
+      error: true,
+      question: true,
+      permission: true,
+      includeChildLifecycle: false,
+      completionDebounceMs: 1500,
+      pluginBufferSize: 100,
+    },
+    broker: {
+      host: "127.0.0.1",
+      port: 42617,
+    },
+    interaction: {
+      sessionPromptTtlMinutes: 1440,
+      questionTtlMinutes: 30,
+    },
+  };
+
+  // Step 5: OpenCode config detection & injection
+  stdout.write("│\n");
+  const discovered = await discoverOpenCodeConfigFiles(cwd);
+  const targetConfig = discovered.find((d) => d.exists) ?? discovered[0];
+  if (targetConfig) {
+    const existDesc = targetConfig.exists
+      ? isZh
+        ? "已存在"
+        : "existing"
+      : isZh
+        ? "將自動建立"
+        : "will create";
+    stdout.write(
+      isZh
+        ? `◇  偵測到 OpenCode 設定檔 (${targetConfig.path} [${existDesc}])\n`
+        : `◇  Discovered OpenCode config file (${targetConfig.path} [${existDesc}])\n`,
+    );
+    const autoWrite = await reader.ask(
+      isZh
+        ? "│  是否自動寫入外掛設定？ [Y/n]: "
+        : "│  Automatically update OpenCode config file? [Y/n]: ",
+      stdout,
+      "Y",
+    );
+    if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
+      try {
+        const { backupPath } = await injectOpenCodeConfig(targetConfig.path, configData);
+        stdout.write(
+          isZh
+            ? `│  ✔ OpenCode 設定檔已更新！${backupPath ? ` (備份於 ${backupPath})` : ""}\n`
+            : `│  ✔ OpenCode config updated!${backupPath ? ` (backup at ${backupPath})` : ""}\n`,
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "failed to write config";
+        stdout.write(
+          isZh
+            ? `│  ✖ 設定檔寫入失敗: ${errMsg}，請手動複製下列設定。\n`
+            : `│  ✖ Failed to write config: ${errMsg}. Please configure manually.\n`,
+        );
+        stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
+      }
+    } else {
+      stdout.write(
+        isZh
+          ? "│  請手動將下列設定加入您的 opencode.json:\n"
+          : "│  Please add the following configuration to your opencode.json:\n",
+      );
+      stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
+    }
+  }
+
+  // Step 6: Test Notification
+  stdout.write("│\n");
+  const sendTest = await reader.ask(
+    isZh
+      ? "◇  是否發送測試通知到您的 Telegram？ [Y/n]: "
+      : "◇  Send a welcome test notification to your Telegram now? [Y/n]: ",
+    stdout,
+    "Y",
+  );
+  if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
+    try {
+      const welcomeText = isZh
+        ? `🎉 <b>OpenCode Telegram Notifier 設定成功！</b>\n\n已成功綁定本機 OpenCode 與 Telegram。\n當 OpenCode 任務完成、發生異常或需要回覆時，您將在此收到即時通知。\n\n• Bot: ${botName}\n• 授權用戶 ID: <code>${pairing.userId}</code>`
+        : `🎉 <b>OpenCode Telegram Notifier setup complete!</b>\n\nYour local OpenCode is now linked with Telegram.\nYou will receive notifications here when sessions finish or require input.\n\n• Bot: ${botName}\n• Authorized User ID: <code>${pairing.userId}</code>`;
+      await api.sendMessage({
+        chatId: pairing.chatId,
+        text: welcomeText,
+        parseMode: "HTML",
+      });
+      stdout.write(
+        isZh
+          ? "│  ✔ 已成功發送測試通知到您的 Telegram！請檢查手機訊息。\n"
+          : "│  ✔ Test notification sent to your Telegram! Please check your messages.\n",
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "send failed";
+      stdout.write(
+        isZh
+          ? `│  ✖ 測試通知發送失敗: ${errMsg}\n`
+          : `│  ✖ Failed to send test notification: ${errMsg}\n`,
+      );
+    }
+  }
+
+  stdout.write("│\n");
+  stdout.write(
+    isZh
+      ? "└  🎉 安裝設定完成！您現在可以回到 OpenCode 開始工作。\n\n"
+      : "└  🎉 Setup completed! You can now return to OpenCode and start working.\n\n",
+  );
+
+  return 0;
+}
+
 export async function runSetupCli(
   options: {
     argv?: string[];
@@ -131,6 +446,7 @@ export async function runSetupCli(
     stderr?: Pick<NodeJS.WriteStream, "write">;
     stdin?: AsyncIterable<Buffer | string>;
     fetch?: typeof fetch;
+    cwd?: string;
   } = {},
 ): Promise<number> {
   const argv = options.argv ?? process.argv.slice(2);
@@ -141,6 +457,25 @@ export async function runSetupCli(
   if (argv.includes("--help")) {
     stdout.write(setupHelp());
     return 0;
+  }
+
+  // Interactive mode when explicitly requested or when run with no arguments & no credential env vars
+  const isInteractive =
+    argv.includes("-i") ||
+    argv.includes("--interactive") ||
+    (argv.length === 0 &&
+      !env.OPENCODE_TELEGRAM_BOT_TOKEN &&
+      !env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE);
+
+  if (isInteractive) {
+    return await runInteractiveSetup({
+      stdin: options.stdin,
+      stdout,
+      stderr,
+      env,
+      fetch: options.fetch,
+      cwd: options.cwd,
+    });
   }
 
   try {
@@ -376,10 +711,19 @@ function setupSummary(result: Extract<GuidedSetupResult, { status: "ready" }>): 
 
 function setupHelp(): string {
   return [
-    "Usage: opencode-telegram-broker setup [--user-id ID --chat-id ID | --pair] [--locale en|zh-TW] [--state-dir PATH]",
+    "Usage: opencode-telegram-broker setup [--interactive | -i] [--user-id ID --chat-id ID | --pair] [--locale en|zh-TW] [--state-dir PATH]",
+    "",
+    "Interactive mode (default when run with no options):",
+    "  opencode-telegram-broker setup",
+    "",
+    "Scripted / Non-interactive options:",
+    "  --pair                   Display a short-lived nonce and pair with incoming message.",
+    "  --user-id ID             Explicit Telegram user ID.",
+    "  --chat-id ID             Explicit Telegram chat ID.",
+    "  --locale en|zh-TW        Notification and setup language.",
+    "  --state-dir PATH         Custom state directory.",
     "",
     "Read the bot token from OPENCODE_TELEGRAM_BOT_TOKEN_FILE or OPENCODE_TELEGRAM_BOT_TOKEN.",
-    "Use --pair to display a short-lived nonce and confirm the discovered private chat locally.",
     "",
   ].join("\n");
 }

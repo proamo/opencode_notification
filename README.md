@@ -73,32 +73,37 @@ bun add opencode-telegram-link
 
 The npm package exports the plugin as `opencode-telegram-link` and installs the broker CLI as `opencode-telegram-broker`.
 
-## BotFather Setup
+## Quick Start & Interactive Setup (Recommended)
 
-1. Open Telegram and start a chat with `@BotFather`.
-2. Send `/newbot`, choose the bot name and username, and copy the token.
-3. Keep the bot private to you. Do not add it to groups for V1.
-4. Store the token in a private file instead of putting it directly in OpenCode config:
+1. Get a Telegram Bot Token from `@BotFather` on Telegram (`/newbot`).
+2. Run the interactive setup wizard:
 
 ```sh
-mkdir -p ~/.local/state/opencode-telegram-link
-chmod 700 ~/.local/state/opencode-telegram-link
-printf '%s\n' '123456:REPLACE_WITH_BOTFATHER_TOKEN' > ~/.local/state/opencode-telegram-link/telegram-bot-token
-chmod 600 ~/.local/state/opencode-telegram-link/telegram-bot-token
+bun run setup
+# Or after global install / npm publication:
+bunx opencode-telegram-link setup
 ```
 
-Run guided setup with nonce pairing:
+The interactive wizard will:
+- Ask for your preferred language (Traditional Chinese / English).
+- Prompt and instantly verify your Bot Token with Telegram.
+- Guide you through private chat pairing with a short-lived nonce code.
+- Automatically save the token in a secure private state file (`0600`/`0700`).
+- Automatically detect and update your `opencode.json` configuration file.
+- Send a test welcome notification to your Telegram!
+
+---
+
+## Non-Interactive & Scripted Setup (CI / Automated Environments)
+
+If you prefer scripted setup with environment variables or flags:
 
 ```sh
-OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+# Pair with short-lived nonce
+OPENCODE_TELEGRAM_BOT_TOKEN='123456:REPLACE_WITH_BOTFATHER_TOKEN' \
   opencode-telegram-broker setup --pair --locale en
-```
 
-The setup command prints a short code. Send that code to your bot in a private Telegram chat, then type `YES` in the local terminal to confirm the discovered Telegram user and chat. Setup validates the bot with `getMe`, pins the private `userId` and `chatId`, and keeps the token in a `0600` token file.
-
-If you already know your Telegram private user/chat ID, you can skip pairing:
-
-```sh
+# Or specify existing Telegram User and Chat IDs directly
 OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
   opencode-telegram-broker setup --user-id 123456789 --chat-id 123456789 --locale en
 ```

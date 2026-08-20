@@ -3,6 +3,13 @@ export {
   type OpenCodeEventBridgeOptions,
 } from "./bridge";
 export {
+  type DiscoveredConfigFile,
+  discoverOpenCodeConfigFiles,
+  generatePluginConfigSnippet,
+  getCandidateConfigPaths,
+  injectOpenCodeConfig,
+} from "./config-helper";
+export {
   type NotificationSourceEvent,
   normalizeOpenCodeEvent,
   type OpenCodeEventResult,

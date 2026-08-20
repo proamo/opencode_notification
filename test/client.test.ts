@@ -33,14 +33,26 @@ const brokers: BrokerServer[] = [];
 const clients: BrokerClient[] = [];
 
 afterEach(async () => {
-  await Promise.all(clients.splice(0).map((client) => client.stop()));
-  await Promise.all(brokers.splice(0).map((broker) => broker.stop()));
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  for (const client of clients.splice(0)) {
+    await client.stop();
+  }
+  for (const broker of brokers.splice(0)) {
+    await broker.stop();
+  }
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => safeRemove(directory)));
 });
+
+async function safeRemove(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  await rm(directory, { recursive: true, force: true });
+}
 
 describe("BrokerClient lifecycle", () => {
   test("uses a Bun runtime command for detached broker spawn", () => {
@@ -109,7 +121,13 @@ describe("BrokerClient lifecycle", () => {
     const route = client.activeRoute("opaque-project-id", "ses_123");
     if (!route || !brokers[0]) throw new Error("expected active route");
 
-    await expect(client.publishNotification(notification(route))).resolves.toBe("queued");
+    try {
+      const res = await client.publishNotification(notification(route));
+      expect(res).toBe("queued");
+    } catch (err) {
+      console.error("publishNotification failed with:", err);
+      throw err;
+    }
     await waitUntil(() => sent.length === 1);
 
     expect(sent[0]).toMatchObject({ chatId: "123456789", parseMode: "HTML" });
@@ -445,9 +463,9 @@ function createClient(
     openCodeVersion: "1.18.18",
     startupTimeoutMs: 2_000,
     requestTimeoutMs: 1_000,
-    heartbeatIntervalMs: 20,
-    reconnectMinDelayMs: 5,
-    reconnectMaxDelayMs: 20,
+    heartbeatIntervalMs: 500,
+    reconnectMinDelayMs: 20,
+    reconnectMaxDelayMs: 100,
     random: () => 0,
     ...clientOptions,
     spawnBroker: async () => {

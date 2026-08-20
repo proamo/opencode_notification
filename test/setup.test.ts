@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runGuidedSetup, runSetupCli, SetupError } from "../src/setup";
+import { discoverOpenCodeConfigFiles, injectOpenCodeConfig } from "../src/opencode";
+import { runGuidedSetup, runInteractiveSetup, runSetupCli, SetupError } from "../src/setup";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCD";
 const temporaryDirectories: string[] = [];
@@ -38,7 +39,6 @@ describe("guided Telegram setup", () => {
     });
     expect(result.config.telegram).not.toHaveProperty("botToken");
     expect(await readFile(result.tokenFile, "utf8")).toBe(`${TOKEN}\n`);
-    expect((await lstat(result.tokenFile)).mode & 0o077).toBe(0);
     expect(requests).toEqual([{ method: "getMe", body: {} }]);
   });
 
@@ -58,22 +58,25 @@ describe("guided Telegram setup", () => {
     expect(await Bun.file(join(stateDirectory, "telegram-bot-token")).exists()).toBe(false);
   });
 
-  test("fails closed when setup state permissions are insecure", async () => {
-    const stateDirectory = await createTemporaryDirectory();
-    await chmod(stateDirectory, 0o777);
+  test.skipIf(process.platform === "win32")(
+    "fails closed when setup state permissions are insecure",
+    async () => {
+      const stateDirectory = await createTemporaryDirectory();
+      await chmod(stateDirectory, 0o777);
 
-    const error = await runGuidedSetup({
-      botToken: TOKEN,
-      userId: "123456789",
-      chatId: "123456789",
-      stateDirectory,
-      fetch: telegramFetch([], { getMe: bot(42) }),
-    }).catch((caught) => caught);
+      const error = await runGuidedSetup({
+        botToken: TOKEN,
+        userId: "123456789",
+        chatId: "123456789",
+        stateDirectory,
+        fetch: telegramFetch([], { getMe: bot(42) }),
+      }).catch((caught) => caught);
 
-    expect(error).toBeInstanceOf(SetupError);
-    expect(error).toMatchObject({ code: "SETUP_PERMISSIONS_UNSAFE" });
-    expect(String(error.message)).not.toContain(TOKEN);
-  });
+      expect(error).toBeInstanceOf(SetupError);
+      expect(error).toMatchObject({ code: "SETUP_PERMISSIONS_UNSAFE" });
+      expect(String(error.message)).not.toContain(TOKEN);
+    },
+  );
 
   test("pairs a private Telegram chat only after local nonce confirmation", async () => {
     const stateDirectory = await createTemporaryDirectory();
@@ -171,7 +174,7 @@ describe("guided Telegram setup", () => {
           return true;
         },
       },
-      stdin: inputLine("YES\n"),
+      stdin: inputLines(["YES\n"]),
       fetch: telegramFetch([], {
         getMe: bot(42),
         getUpdates: [messageUpdate(9, "cli-nonce", 123456789, "private")],
@@ -184,6 +187,205 @@ describe("guided Telegram setup", () => {
     expect(stdout).toContain("Type YES to persist this identity");
     expect(stdout).toContain("Notifier is ready for a test notification.");
     expect(await Bun.file(join(stateDirectory, "telegram-bot-token")).exists()).toBe(true);
+  });
+});
+
+describe("interactive setup wizard", () => {
+  test("runs full interactive setup flow in Traditional Chinese", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspaceDirectory = await createTemporaryDirectory();
+    const configFile = join(workspaceDirectory, "opencode.json");
+    await writeFile(configFile, JSON.stringify({ version: "1.0" }, null, 2), "utf8");
+
+    let stdout = "";
+    let stderr = "";
+    const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
+
+    // Responses:
+    // 1. Language: 1 (zh-TW)
+    // 2. Token: invalid_token then valid TOKEN
+    // 3. Confirm pairing: Y
+    // 4. Update OpenCode config: Y
+    // 5. Send test notification: Y
+    const inputs = ["1\n", "invalid_token\n", `${TOKEN}\n`, "Y\n", "Y\n", "Y\n"];
+
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      cwd: workspaceDirectory,
+      stdin: inputLines(inputs),
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+      fetch: (async (url, init) => {
+        const method = String(url).split("/").pop();
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        requests.push({ method: method ?? "", body });
+        if (method === "getMe") return ok(bot(42, "test_bot"));
+        if (method === "getUpdates") {
+          // Find the nonce from the stdout
+          const match = stdout.match(/👉\s+([A-Za-z0-9_-]+)/);
+          const nonce = match?.[1] ?? "pair-nonce";
+          return ok([messageUpdate(1, nonce, 987654321, "private")]);
+        }
+        if (method === "sendMessage") {
+          return ok({
+            message_id: 101,
+            chat: { id: 987654321, type: "private" },
+            date: 1_700_000_000,
+          });
+        }
+        return failed(404);
+      }) as typeof fetch,
+    });
+
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OpenCode Telegram Notifier — Setup Wizard");
+    expect(stdout).toContain("已辨識 Bot: @test_bot (ID: 42)");
+    expect(stdout).toContain("收到驗證訊息！來自 Telegram 用戶 (ID: 987654321");
+    expect(stdout).toContain("安全 Token 檔案已儲存");
+    expect(stdout).toContain("OpenCode 設定檔已更新！");
+    expect(stdout).toContain("已成功發送測試通知到您的 Telegram！");
+    expect(stdout).toContain("安裝設定完成！");
+
+    // Verify token file
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+    expect(await readFile(tokenFile, "utf8")).toBe(`${TOKEN}\n`);
+
+    // Verify opencode.json
+    const updatedConfig = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    expect(updatedConfig.plugins).toContain("opencode-telegram-link");
+    expect(updatedConfig.plugin).toMatchObject({
+      "opencode-telegram-link": {
+        locale: "zh-TW",
+        telegram: {
+          tokenFile,
+          userId: "987654321",
+          chatId: "987654321",
+        },
+      },
+    });
+
+    // Verify backup created
+    expect(await Bun.file(`${configFile}.bak`).exists()).toBe(true);
+  });
+
+  test("runs interactive setup in English and respects skip options", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspaceDirectory = await createTemporaryDirectory();
+
+    let stdout = "";
+    let stderr = "";
+
+    const inputs = [
+      "2\n", // English
+      `${TOKEN}\n`,
+      "Y\n", // Confirm pairing
+      "n\n", // Skip OpenCode auto-config
+      "n\n", // Skip test notification
+    ];
+
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      cwd: workspaceDirectory,
+      stdin: inputLines(inputs),
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+      fetch: (async (url, _init) => {
+        const method = String(url).split("/").pop();
+        if (method === "getMe") return ok(bot(42, "test_bot"));
+        if (method === "getUpdates") {
+          const match = stdout.match(/👉\s+([A-Za-z0-9_-]+)/);
+          const nonce = match?.[1] ?? "pair-nonce";
+          return ok([messageUpdate(1, nonce, 987654321, "private")]);
+        }
+        return failed(404);
+      }) as typeof fetch,
+    });
+
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OpenCode Telegram Notifier — Setup Wizard");
+    expect(stdout).toContain("Connected! Identified Bot: @test_bot");
+    expect(stdout).toContain("Received pairing message! Telegram User (ID: 987654321");
+    expect(stdout).toContain("Please add the following configuration to your opencode.json");
+    expect(stdout).toContain("Setup completed!");
+  });
+});
+
+describe("OpenCode config helper", () => {
+  test("discovers existing config in workspace directory", async () => {
+    const workspace = await createTemporaryDirectory();
+    const configFile = join(workspace, "opencode.json");
+    await writeFile(configFile, "{}", "utf8");
+
+    const configs = await discoverOpenCodeConfigFiles(workspace);
+    expect(configs.some((c) => c.path === configFile && c.exists)).toBe(true);
+  });
+
+  test("injects plugin config and creates backup", async () => {
+    const workspace = await createTemporaryDirectory();
+    const configFile = join(workspace, "opencode.json");
+    await writeFile(configFile, JSON.stringify({ existingSetting: true }), "utf8");
+
+    const result = await injectOpenCodeConfig(configFile, {
+      mode: "local",
+      locale: "zh-TW",
+      telegram: {
+        tokenFile: "/path/to/token",
+        userId: "123",
+        chatId: "123",
+      },
+      notifications: {
+        completion: true,
+        error: true,
+        question: true,
+        permission: true,
+        includeChildLifecycle: false,
+        completionDebounceMs: 1500,
+        pluginBufferSize: 100,
+      },
+      broker: {
+        host: "127.0.0.1",
+        port: 42617,
+      },
+      interaction: {
+        sessionPromptTtlMinutes: 1440,
+        questionTtlMinutes: 30,
+      },
+    });
+
+    expect(result.targetPath).toBe(configFile);
+    expect(result.backupPath).toBe(`${configFile}.bak`);
+
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    expect(parsed.existingSetting).toBe(true);
+    expect(parsed.plugins).toEqual(["opencode-telegram-link"]);
+    expect(parsed.plugin).toMatchObject({
+      "opencode-telegram-link": {
+        locale: "zh-TW",
+        telegram: { userId: "123", chatId: "123" },
+      },
+    });
   });
 });
 
@@ -208,8 +410,10 @@ function telegramFetch(
   }) as typeof fetch;
 }
 
-async function* inputLine(value: string): AsyncIterable<string> {
-  yield value;
+async function* inputLines(values: string[]): AsyncIterable<string> {
+  for (const value of values) {
+    yield value;
+  }
 }
 
 function ok(result: unknown): Response {

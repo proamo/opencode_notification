@@ -97,7 +97,9 @@ describe("broker lifecycle commands", () => {
     expect(output.stdout).toContain("Credential rotated");
     expect(output.stdout).not.toContain(TOKEN);
     expect(await readFile(tokenFile, "utf8")).toBe(`${TOKEN}\n`);
-    expect((await lstat(tokenFile)).mode & 0o077).toBe(0);
+    if (process.platform !== "win32") {
+      expect((await lstat(tokenFile)).mode & 0o077).toBe(0);
+    }
   });
 
   test("sends a non-actionable test notification", async () => {

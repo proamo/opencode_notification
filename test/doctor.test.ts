@@ -85,27 +85,30 @@ describe("doctor checks", () => {
     expect(formatDoctorReport(report)).not.toContain(TOKEN);
   });
 
-  test("reports insecure token files as setup failures", async () => {
-    const stateDirectory = await createTemporaryDirectory();
-    const tokenFile = join(stateDirectory, "token");
-    await writeFile(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
-    await chmod(tokenFile, 0o644);
+  test.skipIf(process.platform === "win32")(
+    "reports insecure token files as setup failures",
+    async () => {
+      const stateDirectory = await createTemporaryDirectory();
+      const tokenFile = join(stateDirectory, "token");
+      await writeFile(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+      await chmod(tokenFile, 0o644);
 
-    const report = await runDoctor({
-      stateDirectory,
-      port: await availablePort(),
-      rawConfig: { telegram: { tokenFile, userId: "123456789", chatId: "123456789" } },
-      fetch: telegramFetch(),
-      env: { OPENCODE_VERSION: "1.18.18" },
-    });
+      const report = await runDoctor({
+        stateDirectory,
+        port: await availablePort(),
+        rawConfig: { telegram: { tokenFile, userId: "123456789", chatId: "123456789" } },
+        fetch: telegramFetch(),
+        env: { OPENCODE_VERSION: "1.18.18" },
+      });
 
-    expect(report.ready).toBe(false);
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({ name: "secret-file", status: "fail" }),
-    );
-    expect(formatDoctorReport(report)).not.toContain(TOKEN);
-    expect(formatDoctorReport(report)).not.toContain(tokenFile);
-  });
+      expect(report.ready).toBe(false);
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({ name: "secret-file", status: "fail" }),
+      );
+      expect(formatDoctorReport(report)).not.toContain(TOKEN);
+      expect(formatDoctorReport(report)).not.toContain(tokenFile);
+    },
+  );
 
   test("reports incompatible OpenCode versions", async () => {
     const stateDirectory = await createTemporaryDirectory();

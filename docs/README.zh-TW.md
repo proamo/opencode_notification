@@ -49,23 +49,43 @@ machine + OpenCode instance + project + session + route generation
 - 不允許省略 host IP，避免 Docker 將 Broker 公開到 `0.0.0.0`。
 - 同一份 state 與 Bot 不可同時啟動 native Broker 和 Docker Broker。
 
-## 安裝與設定摘要
+## 一鍵快速安裝與設定（推薦）
 
-目前套件尚未發布到 npm；從原始碼使用時先執行：
+1. **安裝依賴與建置**（發布至 npm 後可直接使用 `bunx opencode-telegram-link setup`）：
+   ```sh
+   bun install
+   bun run build
+   ```
+
+2. **執行互動式安裝精靈**：
+   ```sh
+   bun run setup
+   # 或
+   opencode-telegram-broker setup
+   ```
+   安裝精靈將引導您：
+   - 選擇介面語系（繁體中文 / 英文）。
+   - 輸入向 `@BotFather` 申請的 Telegram Bot Token（即時在線驗證）。
+   - 自動產生 Nonce 短碼並引導於 Telegram 私聊中進行配對綁定。
+   - 自動在背景建立安全目錄與 Token 檔案（權限設為 `0600`/`0700`，免手動處理）。
+   - 自動偵測系統上的 `opencode.json` 並一鍵寫入外掛設定（保留備份）。
+   - 自動發送 Telegram 測試通知確認連線！
+
+---
+
+## 進階 / 腳本化設定（CI 或非互動環境）
+
+若需在無人值守或自訂腳本環境執行，可使用參數模式：
 
 ```sh
-bun install
-bun run build
-```
-
-透過 BotFather 建立自己的 Telegram Bot，將 token 放入只有目前使用者可讀的檔案，然後執行 guided setup：
-
-```sh
-OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+# 透過 Nonce 配對
+OPENCODE_TELEGRAM_BOT_TOKEN='123456:TOKEN' \
   opencode-telegram-broker setup --pair --locale zh-TW
-```
 
-Setup 會要求你把一次性短碼傳給 Bot，並在本機終端機輸入 `YES` 確認。完成後，將輸出的 `userId`、`chatId` 與 `tokenFile` 放入 OpenCode plugin options。建議使用 `tokenFile`，不要直接把 bot token 寫進設定檔。
+# 或指定已知 User ID / Chat ID
+OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-bot-token \
+  opencode-telegram-broker setup --user-id 123456789 --chat-id 123456789 --locale zh-TW
+```
 
 常用 Broker 指令：
 

@@ -34,12 +34,20 @@ const sockets: WebSocket[] = [];
 afterEach(async () => {
   await Promise.all(brokers.splice(0).map((broker) => broker.stop()));
   for (const socket of sockets.splice(0)) socket.terminate();
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => safeRemove(directory)));
 });
+
+async function safeRemove(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 15; attempt++) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  await rm(directory, { recursive: true, force: true });
+}
 
 describe("local broker", () => {
   test("requires authentication for health and WebSocket upgrade", async () => {

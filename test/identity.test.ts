@@ -26,8 +26,10 @@ describe("state identity", () => {
     const second = await loadOrCreateStateIdentity(directory);
 
     expect(second).toEqual(first);
-    expect((await stat(directory)).mode & 0o777).toBe(0o700);
-    expect((await stat(join(directory, "broker-secret"))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      expect((await stat(join(directory, "broker-secret"))).mode & 0o777).toBe(0o600);
+    }
     expect(Buffer.from(first.brokerSecret, "base64url")).toHaveLength(32);
     expect(Buffer.from(first.routeSalt, "base64url")).toHaveLength(32);
   });

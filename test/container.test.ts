@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 describe("broker container image contract", () => {
   test("defines a minimal non-root broker runtime with persistent state", async () => {

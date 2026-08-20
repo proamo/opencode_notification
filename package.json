@@ -36,6 +36,8 @@
     "release:changelog": "bun scripts/generate-changelog.ts",
     "release:check": "bun run check && bun test && bun run license:check && bun run release:smoke && npm pack --dry-run",
     "release:smoke": "bun scripts/release-smoke.ts",
+    "setup": "bun src/broker/main.ts setup",
+    "init": "bun src/broker/main.ts setup",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
   },
