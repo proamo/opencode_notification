@@ -316,6 +316,7 @@ opencode-telegram-broker uninstall
 - [Telegram 互動規格](../openspec/changes/design-telegram-notifier/specs/telegram-session-interaction/spec.md)
 - [安裝與診斷規格](../openspec/changes/design-telegram-notifier/specs/setup-and-diagnostics/spec.md)
 - [實作工作清單](../openspec/changes/design-telegram-notifier/tasks.md)
+- [未來架構與演進規格書 (V2/V3 Roadmap)](future-architecture-spec.md)
 - [相容性政策](compatibility.md)
 - [本機狀態管理](state-management.md)
 - [威脅模型 (Threat Model)](threat-model.md)

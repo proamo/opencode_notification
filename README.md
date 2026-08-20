@@ -310,6 +310,7 @@ The uninstaller will safely:
 - [Telegram session interaction](openspec/changes/design-telegram-notifier/specs/telegram-session-interaction/spec.md)
 - [Setup and diagnostics](openspec/changes/design-telegram-notifier/specs/setup-and-diagnostics/spec.md)
 - [Implementation tasks](openspec/changes/design-telegram-notifier/tasks.md)
+- [Future Architecture & Roadmap (V2/V3)](docs/future-architecture-spec.md)
 - [Compatibility policy](docs/compatibility.md)
 - [Local state management](docs/state-management.md)
 - [Threat model](docs/threat-model.md)
