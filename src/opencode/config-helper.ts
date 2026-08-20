@@ -1,7 +1,7 @@
 import { copyFile, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import type { NotifierConfig } from "../config";
+import { type NotifierConfig, NotifierConfigSchema } from "../config";
 
 export type DiscoveredConfigFile = {
   path: string;
@@ -99,6 +99,50 @@ export function generatePluginConfigSnippet(config: NotifierConfig): string {
     },
   };
   return JSON.stringify(snippet, null, 2);
+}
+
+export async function loadResolvedNotifierConfig(
+  explicitOptions?: unknown,
+  cwd?: string,
+): Promise<NotifierConfig | undefined> {
+  if (explicitOptions && typeof explicitOptions === "object") {
+    const directParse = NotifierConfigSchema.safeParse(explicitOptions);
+    if (directParse.success) {
+      return directParse.data;
+    }
+  }
+
+  // Fallback: discover config from workspace and global config files
+  const discovered = await discoverOpenCodeConfigFiles(cwd);
+  for (const item of discovered) {
+    if (!item.exists) continue;
+    try {
+      const content = await readFile(item.path, "utf8");
+      const json = JSON.parse(content) as Record<string, unknown>;
+      const pluginMap =
+        json.plugin && typeof json.plugin === "object"
+          ? (json.plugin as Record<string, unknown>)
+          : undefined;
+      if (pluginMap) {
+        for (const [key, value] of Object.entries(pluginMap)) {
+          if (
+            key === "opencode-telegram-link" ||
+            key.includes("opencode_notification") ||
+            key.includes("opencode-telegram")
+          ) {
+            const parsed = NotifierConfigSchema.safeParse(value);
+            if (parsed.success) {
+              return parsed.data;
+            }
+          }
+        }
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+
+  return undefined;
 }
 
 export async function injectOpenCodeConfig(

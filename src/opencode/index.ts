@@ -8,6 +8,7 @@ export {
   generatePluginConfigSnippet,
   getCandidateConfigPaths,
   injectOpenCodeConfig,
+  loadResolvedNotifierConfig,
   removeOpenCodeConfig,
 } from "./config-helper";
 export {
