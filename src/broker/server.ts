@@ -233,7 +233,13 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
           ) {
             return new Response("Not found", { status: 404 });
           }
-          if (!isAuthorized(request.headers.get("authorization"), state.brokerSecret)) {
+          if (
+            !isAuthorized(
+              request.headers.get("authorization"),
+              state.brokerSecret,
+              url.searchParams.get("token"),
+            )
+          ) {
             return new Response("Unauthorized", { status: 401 });
           }
           if (url.pathname === "/v1/health") {
@@ -842,7 +848,16 @@ function sendError(
   });
 }
 
-function isAuthorized(authorization: string | null, brokerSecret: string): boolean {
+function isAuthorized(
+  authorization: string | null,
+  brokerSecret: string,
+  urlToken?: string | null,
+): boolean {
+  if (urlToken) {
+    const supplied = createHash("sha256").update(urlToken).digest();
+    const expected = createHash("sha256").update(brokerSecret).digest();
+    if (timingSafeEqual(supplied, expected)) return true;
+  }
   if (!authorization?.startsWith("Bearer ")) return false;
   const supplied = createHash("sha256").update(authorization.slice(7)).digest();
   const expected = createHash("sha256").update(brokerSecret).digest();

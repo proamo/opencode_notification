@@ -260,9 +260,8 @@ export class BrokerClient {
 
   async #connectAndServe(): Promise<void> {
     const identity = this.#requireIdentity();
-    const socket = new WebSocket(`ws://127.0.0.1:${this.#options.port}/v1/connect`, {
-      headers: { authorization: `Bearer ${identity.brokerSecret}` },
-    });
+    const url = `ws://127.0.0.1:${this.#options.port}/v1/connect?token=${encodeURIComponent(identity.brokerSecret)}`;
+    const socket = new WebSocket(url);
     try {
       await waitForOpen(socket, this.#options.requestTimeoutMs);
     } catch (error) {
