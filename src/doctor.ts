@@ -7,6 +7,7 @@ import {
   sanitizeConfigError,
 } from "./config";
 import { translate } from "./i18n";
+import { loadResolvedNotifierConfig } from "./opencode";
 import { loadOrCreateStateIdentity } from "./state";
 import { TelegramBotApi } from "./telegram";
 
@@ -35,7 +36,14 @@ export type DoctorOptions = {
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const env = options.env ?? process.env;
-  const configResult = parseDoctorConfig(options.rawConfig ?? configFromEnvironment(env));
+  let configInput: unknown;
+  if (options.rawConfig !== undefined) {
+    configInput = options.rawConfig;
+  } else {
+    configInput =
+      (await loadResolvedNotifierConfig(undefined, process.cwd())) ?? configFromEnvironment(env);
+  }
+  const configResult = parseDoctorConfig(configInput);
   checks.push(configResult.check);
 
   let token: string | undefined;
