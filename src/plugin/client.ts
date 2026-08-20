@@ -118,6 +118,7 @@ export class BrokerClient {
   #connected = false;
   #firstConnection: Promise<void> | undefined;
   #resolveFirstConnection: (() => void) | undefined;
+  #rejectFirstConnection: ((error: Error) => void) | undefined;
 
   constructor(options: BrokerClientOptions) {
     this.#options = {
@@ -147,8 +148,9 @@ export class BrokerClient {
     if (this.#runPromise) return await this.waitUntilConnected();
     this.#stopped = false;
     this.#identity = await loadOrCreateStateIdentity(this.#options.stateDirectory);
-    this.#firstConnection = new Promise((resolve) => {
+    this.#firstConnection = new Promise((resolve, reject) => {
       this.#resolveFirstConnection = resolve;
+      this.#rejectFirstConnection = reject;
     });
     this.#runPromise = this.#run();
 
@@ -231,6 +233,12 @@ export class BrokerClient {
         if (this.#stopped) break;
         const message = error instanceof Error ? error.message : "unknown broker client error";
         this.#options.onDiagnostic("BROKER_RECONNECT", message);
+        if (this.#rejectFirstConnection) {
+          const reject = this.#rejectFirstConnection;
+          this.#resolveFirstConnection = undefined;
+          this.#rejectFirstConnection = undefined;
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
         const maximum = Math.min(
           this.#options.reconnectMaxDelayMs,
           this.#options.reconnectMinDelayMs * 2 ** attempt,
@@ -298,6 +306,7 @@ export class BrokerClient {
       this.#connected = true;
       this.#resolveFirstConnection?.();
       this.#resolveFirstConnection = undefined;
+      this.#rejectFirstConnection = undefined;
       this.#startHeartbeat();
       await disconnected;
     } finally {
