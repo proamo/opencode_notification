@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { basename } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import { computeNotifierConfigFingerprint, readNotifierBotToken } from "./config";
@@ -7,9 +8,17 @@ import { BrokerClient } from "./plugin/client";
 import { runOpenCodeCommand } from "./plugin/commands";
 import { deriveProjectId, loadOrCreateStateIdentity } from "./state/identity";
 
+function trace(msg: string) {
+  try {
+    appendFileSync("/tmp/opencode_telegram_plugin.log", `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {}
+}
+
 const TelegramLinkPlugin = (async ({ client, directory }, options) => {
+  trace(`TelegramLinkPlugin invoked for directory=${directory}`);
   const configData = await loadResolvedNotifierConfig(options, directory);
   if (!configData) {
+    trace("TelegramLinkPlugin error: missing or invalid configData");
     await client.app.log({
       body: {
         service: "opencode-telegram-link",
@@ -54,6 +63,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     },
     onCommand: async (command) => runOpenCodeCommand(client, directory, command),
     onDiagnostic: (code, message) => {
+      trace(`BrokerClient diagnostic: ${code} - ${message}`);
       void client.app.log({
         body: {
           service: "opencode-telegram-link",
@@ -66,7 +76,9 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
 
   let bridge: OpenCodeEventBridge;
   try {
+    trace("Starting BrokerClient...");
     await broker.start();
+    trace("BrokerClient started successfully!");
     const identity = await loadOrCreateStateIdentity();
     const projectId = await deriveProjectId(directory, identity.routeSalt);
     bridge = new OpenCodeEventBridge({
@@ -84,7 +96,11 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
       completionDebounceMs: configData.notifications.completionDebounceMs,
       bufferLimit: configData.notifications.pluginBufferSize,
       onNotification: async (notification) => {
+        trace(
+          `onNotification called for kind=${notification.kind} eventId=${notification.eventId}`,
+        );
         const status = await broker.publishNotification(notification);
+        trace(`Notification published with status=${status}`);
         await client.app.log({
           body: {
             service: "opencode-telegram-link",
@@ -94,6 +110,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
         });
       },
       onDiagnostic: (code, eventType) => {
+        trace(`OpenCodeEventBridge diagnostic: ${code} - ${eventType}`);
         void client.app.log({
           body: {
             service: "opencode-telegram-link",
@@ -106,6 +123,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   } catch (error) {
     await broker.stop();
     const errMsg = error instanceof Error ? error.stack || error.message : String(error);
+    trace(`Broker startup failed: ${errMsg}`);
     await client.app.log({
       body: {
         service: "opencode-telegram-link",
@@ -117,8 +135,12 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   }
 
   return {
-    event: ({ event }) => bridge.handle(event),
+    event: async ({ event }) => {
+      trace(`Plugin event hook received: ${JSON.stringify(event)}`);
+      await bridge.handle(event);
+    },
     dispose: async () => {
+      trace("Plugin dispose hook called");
       await bridge.flush();
       bridge.dispose();
       await broker.stop();
