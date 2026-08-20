@@ -103,13 +103,14 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
         });
       },
     });
-  } catch {
+  } catch (error) {
     await broker.stop();
+    const errMsg = error instanceof Error ? error.stack || error.message : String(error);
     await client.app.log({
       body: {
         service: "opencode-telegram-link",
         level: "error",
-        message: "Local broker could not be started",
+        message: `Local broker could not be started: ${errMsg}`,
       },
     });
     return {};
