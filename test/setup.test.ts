@@ -2,8 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverOpenCodeConfigFiles, injectOpenCodeConfig } from "../src/opencode";
+import {
+  discoverOpenCodeConfigFiles,
+  injectOpenCodeConfig,
+  removeOpenCodeConfig,
+} from "../src/opencode";
 import { runGuidedSetup, runInteractiveSetup, runSetupCli, SetupError } from "../src/setup";
+import { runInteractiveUninstall } from "../src/uninstall";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCD";
 const temporaryDirectories: string[] = [];
@@ -203,11 +208,12 @@ describe("interactive setup wizard", () => {
 
     // Responses:
     // 1. Language: 1 (zh-TW)
-    // 2. Token: invalid_token then valid TOKEN
-    // 3. Confirm pairing: Y
-    // 4. Update OpenCode config: Y
-    // 5. Send test notification: Y
-    const inputs = ["1\n", "invalid_token\n", `${TOKEN}\n`, "Y\n", "Y\n", "Y\n"];
+    // 2. Mode: 1 (Native Mode)
+    // 3. Token: invalid_token then valid TOKEN
+    // 4. Confirm pairing: Y
+    // 5. Update OpenCode config: Y
+    // 6. Send test notification: Y
+    const inputs = ["1\n", "1\n", "invalid_token\n", `${TOKEN}\n`, "Y\n", "Y\n", "Y\n"];
 
     const status = await runInteractiveSetup({
       stateDirectory,
@@ -288,6 +294,7 @@ describe("interactive setup wizard", () => {
 
     const inputs = [
       "2\n", // English
+      "2\n", // Docker mode
       `${TOKEN}\n`,
       "Y\n", // Confirm pairing
       "n\n", // Skip OpenCode auto-config
@@ -386,6 +393,97 @@ describe("OpenCode config helper", () => {
         telegram: { userId: "123", chatId: "123" },
       },
     });
+  });
+
+  test("removes plugin config and leaves other settings untouched", async () => {
+    const workspace = await createTemporaryDirectory();
+    const configFile = join(workspace, "opencode.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        otherPlugin: true,
+        plugins: ["other-plugin", "opencode-telegram-link"],
+        plugin: {
+          "other-plugin": { enabled: true },
+          "opencode-telegram-link": { mode: "local" },
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await removeOpenCodeConfig(configFile);
+    expect(result.modified).toBe(true);
+    expect(result.backupPath).toBe(`${configFile}.bak`);
+
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    expect(parsed.otherPlugin).toBe(true);
+    expect(parsed.plugins).toEqual(["other-plugin"]);
+    expect(parsed.plugin).toEqual({ "other-plugin": { enabled: true } });
+  });
+});
+
+describe("interactive uninstaller wizard", () => {
+  test("runs full uninstall flow and cleans up state, config, and tokens", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    const configFile = join(workspace, "opencode.json");
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+
+    await writeFile(tokenFile, `${TOKEN}\n`, "utf8");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        plugins: ["opencode-telegram-link"],
+        plugin: { "opencode-telegram-link": { mode: "local" } },
+      }),
+      "utf8",
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    // Responses:
+    // 1. Language: 1 (zh-TW)
+    // 2. Confirm uninstall: Y
+    // 3. Clean OpenCode configs: Y
+    // 4. Clean SQLite state: Y
+    // 5. Delete Token file: Y
+    // 6. Delete entire state directory: Y
+    const inputs = ["1\n", "Y\n", "Y\n", "Y\n", "Y\n", "Y\n"];
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(inputs),
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    });
+
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OpenCode Telegram Notifier — Uninstaller");
+    expect(stdout).toContain("已從");
+    expect(stdout).toContain("移除外掛設定");
+    expect(stdout).toContain("Token 檔案已安全刪除");
+    expect(stdout).toContain("已成功移除！");
+
+    // Verify opencode.json cleaned
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    expect(parsed.plugins).toEqual([]);
+    expect(parsed.plugin).toEqual({});
+
+    // Verify token deleted
+    expect(await Bun.file(tokenFile).exists()).toBe(false);
   });
 });
 

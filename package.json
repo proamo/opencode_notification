@@ -38,6 +38,7 @@
     "release:smoke": "bun scripts/release-smoke.ts",
     "setup": "bun src/broker/main.ts setup",
     "init": "bun src/broker/main.ts setup",
+    "uninstall": "bun src/broker/main.ts uninstall",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
   },

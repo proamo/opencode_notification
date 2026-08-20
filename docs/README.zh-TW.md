@@ -136,11 +136,21 @@ opencode-telegram-broker stop
 
 過期、離線、重複、未授權、無法路由或被 OpenCode 拒絕的回覆都會 fail closed，且離線指令不排隊。
 
-## 更新與移除摘要
+## 一鍵解除安裝與完全移除（Uninstaller）
 
-更新時先更新套件或重新 build，重啟 Broker，必要時重啟 OpenCode processes，最後執行 `doctor` 與 `test-notification`。若出現 protocol 或 OpenCode compatibility mismatch，必須重啟相關 OpenCode processes，不會自動降級協定。
+若您日後需要移除本套件，只需執行一鍵移除精靈：
 
-移除時先刪除 OpenCode plugin 設定，再執行 `opencode-telegram-broker stop`。如需移除路由與 delivery 狀態，可在 Broker 停止後執行 `opencode-telegram-broker purge-state`；如需完全移除，再刪除 state directory 與 token file。若 token 可能外洩，請到 BotFather revoke 或 rotate token。
+```sh
+bun run uninstall
+# 或
+opencode-telegram-broker uninstall
+```
+
+移除精靈將引導您安全完成：
+1. **停止 Broker**：自動偵測並關閉本機執行中的 Broker 程序。
+2. **清理 OpenCode 設定**：自動搜尋全域與本機專案的 `opencode.json`，一鍵乾淨移除外掛設定（保留備份 `.bak`）。
+3. **清除 SQLite 暫存狀態**：清除運作資料庫、路由與去重狀態。
+4. **刪除 Token 與金鑰目錄**：詢問並安全刪除 `telegram-bot-token` 與整組狀態資料夾。
 
 ## 安全與隱私
 

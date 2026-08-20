@@ -122,7 +122,7 @@ async function runStatusCommand(
   return 0;
 }
 
-async function runStopCommand(
+export async function runStopCommand(
   options: StartBrokerOptions,
   streams: CommandStreams,
   fetchImplementation: typeof fetch = fetch,

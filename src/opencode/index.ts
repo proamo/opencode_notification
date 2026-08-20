@@ -8,6 +8,7 @@ export {
   generatePluginConfigSnippet,
   getCandidateConfigPaths,
   injectOpenCodeConfig,
+  removeOpenCodeConfig,
 } from "./config-helper";
 export {
   type NotificationSourceEvent,

@@ -277,12 +277,19 @@ The broker and plugin negotiate protocol major version `1`. Incompatible upgrade
 
 ## Uninstall
 
-1. Remove the OpenCode plugin configuration.
-2. Stop the broker with `opencode-telegram-broker stop`.
-3. Optionally purge operational routing state with `opencode-telegram-broker purge-state`.
-4. Delete the state directory if you want to remove machine identity, broker secret, SQLite state, and token files.
-5. Revoke or rotate the Telegram bot token in BotFather if the token may have been exposed.
-6. Verify polling has ceased by running `opencode-telegram-broker status` or by checking that BotFather no longer reports unexpected bot activity.
+Run the interactive uninstaller wizard:
+
+```sh
+bun run uninstall
+# Or
+opencode-telegram-broker uninstall
+```
+
+The uninstaller will safely:
+1. Stop the running broker process.
+2. Search and remove the plugin configuration from `opencode.json` files (with `.bak` backup).
+3. Clear SQLite database and message routing state.
+4. Prompt to remove the private token file and state directory.
 
 ## Specifications
 

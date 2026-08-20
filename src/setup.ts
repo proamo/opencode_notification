@@ -199,7 +199,21 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
   const isZh = locale === "zh-TW";
 
-  // Step 2: BotFather Token
+  // Step 2: Deployment Mode
+  stdout.write("│\n");
+  stdout.write(
+    isZh
+      ? "◇  部署模式選擇 / Deployment Mode:\n│  1) 本機原生模式 (Native Mode) [預設/Default] — Broker 作為本機常駐程序，OpenCode 自動在背景拉起\n│  2) Docker 容器模式 (Docker Container) — Broker 隔離於 Docker 容器中執行\n"
+      : "◇  Deployment Mode:\n│  1) Native Mode [Default] — Broker runs as a local background process, auto-spawned by OpenCode\n│  2) Docker Container Mode — Broker runs isolated inside a Docker container\n",
+  );
+  const modeChoice = await reader.ask(
+    isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
+    stdout,
+    "1",
+  );
+  const isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+
+  // Step 3: BotFather Token
   let botToken = "";
   let botInfo: TelegramBot | undefined;
   let attempts = 0;
@@ -392,6 +406,18 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       );
       stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
     }
+  }
+
+  if (isDocker) {
+    stdout.write("│\n");
+    stdout.write(
+      isZh
+        ? "◇  Docker 容器啟動指令 (請於背景常駐執行):\n"
+        : "◇  Docker Container Command (run in background):\n",
+    );
+    stdout.write(
+      `│  docker run -d --rm --name opencode-telegram-broker -p 127.0.0.1:42617:42617 -v opencode-telegram-state:/state -v "${tokenFile}:/run/secrets/telegram-bot-token:ro" -e OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token opencode-telegram-broker:local start\n│\n`,
+    );
   }
 
   // Step 6: Test Notification

@@ -158,3 +158,51 @@ export async function injectOpenCodeConfig(
 
   return backupPath ? { targetPath, backupPath } : { targetPath };
 }
+
+export async function removeOpenCodeConfig(
+  targetPath: string,
+): Promise<{ modified: boolean; backupPath?: string }> {
+  try {
+    const existingContent = await readFile(targetPath, "utf8");
+    const existingJson = JSON.parse(existingContent) as Record<string, unknown>;
+
+    let modified = false;
+
+    // Remove from plugins array
+    if (Array.isArray(existingJson.plugins)) {
+      const existingPlugins = existingJson.plugins as unknown[];
+      const originalLength = existingPlugins.length;
+      const filtered = existingPlugins.filter((p) => p !== "opencode-telegram-link");
+      if (filtered.length !== originalLength) {
+        existingJson.plugins = filtered;
+        modified = true;
+      }
+    }
+
+    // Remove from plugin map
+    if (
+      existingJson.plugin &&
+      typeof existingJson.plugin === "object" &&
+      "opencode-telegram-link" in (existingJson.plugin as Record<string, unknown>)
+    ) {
+      delete (existingJson.plugin as Record<string, unknown>)["opencode-telegram-link"];
+      modified = true;
+    }
+
+    if (!modified) {
+      return { modified: false };
+    }
+
+    // Create backup
+    const backupPath = `${targetPath}.bak`;
+    await copyFile(targetPath, backupPath);
+
+    const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, targetPath);
+
+    return { modified: true, backupPath };
+  } catch {
+    return { modified: false };
+  }
+}
