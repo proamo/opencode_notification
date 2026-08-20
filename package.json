@@ -7,7 +7,7 @@
   "module": "./dist/plugin.js",
   "license": "MIT",
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.3.14"
   },
   "exports": {
     ".": {
