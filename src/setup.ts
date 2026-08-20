@@ -366,11 +366,9 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   // Step 5: OpenCode config detection & injection
   stdout.write("│\n");
   const discovered = await discoverOpenCodeConfigFiles(cwd);
-  const existingConfigs = discovered.filter((d) => d.exists);
-  const targets =
-    existingConfigs.length > 0
-      ? existingConfigs
-      : [discovered.find((d) => !d.isWorkspace) ?? discovered[0]].filter(Boolean);
+  const fallback = discovered.find((d) => !d.isWorkspace) ?? discovered[0];
+  const targets: DiscoveredConfigFile[] =
+    existingConfigs.length > 0 ? existingConfigs : fallback ? [fallback] : [];
 
   if (targets.length > 0) {
     const descList = targets
