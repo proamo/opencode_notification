@@ -9,11 +9,8 @@ services:
     ports:
       - "127.0.0.1:42617:42617"
     volumes:
-      - opencode-telegram-state:/state
-      - ${HOME}/.local/state/opencode-telegram-link/telegram-bot-token:/run/secrets/telegram-bot-token:ro
+      - ${HOME}/.local/state/opencode-telegram-link:/state
     environment:
-      - OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token
+      - OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/state/telegram-bot-token
+      - OPENCODE_TELEGRAM_BROKER_STATE_DIR=/state
     command: ["start"]
-
-volumes:
-  opencode-telegram-state:
