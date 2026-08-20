@@ -271,25 +271,53 @@ export async function removeOpenCodeConfig(
 
     let modified = false;
 
-    // Remove from plugins array
+    const isPluginMatch = (entry: unknown): boolean => {
+      if (typeof entry === "string") {
+        return (
+          entry === "opencode-telegram-link" ||
+          entry.endsWith("opencode_notification") ||
+          entry.endsWith("opencode-telegram-link")
+        );
+      }
+      if (Array.isArray(entry) && typeof entry[0] === "string") {
+        return isPluginMatch(entry[0]);
+      }
+      return false;
+    };
+
+    // Remove from plugin array
+    if (Array.isArray(existingJson.plugin)) {
+      const originalLength = existingJson.plugin.length;
+      const filtered = existingJson.plugin.filter((p) => !isPluginMatch(p));
+      if (filtered.length !== originalLength) {
+        existingJson.plugin = filtered;
+        modified = true;
+      }
+    }
+
+    // Remove from legacy plugins array
     if (Array.isArray(existingJson.plugins)) {
-      const existingPlugins = existingJson.plugins as unknown[];
-      const originalLength = existingPlugins.length;
-      const filtered = existingPlugins.filter((p) => p !== "opencode-telegram-link");
+      const originalLength = existingJson.plugins.length;
+      const filtered = existingJson.plugins.filter((p) => !isPluginMatch(p));
       if (filtered.length !== originalLength) {
         existingJson.plugins = filtered;
         modified = true;
       }
     }
 
-    // Remove from plugin map
+    // Remove from legacy plugin map
     if (
       existingJson.plugin &&
       typeof existingJson.plugin === "object" &&
-      "opencode-telegram-link" in (existingJson.plugin as Record<string, unknown>)
+      !Array.isArray(existingJson.plugin)
     ) {
-      delete (existingJson.plugin as Record<string, unknown>)["opencode-telegram-link"];
-      modified = true;
+      const map = existingJson.plugin as Record<string, unknown>;
+      for (const key of Object.keys(map)) {
+        if (isPluginMatch(key)) {
+          delete map[key];
+          modified = true;
+        }
+      }
     }
 
     if (!modified) {
