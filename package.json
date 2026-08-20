@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Privacy-first Telegram notifications and remote replies for OpenCode",
   "type": "module",
+  "main": "./dist/plugin.js",
+  "module": "./dist/plugin.js",
   "license": "MIT",
   "engines": {
     "bun": ">=1.3.0"
