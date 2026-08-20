@@ -410,13 +410,66 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
 
   if (isDocker) {
     stdout.write("│\n");
+    const autoStartDocker = await reader.ask(
+      isZh
+        ? "◇  是否立即在背景自動建置並啟動 Docker Broker 容器？ [Y/n]: "
+        : "◇  Build and start Docker Broker container in background now? [Y/n]: ",
+      stdout,
+      "Y",
+    );
+    if (autoStartDocker.toLowerCase() !== "n" && autoStartDocker.toLowerCase() !== "no") {
+      stdout.write(
+        isZh
+          ? "│  ⠋ 正在建置並啟動 Docker 容器 (docker compose up -d --build)...\n"
+          : "│  ⠋ Building and starting Docker container (docker compose up -d --build)...\n",
+      );
+      try {
+        const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+        const result = Bun.spawnSync([dockerCmd, "compose", "up", "-d", "--build"], {
+          cwd,
+          env: {
+            ...process.env,
+            HOME: process.env.HOME || process.env.USERPROFILE || "",
+          },
+        });
+        if (result.exitCode === 0) {
+          stdout.write(
+            isZh
+              ? "│  ✔ Docker Broker 容器已成功在背景啟動！\n"
+              : "│  ✔ Docker Broker container started in background!\n",
+          );
+        } else {
+          stdout.write(
+            isZh
+              ? "│  ✖ Docker 自動啟動未成功（請確認 Docker Desktop 是否運行中）。\n"
+              : "│  ✖ Docker start was not successful (please check if Docker is running).\n",
+          );
+          stdout.write(
+            isZh
+              ? "│  您可於稍後手動執行: docker compose up -d\n"
+              : "│  You can manually run later: docker compose up -d\n",
+          );
+        }
+      } catch {
+        stdout.write(
+          isZh
+            ? "│  ✖ 未偵測到 Docker 指令，您可於安裝 Docker 後執行: docker compose up -d\n"
+            : "│  ✖ Docker command not found. You can run 'docker compose up -d' after installing Docker.\n",
+        );
+      }
+    } else {
+      stdout.write(
+        isZh
+          ? "│  您可於稍後手動啟動容器: docker compose up -d\n"
+          : "│  You can manually start the container later: docker compose up -d\n",
+      );
+    }
+  } else {
+    stdout.write("│\n");
     stdout.write(
       isZh
-        ? "◇  Docker 容器啟動指令 (請於背景常駐執行):\n"
-        : "◇  Docker Container Command (run in background):\n",
-    );
-    stdout.write(
-      `│  docker run -d --rm --name opencode-telegram-broker -p 127.0.0.1:42617:42617 -v opencode-telegram-state:/state -v "${tokenFile}:/run/secrets/telegram-bot-token:ro" -e OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram-bot-token opencode-telegram-broker:local start\n│\n`,
+        ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
+        : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
     );
   }
 

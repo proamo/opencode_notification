@@ -298,6 +298,7 @@ describe("interactive setup wizard", () => {
       `${TOKEN}\n`,
       "Y\n", // Confirm pairing
       "n\n", // Skip OpenCode auto-config
+      "n\n", // Skip Docker auto-start
       "n\n", // Skip test notification
     ];
 

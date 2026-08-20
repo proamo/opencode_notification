@@ -42,13 +42,26 @@ export async function runInteractiveUninstall(
     return 0;
   }
 
-  // Step 3: Stop active broker
+  // Step 3: Stop active broker (Native or Docker)
   stdout.write("│\n");
   stdout.write(
     isZh
-      ? "◇  [1/4] 正在檢查並停止執行中的本機 Broker...\n"
-      : "◇  [1/4] Checking and stopping running local broker...\n",
+      ? "◇  [1/4] 正在檢查並停止執行中的 Broker (本機程序或 Docker 容器)...\n"
+      : "◇  [1/4] Checking and stopping running Broker (native process or Docker container)...\n",
   );
+  try {
+    const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+    const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], { cwd });
+    if (dockerDown.exitCode === 0) {
+      stdout.write(
+        isZh
+          ? "│  ✔ Docker Broker 容器已停止並清理。\n"
+          : "│  ✔ Docker Broker container stopped and cleaned up.\n",
+      );
+    }
+  } catch {
+    // Docker not present or not running
+  }
   try {
     const identity = await loadOrCreateStateIdentity(stateDirectory);
     const isRunning = await probeBroker(42617, identity.brokerSecret);
@@ -57,14 +70,14 @@ export async function runInteractiveUninstall(
       stdout.write(isZh ? "│  ✔ 本機 Broker 已成功停止。\n" : "│  ✔ Local broker stopped.\n");
     } else {
       stdout.write(
-        isZh ? "│  ✔ 本機 Broker 未在執行中（略過）。\n" : "│  ✔ Broker is not running.\n",
+        isZh ? "│  ✔ 本機 Broker 未在執行中。\n" : "│  ✔ Local broker is not running.\n",
       );
     }
   } catch {
     stdout.write(
       isZh
-        ? "│  ✔ 未找到執行中的 Broker 或已停止。\n"
-        : "│  ✔ No active broker found or already stopped.\n",
+        ? "│  ✔ 未找到執行中的本機 Broker 或已停止。\n"
+        : "│  ✔ No active local broker found or already stopped.\n",
     );
   }
 
