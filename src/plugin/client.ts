@@ -169,7 +169,7 @@ export class BrokerClient {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#clearHeartbeat();
-    this.#socket?.terminate();
+    closeSocket(this.#socket);
     if (this.#connected) this.#dropPending();
     else this.#rejectPending(new Error("broker client stopped"));
     const runPromise = this.#runPromise;
@@ -265,7 +265,7 @@ export class BrokerClient {
     try {
       await waitForOpen(socket, this.#options.requestTimeoutMs);
     } catch (error) {
-      socket.terminate();
+      closeSocket(socket);
       throw error;
     }
     this.#socket = socket;
@@ -306,7 +306,7 @@ export class BrokerClient {
       this.#clearHeartbeat();
       this.#rejectPending(new Error("broker connection closed"));
       if (this.#socket === socket) this.#socket = undefined;
-      socket.terminate();
+      closeSocket(socket);
     }
   }
 
@@ -364,7 +364,7 @@ export class BrokerClient {
     try {
       envelope = BrokerEnvelopeSchema.parse(JSON.parse(text));
     } catch {
-      this.#socket?.terminate();
+      closeSocket(this.#socket);
       return;
     }
 
@@ -417,7 +417,7 @@ export class BrokerClient {
     this.#clearHeartbeat();
     this.#heartbeatTimer = setInterval(() => {
       void this.#request({ type: "heartbeat", payload: {} }).catch(() => {
-        this.#socket?.terminate();
+        closeSocket(this.#socket);
       });
     }, this.#options.heartbeatIntervalMs);
     this.#heartbeatTimer.unref();
@@ -518,4 +518,16 @@ async function waitForOpen(socket: WebSocket, timeoutMs: number): Promise<void> 
       { once: true },
     );
   });
+}
+
+function closeSocket(socket?: WebSocket | null): void {
+  if (!socket) return;
+  try {
+    const terminable = socket as unknown as { terminate?: () => void };
+    if (typeof terminable.terminate === "function") {
+      terminable.terminate();
+    } else if (typeof socket.close === "function") {
+      socket.close();
+    }
+  } catch {}
 }
