@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { probeBroker } from "../broker/server";
 import {
@@ -446,6 +448,21 @@ export function brokerRuntimeCommand(): { command: string; args: string[] } {
   }
   if (process.env.OPENCODE_TELEGRAM_BUN) {
     return { command: process.env.OPENCODE_TELEGRAM_BUN, args: [] };
+  }
+  const home = homedir();
+  const candidateBunPaths = [
+    join(home, ".bun", "bin", "bun"),
+    join(home, ".nvm", "versions", "node", "v24.18.0", "bin", "bun"),
+    join(home, ".local", "bin", "bun"),
+    "/usr/local/bin/bun",
+    "/usr/bin/bun",
+  ];
+  for (const candidate of candidateBunPaths) {
+    try {
+      if (existsSync(candidate)) {
+        return { command: candidate, args: [] };
+      }
+    } catch {}
   }
   return { command: "npx", args: ["--yes", "bun"] };
 }

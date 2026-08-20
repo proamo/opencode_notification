@@ -119,8 +119,26 @@ export async function loadResolvedNotifierConfig(
     try {
       const content = await readFile(item.path, "utf8");
       const json = JSON.parse(content) as Record<string, unknown>;
+      if (Array.isArray(json.plugin)) {
+        for (const entry of json.plugin) {
+          if (Array.isArray(entry) && entry.length >= 2) {
+            const [key, value] = entry;
+            if (
+              typeof key === "string" &&
+              (key === "opencode-telegram-link" ||
+                key.includes("opencode_notification") ||
+                key.includes("opencode-telegram"))
+            ) {
+              const parsed = NotifierConfigSchema.safeParse(value);
+              if (parsed.success) {
+                return parsed.data;
+              }
+            }
+          }
+        }
+      }
       const pluginMap =
-        json.plugin && typeof json.plugin === "object"
+        json.plugin && typeof json.plugin === "object" && !Array.isArray(json.plugin)
           ? (json.plugin as Record<string, unknown>)
           : undefined;
       if (pluginMap) {
