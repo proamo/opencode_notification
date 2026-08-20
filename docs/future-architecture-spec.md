@@ -14,16 +14,17 @@
 ## 二、 支援情境拓撲架構
 
 ```text
-[ 情境 A: 專用開發主機 (多專案視窗) ]
-  ├── OpenCode Window 1 (專案 A) ──┐
-  ├── OpenCode Window 2 (專案 B) ──┼──► [本機 Agent / Broker] ──┐
-  └── OpenCode Window 3 (專案 C) ──┘                           │
-                                                               │  (TLS WebSocket / Loopback)
-[ 情境 B: 遠端線上伺服器 (VPS / Live Server) ]                  │
-  └── OpenCode Daemon (線上主機修復) ──► [遠端 Agent] ─────────┼──► [ Central Gateway Broker ] ──► Telegram Bot API
-                                                               │    (可運行於 VPS/本機/Docker)           │
-[ 情境 C: 個人筆電 / 遠端開發機 ]                                │                                         ▼
-  └── OpenCode Desktop (隨身開發) ────► [行動 Agent] ──────────┘                               [ 開發者 Telegram App ]
+[ 多元 AI 開發端 (Multi-AI Client Adapters) ]
+  ├── OpenCode 外掛 (多專案/多視窗) ───────┐
+  ├── Claude Code / Desktop (MCP Server) ───┼──► [ 本機 Agent / Broker ] ──┐
+  ├── Cursor / VSCode 擴充套件 ─────────────┤                              │
+  └── 通用 CLI / 腳本 (notify-run wrapper) ─┘                              │  (TLS WebSocket / Loopback)
+                                                                            │
+[ 遠端線上伺服器 (VPS / Live Server) ]                                       │
+  └── OpenCode Daemon / 遠端任務 ─────────► [遠端 Agent] ───────────────────┼──► [ Central Gateway Broker ] ──► Telegram Bot API
+                                                                            │    (可運行於 VPS/本機/Docker)           │
+[ 個人筆電 / 行動端 ]                                                        │                                         ▼
+  └── 隨身開發 Client ────────────────────► [行動 Agent] ───────────────────┘                               [ 開發者 Telegram App ]
 ```
 
 ---
@@ -150,6 +151,30 @@
 
 ---
 
+### 階段四 (V4.0 / 擴充)：跨 AI 開發工具生態擴展（Universal AI & MCP Integration）
+
+**目標**：將 Broker 的推播與遠端互動能力延伸至 Claude、Cursor、Aider、Codex 等全世界所有的 AI 開發工具。
+
+#### 4.1 標準 MCP（Model Context Protocol）伺服器
+- **架構**：
+  - 開發獨立的 `opencode-telegram-mcp` 套件，任何支援 MCP 的客戶端（Claude Desktop、Claude Code、Cursor、Windsurf）皆可一鍵掛載。
+- **暴露工具合約 (Exposed MCP Tools)**：
+  - `send_telegram_notification(title, message, level)`：單向推播進度或結果。
+  - `ask_telegram_user(question, options, timeout_minutes)`：主動向 Telegram 送出問題並阻塞等待使用者回覆（支援按鈕與文字回覆），收到答案後才繼續執行後續步驟。
+
+#### 4.2 通用 CLI 包裝器（Universal CLI Runner）
+- **指令格式**：
+  ```sh
+  opencode-telegram-broker wrap --title "DB Migration" -- bun run migrate
+  # 或簡短指令：
+  notify-run aider --message "Refactor auth module"
+  ```
+- **行為**：
+  - 自動捕捉子行程執行狀態、標準輸出（結尾 10 行）與執行耗時。
+  - 執行成功/失敗時自動推送結構化通知至 Telegram。
+
+---
+
 ## 四、 實作工作清單（Implementation Roadmap Checklist）
 
 ### 🚀 Milestone 1 (V1.5 體驗極致化)
@@ -172,8 +197,14 @@
 - [ ] 實作 Telegram 語音轉文字（Voice Prompting）處理管道。
 - [ ] 實作定時開發日報生成引擎。
 
+### 🔮 Milestone 4 (V4.0 跨 AI 工具 MCP 生態)
+- [ ] 實作 `opencode-telegram-mcp` 伺服器，提供 `ask_telegram_user` 與 `send_telegram_notification` 工具。
+- [ ] 支援 Claude Code、Claude Desktop、Cursor 的一鍵 MCP 配置。
+- [ ] 實作 `notify-run` 通用 CLI Wrapper。
+
 ---
 
 ## 五、 結論
 
-本規格書完整涵蓋了您目前的**「專用開發主機（多專案並行）」**與同伴的**「線上主機直接修改」**情境，透過漸進式的版本演進，確保專案既維持極致的隱私與穩定度，又能無縫擴展至現代全端團隊的真實工作流中。
+本規格書完整涵蓋了您目前的**「專用開發主機（多專案並行）」**、同伴的**「線上主機直接修改」**，以及未來**「跨 AI 工具（Claude / Cursor / CLI）統一管理」**的情境，透過漸進式的版本演進，確保專案既維持極致的隱私與穩定度，又能無縫擴展為全端開發者必備的 AI 行動中樞。
+
