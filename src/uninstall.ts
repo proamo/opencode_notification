@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { probeBroker } from "./broker";
 import { runStopCommand } from "./broker/commands";
@@ -116,6 +117,17 @@ export async function runInteractiveUninstall(
           );
         }
       }
+    }
+    // Clean any lingering npm link node_modules symlinks
+    const symlinkLocations = [
+      join(cwd, "node_modules", "opencode-telegram-link"),
+      join(homedir(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+      join(homedir(), ".opencode", "node_modules", "opencode-telegram-link"),
+    ];
+    for (const symlink of symlinkLocations) {
+      try {
+        await rm(symlink, { recursive: true, force: true });
+      } catch {}
     }
   } else {
     stdout.write(
