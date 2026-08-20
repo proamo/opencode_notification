@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { probeBroker } from "../broker/server";
 import {
   BROKER_CAPABILITIES,
   type BrokerCommand,
@@ -23,7 +22,29 @@ import {
   defaultStateDirectory,
   loadOrCreateStateIdentity,
   type StateIdentity,
-} from "../state";
+} from "../state/identity";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function probeBroker(
+  port: number,
+  brokerSecret: string,
+): Promise<{ status: "ok"; machineId: string } | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      headers: { authorization: `Bearer ${brokerSecret}` },
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return undefined;
+    const json = (await response.json()) as { status?: string; machineId?: string };
+    if (json && json.status === "ok" && typeof json.machineId === "string") {
+      return { status: "ok", machineId: json.machineId };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const DEFAULT_PORT = 42617;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
@@ -134,7 +155,7 @@ export class BrokerClient {
     try {
       await Promise.race([
         this.#firstConnection,
-        Bun.sleep(this.#options.startupTimeoutMs).then(() => {
+        sleep(this.#options.startupTimeoutMs).then(() => {
           throw new Error("timed out waiting for the local broker");
         }),
       ]);
@@ -163,7 +184,7 @@ export class BrokerClient {
       if (this.#stopped || Date.now() >= deadline) {
         throw new Error("broker client is not connected");
       }
-      await Bun.sleep(10);
+      await sleep(10);
     }
   }
 
@@ -215,7 +236,7 @@ export class BrokerClient {
           this.#options.reconnectMinDelayMs * 2 ** attempt,
         );
         attempt += 1;
-        await Bun.sleep(Math.floor(maximum * this.#options.random()));
+        await sleep(Math.floor(maximum * this.#options.random()));
       }
     }
   }
@@ -232,7 +253,7 @@ export class BrokerClient {
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (!this.#stopped && Date.now() < deadline) {
       if (await probeBroker(this.#options.port, identity.brokerSecret)) return;
-      await Bun.sleep(25);
+      await sleep(25);
     }
     throw new Error("spawned broker did not become healthy");
   }

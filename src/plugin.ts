@@ -5,7 +5,7 @@ import { resolveLocale } from "./i18n";
 import { loadResolvedNotifierConfig, OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";
 import { runOpenCodeCommand } from "./plugin/commands";
-import { deriveProjectId, loadOrCreateStateIdentity } from "./state";
+import { deriveProjectId, loadOrCreateStateIdentity } from "./state/identity";
 
 const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   const configData = await loadResolvedNotifierConfig(options, directory);
