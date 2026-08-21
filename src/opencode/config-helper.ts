@@ -226,34 +226,40 @@ export async function injectOpenCodeConfig(
     await mkdir(dirname(targetPath), { recursive: true });
   }
 
-  // Merge plugin config
-  const existingPlugins = Array.isArray(existingJson.plugins) ? existingJson.plugins : [];
-  if (!existingPlugins.includes("opencode-telegram-link")) {
-    existingPlugins.push("opencode-telegram-link");
+  // Merge plugin config while preserving existing plugins
+  if (Array.isArray(existingJson.plugin)) {
+    if (!existingJson.plugin.includes("opencode-telegram-link")) {
+      existingJson.plugin.push("opencode-telegram-link");
+    }
+  } else {
+    const existingPlugins = Array.isArray(existingJson.plugins) ? existingJson.plugins : [];
+    if (!existingPlugins.includes("opencode-telegram-link")) {
+      existingPlugins.push("opencode-telegram-link");
+    }
+    existingJson.plugins = existingPlugins;
+
+    const existingPluginMap =
+      existingJson.plugin && typeof existingJson.plugin === "object"
+        ? (existingJson.plugin as Record<string, unknown>)
+        : {};
+
+    existingPluginMap["opencode-telegram-link"] = {
+      mode: config.mode,
+      locale: config.locale,
+      telegram: {
+        tokenFile: config.telegram.tokenFile,
+        userId: config.telegram.userId,
+        chatId: config.telegram.chatId,
+      },
+      notifications: {
+        completion: config.notifications.completion,
+        error: config.notifications.error,
+        question: config.notifications.question,
+        permission: config.notifications.permission,
+      },
+    };
+    existingJson.plugin = existingPluginMap;
   }
-  existingJson.plugins = existingPlugins;
-
-  const existingPluginMap =
-    existingJson.plugin && typeof existingJson.plugin === "object"
-      ? (existingJson.plugin as Record<string, unknown>)
-      : {};
-
-  existingPluginMap["opencode-telegram-link"] = {
-    mode: config.mode,
-    locale: config.locale,
-    telegram: {
-      tokenFile: config.telegram.tokenFile,
-      userId: config.telegram.userId,
-      chatId: config.telegram.chatId,
-    },
-    notifications: {
-      completion: config.notifications.completion,
-      error: config.notifications.error,
-      question: config.notifications.question,
-      permission: config.notifications.permission,
-    },
-  };
-  existingJson.plugin = existingPluginMap;
 
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, "utf8");
