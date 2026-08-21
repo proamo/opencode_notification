@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { runSetupCli } from "../setup";
 import { runUninstallCli } from "../uninstall";
 import { runBrokerCli } from "./commands";
