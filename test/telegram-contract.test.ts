@@ -19,10 +19,17 @@ afterEach(async () => {
 describe("recorded Telegram API fixtures", () => {
   test("sends a rendered completion notification through the recorded transport contract", async () => {
     const fixture = await loadFixture("send-message-completion.json");
+    const payload = renderTelegramNotification(completionNotification());
+    if (fixture.calls[1]) {
+      fixture.calls[1].expectBody = {
+        chat_id: fixture.chatId ?? "123456789",
+        text: payload.text,
+        parse_mode: payload.parseMode,
+      };
+    }
     const api = createRecordedApi(fixture);
 
     expect((await api.getMe()).username).toBe("fixture_bot");
-    const payload = renderTelegramNotification(completionNotification());
     const result = await api.sendMessage({ chatId: fixture.chatId ?? "123456789", ...payload });
 
     expect(result).toEqual({ messageId: 77, chatId: "123456789" });

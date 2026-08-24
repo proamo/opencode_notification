@@ -10,7 +10,9 @@ services:
       - "127.0.0.1:42617:42617"
     volumes:
       - ${HOME}/.local/state/opencode-telegram-link:/state
+      - /etc/localtime:/etc/localtime:ro
     environment:
       - OPENCODE_TELEGRAM_BOT_TOKEN_FILE=/state/telegram-bot-token
       - OPENCODE_TELEGRAM_BROKER_STATE_DIR=/state
+      - TZ=${TZ:-Asia/Taipei}
     command: ["start"]

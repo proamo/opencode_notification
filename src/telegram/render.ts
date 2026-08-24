@@ -55,6 +55,21 @@ export function sanitizeTelegramText(text: string, options: TelegramRenderOption
   );
 }
 
+export function formatLocalTime(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return isoString;
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  const seconds = pad(date.getSeconds());
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 function renderHtml(notification: NormalizedNotification, compact = false): string {
   const loc = notification.locale;
   const lines = [
@@ -66,7 +81,9 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
     lines.push(
       `${escapeHtml(translate(loc, "field.root"))}: ${escapeHtml(notification.rootSessionLabel)}`,
     );
-  lines.push(`${escapeHtml(translate(loc, "field.time"))}: ${escapeHtml(notification.occurredAt)}`);
+  lines.push(
+    `${escapeHtml(translate(loc, "field.time"))}: ${escapeHtml(formatLocalTime(notification.occurredAt))}`,
+  );
 
   switch (notification.kind) {
     case "session.completed":
@@ -116,7 +133,7 @@ function renderPlainTextFallback(notification: NormalizedNotification): string {
   const context = notification.rootSessionLabel
     ? `${notification.projectLabel} / ${notification.rootSessionLabel} / ${notification.sessionLabel}`
     : `${notification.projectLabel} / ${notification.sessionLabel}`;
-  return `${eventTitle(notification.kind, loc)}\n${context}\n${notification.occurredAt}\nUse the terminal if this message is incomplete.`;
+  return `${eventTitle(notification.kind, loc)}\n${context}\n${formatLocalTime(notification.occurredAt)}\nUse the terminal if this message is incomplete.`;
 }
 
 function eventTitle(kind: NormalizedNotification["kind"], locale: SupportedLocale): string {

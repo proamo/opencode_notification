@@ -47,6 +47,16 @@ describe("renderTelegramNotification", () => {
     expect(payload.text).toContain("專案: api-service");
     expect(payload.text).toContain("Session: 測試任務");
     expect(payload.text).toContain("狀態：已完成");
+    expect(payload.text).toMatch(/時間: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  });
+
+  test("formats occurredAt in local time format YYYY-MM-DD HH:mm:ss", () => {
+    const payload = renderTelegramNotification(
+      notification({
+        occurredAt: "2026-08-24T07:05:55.000Z",
+      }),
+    );
+    expect(payload.text).toMatch(/Time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
   });
 
   test("fails closed for unsupported notification models", () => {
