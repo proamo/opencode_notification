@@ -86,7 +86,7 @@ export class OpenCodeEventBridge {
   readonly #completionDebounceMs: number;
   readonly #bufferLimit: number;
   readonly #dedupeTtlMs: number;
-  readonly #fetchSummary?: (sessionId: string) => Promise<string | undefined>;
+  readonly #fetchSummary: ((sessionId: string) => Promise<string | undefined>) | undefined;
   readonly #onNotification: OpenCodeEventBridgeOptions["onNotification"];
   readonly #onDiagnostic: NonNullable<OpenCodeEventBridgeOptions["onDiagnostic"]>;
   readonly #sessions = new Map<string, SessionState>();

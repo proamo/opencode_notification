@@ -80,6 +80,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     await broker.start();
     trace("BrokerClient started successfully!");
     const identity = await loadOrCreateStateIdentity();
+    const projectId = await deriveProjectId(directory, identity.routeSalt);
     const fetchSummary = async (sessionId: string): Promise<string | undefined> => {
       try {
         const res = await client.session.messages({ path: { id: sessionId } });
@@ -88,16 +89,20 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
           if (msg?.info?.role === "assistant" && Array.isArray(msg.parts)) {
-            const textParts = msg.parts
-              .filter((p): p is { type: "text"; text: string; ignored?: boolean } =>
-                Boolean(
-                  p &&
-                    p.type === "text" &&
-                    typeof (p as { text?: unknown }).text === "string" &&
-                    !p.ignored,
-                ),
-              )
-              .map((p) => p.text);
+            const textParts: string[] = [];
+            for (const part of msg.parts) {
+              if (
+                part &&
+                typeof part === "object" &&
+                "type" in part &&
+                part.type === "text" &&
+                "text" in part &&
+                typeof (part as { text: unknown }).text === "string" &&
+                !("ignored" in part && (part as { ignored?: unknown }).ignored)
+              ) {
+                textParts.push((part as { text: string }).text);
+              }
+            }
             if (textParts.length > 0) {
               const raw = textParts.join("\n\n");
               const cleaned = raw
