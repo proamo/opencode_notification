@@ -148,6 +148,10 @@ export class OpenCodeEventBridge {
       return;
     }
     if (result.status === "session") {
+      if (result.event.kind === "session.busy") {
+        this.#cancelCompletion(result.event.sessionId);
+        return;
+      }
       if (result.event.kind === "session.delete") {
         this.#sessions.delete(result.event.sessionId);
         this.#cancelCompletion(result.event.sessionId);
@@ -156,7 +160,6 @@ export class OpenCodeEventBridge {
         await this.#broker.removeRoute(this.#projectId, result.event.sessionId);
         return;
       }
-      this.#cancelCompletion(result.event.sessionId);
       this.#deleteFallbackTransitions(result.event.sessionId);
       this.#sessions.set(result.event.sessionId, {
         title: result.event.title,

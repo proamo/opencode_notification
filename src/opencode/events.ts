@@ -1,12 +1,17 @@
 import { z } from "zod";
 import type { NormalizedQuestion } from "../protocol";
 
-export type SessionSourceEvent = {
-  kind: "session.upsert" | "session.delete";
-  sessionId: string;
-  title: string;
-  parentId?: string;
-};
+export type SessionSourceEvent =
+  | {
+      kind: "session.upsert" | "session.delete";
+      sessionId: string;
+      title: string;
+      parentId?: string;
+    }
+  | {
+      kind: "session.busy";
+      sessionId: string;
+    };
 
 export type NotificationSourceEvent =
   | {
@@ -113,6 +118,35 @@ export function normalizeOpenCodeEvent(input: unknown): OpenCodeEventResult {
         ...(info.parentID ? { parentId: info.parentID } : {}),
       },
     };
+  }
+
+  if (eventType === "session.status") {
+    const raw = input as Record<string, unknown> | null;
+    const props = (raw?.properties ?? {}) as Record<string, unknown>;
+    const sessionId =
+      typeof props.sessionID === "string"
+        ? props.sessionID
+        : typeof props.sessionId === "string"
+          ? props.sessionId
+          : typeof props.id === "string"
+            ? props.id
+            : typeof raw?.sessionID === "string"
+              ? raw.sessionID
+              : typeof raw?.sessionId === "string"
+                ? raw.sessionId
+                : undefined;
+    const statusObj = props.status as Record<string, unknown> | undefined;
+    const statusType = typeof statusObj?.type === "string" ? statusObj.type : undefined;
+    if (sessionId && statusType === "busy") {
+      return {
+        status: "session",
+        event: {
+          kind: "session.busy",
+          sessionId,
+        },
+      };
+    }
+    return { status: "ignored" };
   }
 
   if (eventType === "session.idle") {

@@ -317,10 +317,35 @@ describe("OpenCodeEventBridge", () => {
     });
     await bridge.handle(sessionCreated("ses_root", "Main task"));
     await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_root" } });
-    await bridge.handle(sessionCreated("ses_root", "Main task resumed"));
+    await bridge.handle({
+      type: "session.status",
+      properties: { sessionID: "ses_root", status: { type: "busy" } },
+    });
     await Bun.sleep(50);
 
     expect(notifications).toHaveLength(0);
+  });
+
+  test("does not cancel debounced completion when session.updated is emitted after session.idle", async () => {
+    const broker = new FakeRouteClient();
+    const notifications: NormalizedNotification[] = [];
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      completionDebounceMs: 30,
+      onNotification: (notification) => {
+        notifications.push(notification);
+      },
+    });
+    await bridge.handle(sessionCreated("ses_root", "Main task"));
+    await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_root" } });
+    await bridge.handle(sessionCreated("ses_root", "Main task updated"));
+    await Bun.sleep(60);
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.kind).toBe("session.completed");
   });
 
   test("flushes a debounced completion before plugin shutdown", async () => {
