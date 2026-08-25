@@ -87,10 +87,16 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
 
   switch (notification.kind) {
     case "session.completed":
-      lines.push(
-        escapeHtml(translate(loc, "status.complete")),
-        escapeHtml(translate(loc, "action.reply")),
-      );
+      lines.push(escapeHtml(translate(loc, "status.complete")));
+      if (notification.summary) {
+        lines.push(
+          "",
+          `<b>📝 ${escapeHtml(translate(loc, "field.summary"))}：</b>`,
+          escapeHtml(truncateText(notification.summary, 600)),
+          "",
+        );
+      }
+      lines.push(escapeHtml(translate(loc, "action.reply")));
       break;
     case "session.error":
       lines.push(
@@ -133,7 +139,11 @@ function renderPlainTextFallback(notification: NormalizedNotification): string {
   const context = notification.rootSessionLabel
     ? `${notification.projectLabel} / ${notification.rootSessionLabel} / ${notification.sessionLabel}`
     : `${notification.projectLabel} / ${notification.sessionLabel}`;
-  return `${eventTitle(notification.kind, loc)}\n${context}\n${formatLocalTime(notification.occurredAt)}\nUse the terminal if this message is incomplete.`;
+  const summaryBlock =
+    notification.kind === "session.completed" && notification.summary
+      ? `\n\n${translate(loc, "field.summary")}:\n${truncateText(notification.summary, 600)}`
+      : "";
+  return `${eventTitle(notification.kind, loc)}\n${context}\n${formatLocalTime(notification.occurredAt)}${summaryBlock}\nUse the terminal if this message is incomplete.`;
 }
 
 function eventTitle(kind: NormalizedNotification["kind"], locale: SupportedLocale): string {
@@ -162,7 +172,11 @@ function redactNotification(
   };
   switch (notification.kind) {
     case "session.completed":
-      return { ...notification, ...base };
+      return {
+        ...notification,
+        ...base,
+        ...(notification.summary ? { summary: redactDynamic(notification.summary, patterns) } : {}),
+      };
     case "session.error":
       return {
         ...notification,

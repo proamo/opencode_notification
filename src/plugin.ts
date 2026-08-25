@@ -80,12 +80,48 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     await broker.start();
     trace("BrokerClient started successfully!");
     const identity = await loadOrCreateStateIdentity();
-    const projectId = await deriveProjectId(directory, identity.routeSalt);
+    const fetchSummary = async (sessionId: string): Promise<string | undefined> => {
+      try {
+        const res = await client.session.messages({ path: { id: sessionId } });
+        if (!res || !Array.isArray(res.data)) return undefined;
+        const messages = res.data;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg?.info?.role === "assistant" && Array.isArray(msg.parts)) {
+            const textParts = msg.parts
+              .filter((p): p is { type: "text"; text: string; ignored?: boolean } =>
+                Boolean(
+                  p &&
+                    p.type === "text" &&
+                    typeof (p as { text?: unknown }).text === "string" &&
+                    !p.ignored,
+                ),
+              )
+              .map((p) => p.text);
+            if (textParts.length > 0) {
+              const raw = textParts.join("\n\n");
+              const cleaned = raw
+                .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+                .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                .trim();
+              if (cleaned) {
+                return cleaned.length > 600 ? `${cleaned.slice(0, 597)}...` : cleaned;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        trace(`fetchSummary error for sessionId=${sessionId}: ${err}`);
+      }
+      return undefined;
+    };
+
     bridge = new OpenCodeEventBridge({
       broker,
       projectId,
       projectLabel: basename(directory) || "project",
       locale,
+      fetchSummary,
       notificationFilters: {
         completion: configData.notifications.completion,
         error: configData.notifications.error,

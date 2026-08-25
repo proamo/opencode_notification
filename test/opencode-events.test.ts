@@ -181,6 +181,38 @@ describe("OpenCodeEventBridge", () => {
     });
   });
 
+  test("embeds summary in session.completed notification when fetchSummary is provided", async () => {
+    const broker = new FakeRouteClient();
+    const notifications: NormalizedNotification[] = [];
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "zh-TW",
+      completionDebounceMs: 0,
+      fetchSummary: async (sessionId) => `Summary for ${sessionId}`,
+      now: () => new Date("2026-08-18T12:00:00.000Z"),
+      onNotification: (notification) => {
+        notifications.push(notification);
+      },
+    });
+
+    await bridge.handle(sessionCreated("ses_root", "Main task"));
+    await bridge.handle({
+      id: "evt_summary",
+      type: "session.idle",
+      properties: { sessionID: "ses_root" },
+    });
+    await waitForNotifications(notifications, 1);
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      kind: "session.completed",
+      eventId: "evt_summary",
+      summary: "Summary for ses_root",
+    });
+  });
+
   test("keeps a child question on its originating route and identifies root context", async () => {
     const broker = new FakeRouteClient();
     const notifications: NormalizedNotification[] = [];

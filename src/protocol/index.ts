@@ -195,7 +195,10 @@ export const NormalizedQuestionSchema = z.object({
 export type NormalizedQuestion = z.infer<typeof NormalizedQuestionSchema>;
 
 export const NormalizedNotificationSchema = z.discriminatedUnion("kind", [
-  NotificationBaseSchema.extend({ kind: z.literal("session.completed") }),
+  NotificationBaseSchema.extend({
+    kind: z.literal("session.completed"),
+    summary: z.string().max(4096).optional(),
+  }),
   NotificationBaseSchema.extend({
     kind: z.literal("session.error"),
     errorCategory: z.string().min(1).max(64),

@@ -59,6 +59,46 @@ describe("renderTelegramNotification", () => {
     expect(payload.text).toMatch(/Time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
   });
 
+  test("renders summary in Traditional Chinese completion notification", () => {
+    const payload = renderTelegramNotification(
+      notification({
+        kind: "session.completed",
+        locale: "zh-TW",
+        summary: "已修復登入逾時問題，並新增 3 個單元測試驗證通過。",
+      }),
+    );
+    expect(payload.parseMode).toBe("HTML");
+    expect(payload.text).toContain("<b>📝 執行結論：</b>");
+    expect(payload.text).toContain("已修復登入逾時問題，並新增 3 個單元測試驗證通過。");
+  });
+
+  test("renders summary in English completion notification", () => {
+    const payload = renderTelegramNotification(
+      notification({
+        kind: "session.completed",
+        locale: "en",
+        summary: "Fixed auth timeout bug and passed all 3 tests.",
+      }),
+    );
+    expect(payload.parseMode).toBe("HTML");
+    expect(payload.text).toContain("<b>📝 Summary：</b>");
+    expect(payload.text).toContain("Fixed auth timeout bug and passed all 3 tests.");
+  });
+
+  test("redacts sensitive patterns in completion summary", () => {
+    const payload = renderTelegramNotification(
+      notification({
+        kind: "session.completed",
+        summary: "Updated token=sk-proj-abcdefghijklmnopqrstuvwxyz123456 in config.",
+      }),
+      {
+        redactionPatterns: [/token=sk-proj-[a-zA-Z0-9]+/g],
+      },
+    );
+    expect(payload.text).toContain("[redacted]");
+    expect(payload.text).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz123456");
+  });
+
   test("fails closed for unsupported notification models", () => {
     expect(() =>
       renderTelegramNotification({

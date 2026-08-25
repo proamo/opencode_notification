@@ -70,6 +70,7 @@ export type OpenCodeEventBridgeOptions = {
   completionDebounceMs?: number;
   bufferLimit?: number;
   dedupeTtlMs?: number;
+  fetchSummary?: (sessionId: string) => Promise<string | undefined>;
   onNotification: (notification: NormalizedNotification) => void | Promise<void>;
   onDiagnostic?: (code: string, eventType: string) => void;
 };
@@ -85,6 +86,7 @@ export class OpenCodeEventBridge {
   readonly #completionDebounceMs: number;
   readonly #bufferLimit: number;
   readonly #dedupeTtlMs: number;
+  readonly #fetchSummary?: (sessionId: string) => Promise<string | undefined>;
   readonly #onNotification: OpenCodeEventBridgeOptions["onNotification"];
   readonly #onDiagnostic: NonNullable<OpenCodeEventBridgeOptions["onDiagnostic"]>;
   readonly #sessions = new Map<string, SessionState>();
@@ -109,8 +111,9 @@ export class OpenCodeEventBridge {
     this.#completionDebounceMs = options.completionDebounceMs ?? DEFAULT_COMPLETION_DEBOUNCE_MS;
     this.#bufferLimit = options.bufferLimit ?? DEFAULT_BUFFER_LIMIT;
     this.#dedupeTtlMs = options.dedupeTtlMs ?? DEFAULT_DEDUPE_TTL_MS;
+    this.#fetchSummary = options.fetchSummary;
     this.#onNotification = options.onNotification;
-    this.#onDiagnostic = options.onDiagnostic ?? (() => undefined);
+    this.#onDiagnostic = options.onDiagnostic ?? (() => {});
   }
 
   dispose(): void {
@@ -123,15 +126,16 @@ export class OpenCodeEventBridge {
   }
 
   async flush(): Promise<void> {
-    for (const pending of this.#pendingCompletions.values()) {
-      clearTimeout(pending.timer);
-      this.#emitSourceEvent(pending.event, pending.occurredAt, false);
-    }
+    const pendingList = Array.from(this.#pendingCompletions.values());
     this.#pendingCompletions.clear();
+    for (const pending of pendingList) {
+      clearTimeout(pending.timer);
+      await this.#emitSourceEvent(pending.event, pending.occurredAt, false);
+    }
     if (this.#sourceFlushTimer) {
       clearTimeout(this.#sourceFlushTimer);
       this.#sourceFlushTimer = undefined;
-      this.#flushSourceBuffer();
+      await this.#flushSourceBuffer();
     }
     await this.#flushNotificationBuffer();
   }
@@ -177,15 +181,21 @@ export class OpenCodeEventBridge {
       this.#debounceCompletion(event, occurredAt);
       return;
     }
-    this.#emitSourceEvent(event, occurredAt, true);
+    void this.#emitSourceEvent(event, occurredAt, true);
   }
 
-  #emitSourceEvent(
+  async #emitSourceEvent(
     event: NotificationSourceEvent,
     occurredAt: Date,
     allowBuffer: boolean,
-  ): boolean {
-    const result = this.#createNotification(event, occurredAt);
+  ): Promise<boolean> {
+    let summary: string | undefined;
+    if (event.kind === "session.completed" && this.#fetchSummary) {
+      try {
+        summary = await this.#fetchSummary(event.sessionId);
+      } catch {}
+    }
+    const result = this.#createNotification(event, occurredAt, summary);
     if (result.status === "drop") return true;
     if (result.status === "retry") {
       if (allowBuffer) this.#bufferSourceEvent(event, occurredAt);
@@ -196,7 +206,11 @@ export class OpenCodeEventBridge {
     return true;
   }
 
-  #createNotification(event: NotificationSourceEvent, occurredAt: Date): NotificationResult {
+  #createNotification(
+    event: NotificationSourceEvent,
+    occurredAt: Date,
+    summary?: string,
+  ): NotificationResult {
     let session = this.#sessions.get(event.sessionId);
     if (!session) {
       session = { title: "OpenCode Session" };
@@ -232,7 +246,14 @@ export class OpenCodeEventBridge {
 
     switch (event.kind) {
       case "session.completed":
-        return { status: "ready", notification: { ...base, kind: event.kind } };
+        return {
+          status: "ready",
+          notification: {
+            ...base,
+            kind: event.kind,
+            ...(summary ? { summary } : {}),
+          },
+        };
       case "session.error":
         return {
           status: "ready",
@@ -264,12 +285,12 @@ export class OpenCodeEventBridge {
   #debounceCompletion(event: NotificationSourceEvent, occurredAt: Date): void {
     this.#cancelCompletion(event.sessionId);
     if (this.#completionDebounceMs <= 0) {
-      this.#emitSourceEvent(event, occurredAt, true);
+      void this.#emitSourceEvent(event, occurredAt, true);
       return;
     }
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       this.#pendingCompletions.delete(event.sessionId);
-      this.#emitSourceEvent(event, occurredAt, true);
+      await this.#emitSourceEvent(event, occurredAt, true);
     }, this.#completionDebounceMs);
     timer.unref?.();
     this.#pendingCompletions.set(event.sessionId, { event, occurredAt, timer });
@@ -303,18 +324,20 @@ export class OpenCodeEventBridge {
     if (this.#sourceFlushTimer) clearTimeout(this.#sourceFlushTimer);
     this.#sourceFlushTimer = setTimeout(() => {
       this.#sourceFlushTimer = undefined;
-      this.#flushSourceBuffer();
+      void this.#flushSourceBuffer();
     }, delayMs);
     this.#sourceFlushTimer.unref?.();
   }
 
-  #flushSourceBuffer(): void {
+  async #flushSourceBuffer(): Promise<void> {
     this.#purgeExpiredBuffers();
     if (this.#sourceBuffer.length === 0) return;
     const pending = this.#sourceBuffer.splice(0);
     for (const item of pending) {
       if (item.expiresAt <= this.#now().getTime()) continue;
-      if (!this.#emitSourceEvent(item.event, item.occurredAt, false)) this.#sourceBuffer.push(item);
+      if (!(await this.#emitSourceEvent(item.event, item.occurredAt, false))) {
+        this.#sourceBuffer.push(item);
+      }
     }
     if (this.#sourceBuffer.length > 0) this.#scheduleSourceFlush(BUFFER_RETRY_MS);
   }
