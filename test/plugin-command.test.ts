@@ -40,6 +40,39 @@ describe("runOpenCodeCommand", () => {
       reason: "question reply API unavailable",
     });
   });
+
+  test("calls the OpenCode permission reply API when available", async () => {
+    const calls: unknown[] = [];
+    const client = {
+      postSessionIdPermissionsPermissionId: async (parameters: unknown) => {
+        calls.push(parameters);
+        return { data: true };
+      },
+    } as unknown as PluginInput["client"];
+    const command = permissionCommand();
+
+    const result = await runOpenCodeCommand(client, "/repo", command);
+
+    expect(result).toEqual({ commandId: command.commandId, status: "accepted" });
+    expect(calls).toEqual([
+      {
+        path: { id: command.route.sessionId, permissionID: command.interactionId },
+        query: { directory: "/repo" },
+        body: { response: "once" },
+      },
+    ]);
+  });
+
+  test("rejects permission replies when the OpenCode client does not expose the API", async () => {
+    const client = {} as unknown as PluginInput["client"];
+    const command = permissionCommand();
+
+    await expect(runOpenCodeCommand(client, "/repo", command)).resolves.toMatchObject({
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "permission reply API unavailable",
+    });
+  });
 });
 
 function questionCommand(): Extract<BrokerCommand, { type: "question.reply" }> {
@@ -55,5 +88,21 @@ function questionCommand(): Extract<BrokerCommand, { type: "question.reply" }> {
     },
     interactionId: "question_1",
     answers: [["Option A"]],
+  };
+}
+
+function permissionCommand(): Extract<BrokerCommand, { type: "permission.reply" }> {
+  return {
+    type: "permission.reply",
+    commandId: crypto.randomUUID(),
+    route: {
+      machineId: crypto.randomUUID(),
+      instanceId: crypto.randomUUID(),
+      projectId: "opaque-project-id",
+      sessionId: "ses_123",
+      routeGeneration: crypto.randomUUID(),
+    },
+    interactionId: "permission_1",
+    response: "once",
   };
 }

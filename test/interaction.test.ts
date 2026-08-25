@@ -199,7 +199,7 @@ describe("validateTelegramInteraction", () => {
       }),
     ).toMatchObject({ accepted: false, reason: "CALLBACK_TOKEN_EXPIRED" });
 
-    saveRoute(database, routeKey(), "permission_notice", { messageId: 78 });
+    saveRoute(database, routeKey(), "informational", { messageId: 78 });
     database.saveCallbackToken({
       token: "permission-token",
       chatId: String(USER_ID),
@@ -215,6 +215,51 @@ describe("validateTelegramInteraction", () => {
         { database, isRouteLive: () => true, now: () => 2_000 },
       ),
     ).toMatchObject({ accepted: false, reason: "ACTION_KIND_MISMATCH" });
+  });
+
+  test("submits permission callback buttons as permission reply commands", async () => {
+    const database = await createDatabase();
+    const route = routeKey();
+    saveRoute(database, route, "permission_notice", { interactionId: "perm_1", messageId: 88 });
+    database.saveCallbackToken({
+      token: "perm-token-allow",
+      chatId: String(USER_ID),
+      messageId: 88,
+      action: "permission.reply",
+      payload: "once",
+      createdAt: 1_000,
+      expiresAt: 10_000,
+    });
+
+    const validation = validateTelegramInteraction(
+      parseUpdate(callbackUpdate({ messageId: 88, token: "perm-token-allow" })),
+      subject("callback_query"),
+      {
+        database,
+        isRouteLive: () => true,
+        now: () => 2_000,
+      },
+    );
+    if (!validation.accepted) throw new Error("expected accepted permission interaction");
+    let command: BrokerCommand | undefined;
+
+    const outcome = await submitTelegramInteraction(
+      {
+        sendCommand: async (input) => {
+          command = input;
+          return { commandId: input.commandId, status: "accepted" };
+        },
+      },
+      validation.interaction,
+    );
+
+    expect(outcome.feedback).toBe("accepted");
+    expect(command).toMatchObject({
+      type: "permission.reply",
+      route,
+      interactionId: "perm_1",
+      response: "once",
+    });
   });
 
   test("combines identity authorization with binding validation", async () => {

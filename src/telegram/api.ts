@@ -119,6 +119,47 @@ export class TelegramBotApi {
     return { messageId: message.message_id, chatId: String(message.chat.id) };
   }
 
+  async answerCallbackQuery(input: {
+    callbackQueryId: string;
+    text?: string;
+    showAlert?: boolean;
+    signal?: AbortSignal;
+  }): Promise<boolean> {
+    return await this.#call(
+      "answerCallbackQuery",
+      {
+        callback_query_id: input.callbackQueryId,
+        ...(input.text ? { text: input.text } : {}),
+        ...(input.showAlert !== undefined ? { show_alert: input.showAlert } : {}),
+      },
+      z.boolean(),
+      input.signal,
+    );
+  }
+
+  async editMessageText(input: {
+    chatId: string;
+    messageId: number;
+    text: string;
+    parseMode?: "HTML";
+    replyMarkup?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }): Promise<{ messageId: number; chatId: string }> {
+    const message = await this.#call(
+      "editMessageText",
+      {
+        chat_id: input.chatId,
+        message_id: input.messageId,
+        text: input.text,
+        ...(input.parseMode ? { parse_mode: input.parseMode } : {}),
+        ...(input.replyMarkup ? { reply_markup: input.replyMarkup } : {}),
+      },
+      TelegramMessageSchema,
+      input.signal,
+    );
+    return { messageId: message.message_id, chatId: String(message.chat.id) };
+  }
+
   async #call<T>(
     method: string,
     body: Record<string, unknown>,

@@ -104,6 +104,13 @@ export const BrokerCommandSchema = z.discriminatedUnion("type", [
       .min(1)
       .max(20),
   }),
+  z.object({
+    type: z.literal("permission.reply"),
+    commandId: z.uuid(),
+    route: RouteKeySchema,
+    interactionId: z.string().min(1).max(256),
+    response: z.enum(["once", "always", "reject"]),
+  }),
 ]);
 export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
 

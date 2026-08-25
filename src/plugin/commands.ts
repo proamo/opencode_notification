@@ -9,7 +9,12 @@ export async function runOpenCodeCommand(
   if (command.type === "session.prompt") {
     return await runSessionPromptCommand(client, directory, command);
   }
-  if (command.type === "question.reply") return await runQuestionReplyCommand(client, command);
+  if (command.type === "question.reply") {
+    return await runQuestionReplyCommand(client, command);
+  }
+  if (command.type === "permission.reply") {
+    return await runPermissionReplyCommand(client, directory, command);
+  }
   const exhaustive: never = command;
   return exhaustive;
 }
@@ -81,4 +86,75 @@ function questionReplyApi(client: PluginInput["client"]): QuestionReplyApi | und
   };
   const reply = maybeClient.session?.question?.reply;
   return typeof reply === "function" ? reply.bind(maybeClient.session?.question) : undefined;
+}
+
+async function runPermissionReplyCommand(
+  client: PluginInput["client"],
+  directory: string,
+  command: Extract<BrokerCommand, { type: "permission.reply" }>,
+): Promise<CommandResult> {
+  const reply = permissionReplyApi(client);
+  if (!reply) {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "permission reply API unavailable",
+    };
+  }
+  try {
+    const response = await reply({
+      path: { id: command.route.sessionId, permissionID: command.interactionId },
+      query: { directory },
+      body: { response: command.response },
+    });
+    if (response && typeof response === "object" && "error" in response && response.error) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: "permission reply failed",
+      };
+    }
+    return { commandId: command.commandId, status: "accepted" };
+  } catch {
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: "permission reply failed",
+    };
+  }
+}
+
+type PermissionReplyApi = (parameters: {
+  path: { id: string; permissionID: string };
+  query?: { directory?: string };
+  body: { response: "once" | "always" | "reject" };
+}) => Promise<{ error?: unknown; data?: unknown }>;
+
+function permissionReplyApi(client: PluginInput["client"]): PermissionReplyApi | undefined {
+  const maybeClient = client as unknown as {
+    postSessionIdPermissionsPermissionId?: PermissionReplyApi;
+    session?: {
+      permission?: {
+        reply?: (opts: {
+          sessionID: string;
+          permissionID: string;
+          response: string;
+        }) => Promise<{ error?: unknown }>;
+      };
+    };
+  };
+  if (typeof maybeClient.postSessionIdPermissionsPermissionId === "function") {
+    return maybeClient.postSessionIdPermissionsPermissionId.bind(client);
+  }
+  if (typeof maybeClient.session?.permission?.reply === "function") {
+    const fn = maybeClient.session.permission.reply.bind(maybeClient.session.permission);
+    return async (params) => {
+      return await fn({
+        sessionID: params.path.id,
+        permissionID: params.path.permissionID,
+        response: params.body.response,
+      });
+    };
+  }
+  return undefined;
 }

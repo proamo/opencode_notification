@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { type SupportedLocale, translate } from "../i18n";
 import {
   BROKER_CAPABILITIES,
   type BrokerCommand,
@@ -469,7 +470,14 @@ class BrokerTelegramRuntime {
           isRouteLive: (route) => input.registry.resolve(route) !== undefined,
           now: input.now,
         },
-        async (interaction) => {
+        async (interaction, update) => {
+          if (update.callback_query) {
+            void input.api
+              .answerCallbackQuery({
+                callbackQueryId: update.callback_query.id,
+              })
+              .catch(() => {});
+          }
           const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
           await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
           return {
@@ -580,11 +588,36 @@ function notificationBinding(
           kind: "permission_notice",
           interactionId: notification.interactionId,
           expiresAt,
+          ...permissionCallbackButtons(notification.locale),
         },
       };
     case "session.error":
       return {};
   }
+}
+
+function permissionCallbackButtons(locale: SupportedLocale): {
+  callbackButtons: Array<{ text: string; action: string; payload: string }>;
+} {
+  return {
+    callbackButtons: [
+      {
+        text: translate(locale, "button.allowOnce"),
+        action: "permission.reply",
+        payload: "once",
+      },
+      {
+        text: translate(locale, "button.alwaysAllow"),
+        action: "permission.reply",
+        payload: "always",
+      },
+      {
+        text: translate(locale, "button.reject"),
+        action: "permission.reply",
+        payload: "reject",
+      },
+    ],
+  };
 }
 
 function questionCallbackButtons(

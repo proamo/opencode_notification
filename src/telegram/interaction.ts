@@ -90,7 +90,11 @@ export function validateTelegramInteraction(
   const staleReason = validateRouteState(options.database, route, now, options.isRouteLive);
   if (staleReason) return rejected(update, staleReason);
 
-  if (subject.kind === "callback_query" && route.kind !== "question_reply") {
+  if (
+    subject.kind === "callback_query" &&
+    route.kind !== "question_reply" &&
+    route.kind !== "permission_notice"
+  ) {
     return rejected(update, "ACTION_KIND_MISMATCH");
   }
 
@@ -165,6 +169,30 @@ export async function submitQuestionReply(
   });
 }
 
+export async function submitPermissionReply(
+  dispatcher: BrokerCommandDispatcher,
+  interaction: ValidatedTelegramInteraction,
+): Promise<CommandResult> {
+  const commandId = randomUUID();
+  if (interaction.kind !== "permission_notice") {
+    return { commandId, status: "rejected", reason: "not a permission binding" };
+  }
+  if (!interaction.interactionId) {
+    return { commandId, status: "rejected", reason: "permission request is missing" };
+  }
+  const response = interaction.callbackPayload;
+  if (response !== "once" && response !== "always" && response !== "reject") {
+    return { commandId, status: "rejected", reason: "invalid permission answer" };
+  }
+  return await dispatcher.sendCommand({
+    type: "permission.reply",
+    commandId,
+    route: interaction.route,
+    interactionId: interaction.interactionId,
+    response,
+  });
+}
+
 export async function submitTelegramInteraction(
   dispatcher: BrokerCommandDispatcher,
   interaction: ValidatedTelegramInteraction,
@@ -178,6 +206,10 @@ export async function submitTelegramInteraction(
     return { result, feedback: commandResultFeedback(result) };
   }
   if (interaction.kind === "permission_notice") {
+    if (interaction.callbackAction === "permission.reply" && interaction.callbackPayload) {
+      const result = await submitPermissionReply(dispatcher, interaction);
+      return { result, feedback: commandResultFeedback(result) };
+    }
     return {
       result: {
         commandId: randomUUID(),
