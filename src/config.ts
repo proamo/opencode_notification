@@ -7,7 +7,6 @@ const TelegramIdSchema = z.string().regex(/^[1-9]\d*$/, "must be a positive Tele
 const TelegramBotTokenSchema = z
   .string()
   .regex(/^\d+:[A-Za-z0-9_-]{20,}$/, "Telegram bot token format is invalid");
-const LoopbackHostSchema = z.enum(["127.0.0.1", "localhost", "::1"]);
 export const ConfigFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const LocalePreferenceSchema = z.enum(["auto", "en", "zh-TW"]);
