@@ -567,36 +567,41 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   }
 
   // Step 6: Test Notification
-  stdout.write("│\n");
-  const sendTest = await reader.ask(
-    isZh
-      ? "◇  是否發送測試通知到您的 Telegram？ [Y/n]: "
-      : "◇  Send a welcome test notification to your Telegram now? [Y/n]: ",
-    stdout,
-    "Y",
-  );
-  if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
-    try {
-      const welcomeText = isZh
-        ? `🎉 <b>OpenCode Telegram Notifier 設定成功！</b>\n\n已成功綁定本機 OpenCode 與 Telegram。\n當 OpenCode 任務完成、發生異常或需要回覆時，您將在此收到即時通知。\n\n• Bot: ${botName}\n• 授權用戶 ID: <code>${pairing.userId}</code>`
-        : `🎉 <b>OpenCode Telegram Notifier setup complete!</b>\n\nYour local OpenCode is now linked with Telegram.\nYou will receive notifications here when sessions finish or require input.\n\n• Bot: ${botName}\n• Authorized User ID: <code>${pairing.userId}</code>`;
-      await api.sendMessage({
-        chatId: pairing.chatId,
-        text: welcomeText,
-        parseMode: "HTML",
-      });
-      stdout.write(
-        isZh
-          ? "│  ✔ 已成功發送測試通知到您的 Telegram！請檢查手機訊息。\n"
-          : "│  ✔ Test notification sent to your Telegram! Please check your messages.\n",
-      );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "send failed";
-      stdout.write(
-        isZh
-          ? `│  ✖ 測試通知發送失敗: ${errMsg}\n`
-          : `│  ✖ Failed to send test notification: ${errMsg}\n`,
-      );
+  if (!isNode && pairing && api) {
+    stdout.write("│\n");
+    const sendTest = await reader.ask(
+      isZh
+        ? "◇  是否發送測試通知到您的 Telegram？ [Y/n]: "
+        : "◇  Send a welcome test notification to your Telegram now? [Y/n]: ",
+      stdout,
+      "Y",
+    );
+    if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
+      try {
+        const botDisplayName = botInfo?.username
+          ? `@${botInfo.username}`
+          : `Bot (ID: ${botInfo?.id})`;
+        const welcomeText = isZh
+          ? `🎉 <b>OpenCode Telegram Notifier 設定成功！</b>\n\n已成功綁定主機 [${hostLabel}] 與 Telegram。\n當 OpenCode 任務完成、發生異常或需要回覆時，您將在此收到即時通知。\n\n• Bot: ${botDisplayName}\n• 授權用戶 ID: <code>${pairing.userId}</code>`
+          : `🎉 <b>OpenCode Telegram Notifier setup complete!</b>\n\nYour host [${hostLabel}] is now linked with Telegram.\nYou will receive notifications here when sessions finish or require input.\n\n• Bot: ${botDisplayName}\n• Authorized User ID: <code>${pairing.userId}</code>`;
+        await api.sendMessage({
+          chatId: pairing.chatId,
+          text: welcomeText,
+          parseMode: "HTML",
+        });
+        stdout.write(
+          isZh
+            ? "│  ✔ 已成功發送測試通知到您的 Telegram！請檢查手機訊息。\n"
+            : "│  ✔ Test notification sent to your Telegram! Please check your messages.\n",
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "send failed";
+        stdout.write(
+          isZh
+            ? `│  ✖ 測試通知發送失敗: ${errMsg}\n`
+            : `│  ✖ Failed to send test notification: ${errMsg}\n`,
+        );
+      }
     }
   }
 
