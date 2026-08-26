@@ -15581,6 +15581,16 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
           }
         }
       }
+      if (json2["opencode-telegram-link"]) {
+        const parsed = NotifierConfigSchema.safeParse(json2["opencode-telegram-link"]);
+        if (parsed.success)
+          return parsed.data;
+      }
+      if (json2["telegram-link"]) {
+        const parsed = NotifierConfigSchema.safeParse(json2["telegram-link"]);
+        if (parsed.success)
+          return parsed.data;
+      }
     } catch {}
   }
   try {
@@ -19440,4 +19450,4 @@ export {
   runBroker
 };
 
-//# debugId=11979C626CC8024964756E2164756E21
+//# debugId=851A0B6D9EE3E32564756E2164756E21
