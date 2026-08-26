@@ -135,7 +135,7 @@ export class RouteRegistry {
     const exact = this.#routes.get(serializeRouteKey(parsed));
     if (exact) return exact;
 
-    // Hot fallback: match by (machineId, projectId, sessionId) across active registered routes
+    // Hot fallback 1: match by (machineId, projectId, sessionId) across active registered routes
     for (const registered of this.#routes.values()) {
       if (
         registered.route.machineId === parsed.machineId &&
@@ -145,6 +145,23 @@ export class RouteRegistry {
         return registered;
       }
     }
+
+    // Hot fallback 2: match by machineId across active live connections (resilient across OpenCode restarts)
+    for (const connection of this.#connections.values()) {
+      if (connection.machineId === parsed.machineId) {
+        return {
+          route: {
+            ...parsed,
+            instanceId: connection.instanceId,
+          },
+          connectionId: connection.socket.data.connectionId,
+          projectLabel: "project",
+          sessionLabel: "session",
+          hostLabel: connection.hostLabel,
+        };
+      }
+    }
+
     return undefined;
   }
 
