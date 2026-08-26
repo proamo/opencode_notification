@@ -230,7 +230,8 @@ describe("local broker", () => {
     const sent: SendMessageInput[] = [];
     const updates: TelegramUpdate[] = [];
     const { broker, secret } = await createBroker({
-      telegramApi: new FakeTelegramBotApi(sent, updates),
+      telegramApiFactory: () => new FakeTelegramBotApi(sent, updates),
+      telegramPollLongPollSeconds: 1,
     });
 
     const hostA = await connectClient(broker.port, secret);
