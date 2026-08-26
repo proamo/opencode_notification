@@ -1,24 +1,23 @@
 # OpenCode Telegram Notifier
 
-OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications and safe remote replies. It is designed for developers who run several OpenCode projects at the same time and need every Telegram response to return to the exact originating process and session.
+OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications, interactive inline buttons, and safe remote replies. It is designed for developers who run several OpenCode projects at the same time and need every Telegram response to return to the exact originating process and session.
 
-> Status: pre-release implementation. The package is not published to npm yet; install from a release tarball or source checkout until the first public release exists.
+> Version: **v1.5.0** (Interactive Telegram Inline Keyboard, Remote Permission Approvals & AI Execution Summaries).
+> Status: Pre-release implementation. Install from a release tarball or source checkout until the first public npm package is published.
 
 [繁體中文總覽](docs/README.zh-TW.md)
 
-## V1 Scope
+## V1.5 Features & Scope
 
-V1 targets one computer with:
+V1.5 targets one computer with:
 
-- one user-owned Telegram bot;
-- one local singleton broker;
-- multiple OpenCode processes;
-- multiple projects and sessions;
-- English and Traditional Chinese notifications.
-
-The notifier reports session completion, errors, questions, and permission requests. Users can reply to an eligible completion notification to continue that session and answer a pending OpenCode question from Telegram.
-
-Remote permission approval is intentionally excluded from V1. Permission notifications direct the user back to the terminal.
+- **Interactive Inline Buttons**: Single-tap remote permission approvals (`[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, `[ ❌ Reject ]`) and question option selections right inside Telegram.
+- **AI Execution Summaries**: Task completion notifications automatically include a concise AI-generated summary of actions taken.
+- **Host Local Time**: Timestamps formatted in the server host's local timezone.
+- **Session Hot Fallback**: Seamless message routing across OpenCode restarts, reconnects, and scheduled Telegram replies.
+- **One User-Owned Telegram Bot & Local Singleton Broker**: Multiplexing concurrent OpenCode processes through a single loopback Broker without update collisions.
+- **Multi-Project & Multi-Session Isolation**: Absolute routing precision based on machine, project, and session identities.
+- **Bilingual Support**: Full Traditional Chinese (`zh-TW`) and English (`en`) notifications and guidance.
 
 ## Architecture
 
@@ -205,48 +204,54 @@ opencode-telegram-broker stop
 opencode-telegram-broker start
 ```
 
-## Notification Examples
-
-Completion notification:
+## Sample Notifications
+ 
+### 1. Task Completed Notification (with AI Summary & Local Time)
 
 ```text
-OpenCode completed
+OpenCode Completed
 Project: api-server
 Session: Fix flaky checkout test
+Time: 2026-08-26 09:30:15
+
+📝 Summary:
+Fixed race condition in Stripe webhook handler by wrapping state lookup in a database transaction. Added unit test.
+
 Reply to this message to continue the session.
 ```
 
-Question notification:
+### 2. Interactive Permission Request (V1.5 Inline Keyboard)
 
 ```text
-OpenCode needs input
+OpenCode Needs Permission
+Project: api-server
+Session: Fix flaky checkout test
+Time: 2026-08-26 09:32:00
+Action: Execute bash command `npm run test:e2e`
+
+[ ✅ Allow Once ]   [ ⚡ Always Allow ]   [ ❌ Reject ]
+```
+
+### 3. Interactive Question Notification (V1.5 Option Buttons)
+
+```text
+OpenCode Needs Input
 Project: api-server
 Question: Which migration strategy should be used?
-Reply with one allowed answer, or use the terminal for full context.
+Time: 2026-08-26 09:35:10
+
+[ Blue-Green ]   [ Canary ]   [ In-Place ]
 ```
 
-Permission notification:
+Notification bodies are intentionally minimal. They omit raw transcripts, source code, tool output, local filesystem paths, and secrets by default.
 
-```text
-OpenCode needs terminal permission
-Project: api-server
-Return to the terminal to approve or reject this request.
-Telegram approval is disabled in V1.
-```
+## Reply & Interaction Behavior
 
-Notification bodies are intentionally minimal. They omit transcripts, source code, tool output, local paths, and secrets by default.
+- **Interactive Permission Approval**: Tap `[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, or `[ ❌ Reject ]` on the Telegram message. The Broker validates a single-use token and remotely unblocks OpenCode in the terminal immediately!
+- **Interactive Question Selection**: Tap an option button on the Telegram question notification, or reply directly with text.
+- **Continue Session**: Reply directly with text to any completed task notification to send a new prompt to that exact OpenCode session (active for 24 hours).
 
-## Reply Behavior
-
-Reply directly to the original bot message. The broker routes only by the persisted Telegram message binding and opaque route identifiers; project names, session titles, and user-written IDs are never used for routing.
-
-Supported replies:
-
-- Reply to an eligible completed root-session notification with text to continue that exact OpenCode session.
-- Reply to a pending question notification with a valid text answer or option syntax for that exact question.
-- Reply to a permission notice to receive terminal-only guidance. The broker never approves or rejects permissions from Telegram in V1.
-
-Rejected replies receive localized feedback when the route is expired, offline, stale, unauthorized, ambiguous, already handled, not actionable, or rejected by OpenCode. Offline commands are not queued.
+Rejected replies receive localized feedback when the route is expired, offline, unauthorized, or rejected by OpenCode. Offline commands are not queued.
 
 ## Docker Broker
 

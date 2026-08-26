@@ -1,26 +1,25 @@
 # OpenCode Telegram Notifier
 
-OpenCode Telegram Notifier 是一個注重隱私與多專案精確路由的 OpenCode 外掛。它專為同時執行多個 OpenCode 專案的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並確保使用者從 Telegram 做的每一則回覆，都能精準送回當初發出通知的那個專案與工作階段（Session）。
+OpenCode Telegram Notifier 是一個注重隱私與多專案精確路由的 OpenCode 外掛。它專為同時執行多個 OpenCode 專案的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並支援**手機端即時權限審批按鈕**、**選擇題按鈕點擊**與**AI 執行結論摘要**，確保使用者從 Telegram 做的每一則互動都能精準送回當初發出通知的那個專案與工作階段（Session）。
 
+> 目前版本：**v1.5.0**（支援 Telegram 互動按鈕、遠端權限審批、選擇題快速點擊與 AI 執行結論）。
 > 目前狀態：pre-release implementation，尚未發布 npm 公開版本。
 
 [English Documentation](../README.md)
 
 ---
 
-## V1 範圍
+## V1.5 核心功能與特色
 
-第一版適用於「單台電腦」，支援：
+V1.5 適用於「單台電腦」，支援：
 
-- 一個使用者自行透過 BotFather 建立的 Telegram Bot。
-- 一個只監聽本機 loopback 的 Broker。
-- 多個同時執行的 OpenCode 程序（Processes）。
-- 多個專案與多個工作階段（Sessions）。
-- 繁體中文與英文雙語通知。
-
-外掛會發送任務完成、錯誤異常、待回答問題以及權限請求等通知。使用者可以直接在 Telegram 引用回覆完成通知以繼續工作，或回覆問題選項。
-
-*註：V1 刻意不支援從 Telegram 遠端批准或拒絕系統權限，權限通知會引導使用者回到本機終端機處理。*
+- 🔘 **Telegram 互動式按鈕**：敏感操作（Bash 指令 / 檔案修改）觸發時，提供 `[ ✅ 允許本次 ]`、`[ ⚡ 總是允許 ]`、`[ ❌ 拒絕 ]` 一鍵遠端審批！
+- 📝 **AI 執行結論摘要**：任務完成時自動生成簡明扼要的執行結論，不用回到電腦看螢幕就知道做了什麼。
+- ⏰ **主機在地化時間**：通知時間直接採用安裝主機的本地時區（例如台北時間 UTC+8）。
+- 🔄 **Session-level 熱轉發**：支援跨夜排程回覆，即使 OpenCode 程序重新連線也能自動路由至最新活躍實例。
+- 🤖 **單一使用者 Bot & 本機 Broker**：多個 OpenCode 程序共用單一 loopback Broker，絕不搶奪或遺漏 Telegram 訊息。
+- 🛡️ **多專案與多 Session 精確隔離**：依據硬體身分碼、專案路徑 Hash 與 Session 唯一碼精準路由，絕不跨專案誤發。
+- 🌐 **繁體中文與英文雙語**：完整的繁體中文（`zh-TW`）與英文（`en`）介面與提示。
 
 ---
 
@@ -220,42 +219,51 @@ opencode-telegram-broker start
 
 ---
 
-## 通知範例
+## 通知與互動範例
 
-任務完成通知：
+### 1. 任務完成通知（包含 AI 執行結論與在地化時間）
 ```text
-OpenCode completed
-Project: api-server
+任務已完成
+專案: api-server
 Session: Fix flaky checkout test
-Reply to this message to continue the session.
+時間: 2026-08-26 09:30:15
+
+📝 執行結論：
+已在 Stripe webhook 處理程序中加入資料庫交易鎖，解決並發條件問題，並已新增對應的單元測試。
+
+回覆此訊息可繼續此 Session。
 ```
 
-提問等待回答通知：
+### 2. 敏感權限確認通知（V1.5 互動式按鈕）
 ```text
-OpenCode needs input
-Project: api-server
-Question: Which migration strategy should be used?
-Reply with one allowed answer, or use the terminal for full context.
+需要權限確認
+專案: api-server
+Session: Fix flaky checkout test
+時間: 2026-08-26 09:32:00
+操作：執行 Bash 指令 `npm run test:e2e`
+
+[ ✅ 允許本次 ]   [ ⚡ 總是允許 ]   [ ❌ 拒絕 ]
 ```
 
-終端機權限請求通知：
+### 3. 提問等待回答通知（V1.5 選項按鈕）
 ```text
-OpenCode needs terminal permission
-Project: api-server
-Return to the terminal to approve or reject this request.
-Telegram approval is disabled in V1.
+需要提供資訊
+專案: api-server
+問題: 請選擇要採用的遷移策略？
+時間: 2026-08-26 09:35:10
+
+[ 藍綠部署 ]   [ 金絲雀部署 ]   [ 就地升級 ]
 ```
+
+通知內容預設經過嚴格最小化與隱私過濾，不包含原始碼、工具詳細輸出、檔案路徑或任何敏感金鑰。
 
 ---
 
-## 回覆行為
+## 互動與回覆行為
 
-回覆時**必須直接引用原本的 Bot 訊息**。Broker 僅依賴持久化的 Telegram Message Binding 與不透明 Route ID 進行分派；絕不使用專案名稱、標題或使用者輸入的文字猜測目的地。
-
-支援的回覆動作：
-- 引用回覆「任務完成通知」：將輸入的提示詞傳回同一個 OpenCode Session 繼續執行。
-- 引用回覆「提問通知」：傳送該問題允許的答案選項。
-- 引用回覆「權限通知」：收到提示返回終端機操作的指引（V1 不支援遠端核准權限）。
+- **一鍵遠端審批權限**：直接點擊 Telegram 權限訊息下方的 `[ ✅ 允許本次 ]`、`[ ⚡ 總是允許 ]` 或 `[ ❌ 拒絕 ]`，Broker 會驗證單次安全 Token 並立即通知 OpenCode 解除等待狀態！
+- **選擇題快速作答**：直接點擊選項按鈕即自動送出答案，免去打字麻煩。
+- **接續對話**：對 24 小時內完成的通知直接**引用回覆**輸入下一道指令，即可直接向該 Session 下達新任務。
 
 過期、離線、重複、未授權或被拒絕的回覆皆會得到本地化的錯誤反饋，且離線指令不排隊。
 
