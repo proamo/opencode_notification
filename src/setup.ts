@@ -316,7 +316,9 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       }
       botToken = await reader.ask("│  Token: ", stdout);
       if (!botToken) {
-        stdout.write(isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n");
+        stdout.write(
+          isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n",
+        );
         continue;
       }
       if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {

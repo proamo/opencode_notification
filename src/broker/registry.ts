@@ -78,7 +78,10 @@ export class RouteRegistry {
 
     const route = RouteKeySchema.parse(input.route);
     if (route.machineId !== connection.machineId) {
-      throw new RouteRegistrationError("MACHINE_MISMATCH", "route machine does not match connection");
+      throw new RouteRegistrationError(
+        "MACHINE_MISMATCH",
+        "route machine does not match connection",
+      );
     }
     if (route.instanceId !== connection.instanceId) {
       throw new RouteRegistrationError(

@@ -72,9 +72,7 @@ export function formatLocalTime(isoString: string): string {
 
 function renderHtml(notification: NormalizedNotification, compact = false): string {
   const loc = notification.locale;
-  const lines = [
-    `<b>${escapeHtml(eventTitle(notification.kind, loc))}</b>`,
-  ];
+  const lines = [`<b>${escapeHtml(eventTitle(notification.kind, loc))}</b>`];
   if (notification.hostLabel) {
     lines.push(`🖥️ <b>[${escapeHtml(notification.hostLabel)}]</b>`);
   }
@@ -170,7 +168,9 @@ function redactNotification(
   patterns: RegExp[] | undefined,
 ): NormalizedNotification {
   const base = {
-    ...(notification.hostLabel ? { hostLabel: redactDynamic(notification.hostLabel, patterns) } : {}),
+    ...(notification.hostLabel
+      ? { hostLabel: redactDynamic(notification.hostLabel, patterns) }
+      : {}),
     projectLabel: redactDynamic(notification.projectLabel, patterns),
     sessionLabel: redactDynamic(notification.sessionLabel, patterns),
     ...(notification.rootSessionLabel
