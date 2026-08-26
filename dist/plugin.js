@@ -15659,7 +15659,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
         for (const entry of json2.plugin) {
           if (Array.isArray(entry) && entry.length >= 2) {
             const [key, value] = entry;
-            if (typeof key === "string" && (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram"))) {
+            if (typeof key === "string" && (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin"))) {
               const parsed = NotifierConfigSchema.safeParse(value);
               if (parsed.success)
                 return parsed.data;
@@ -15669,7 +15669,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
       }
       if (json2.plugin && typeof json2.plugin === "object") {
         for (const [key, value] of Object.entries(json2.plugin)) {
-          if (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram")) {
+          if (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin")) {
             const parsed = NotifierConfigSchema.safeParse(value);
             if (parsed.success)
               return parsed.data;
@@ -16560,4 +16560,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=12BAAFBBF853225764756E2164756E21
+//# debugId=A093D9A1568FFDB464756E2164756E21

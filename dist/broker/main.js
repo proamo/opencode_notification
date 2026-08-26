@@ -15564,7 +15564,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
         for (const entry of json2.plugin) {
           if (Array.isArray(entry) && entry.length >= 2) {
             const [key, value] = entry;
-            if (typeof key === "string" && (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram"))) {
+            if (typeof key === "string" && (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin"))) {
               const parsed = NotifierConfigSchema.safeParse(value);
               if (parsed.success)
                 return parsed.data;
@@ -15574,7 +15574,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
       }
       if (json2.plugin && typeof json2.plugin === "object") {
         for (const [key, value] of Object.entries(json2.plugin)) {
-          if (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram")) {
+          if (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin")) {
             const parsed = NotifierConfigSchema.safeParse(value);
             if (parsed.success)
               return parsed.data;
@@ -18692,7 +18692,7 @@ function handleMessage(socket, message, machineId, registry2, pendingCommands, a
         if (missingCapability) {
           throw new RouteRegistrationError("CAPABILITY_REQUIRED", `required capability is missing: ${missingCapability}`);
         }
-        if (activeConfigFingerprint.value && activeConfigFingerprint.value !== envelope.payload.configFingerprint) {
+        if (envelope.payload.machineId === machineId && activeConfigFingerprint.value && activeConfigFingerprint.value !== envelope.payload.configFingerprint) {
           throw new RouteRegistrationError("CONFIG_FINGERPRINT_MISMATCH", "connection configuration does not match the active local broker configuration");
         }
         registry2.registerConnection(socket, envelope.payload.instanceId, envelope.payload.machineId, envelope.payload.hostLabel);
@@ -19450,4 +19450,4 @@ export {
   runBroker
 };
 
-//# debugId=851A0B6D9EE3E32564756E2164756E21
+//# debugId=6458B26F633F222D64756E2164756E21
