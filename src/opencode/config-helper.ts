@@ -155,7 +155,8 @@ export async function loadResolvedNotifierConfig(
               typeof key === "string" &&
               (key === "opencode-telegram-link" ||
                 key.includes("opencode_notification") ||
-                key.includes("telegram"))
+                key.includes("telegram") ||
+                key.includes("plugin"))
             ) {
               const parsed = NotifierConfigSchema.safeParse(value);
               if (parsed.success) return parsed.data;
@@ -168,7 +169,8 @@ export async function loadResolvedNotifierConfig(
           if (
             key === "opencode-telegram-link" ||
             key.includes("opencode_notification") ||
-            key.includes("telegram")
+            key.includes("telegram") ||
+            key.includes("plugin")
           ) {
             const parsed = NotifierConfigSchema.safeParse(value);
             if (parsed.success) return parsed.data;
