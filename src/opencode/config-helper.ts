@@ -10,28 +10,45 @@ export type DiscoveredConfigFile = {
   isWorkspace: boolean;
 };
 
+function parseJsonc(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const stripped = raw
+      .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1")
+      .replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(stripped);
+  }
+}
+
 export function getCandidateConfigPaths(cwd: string = process.cwd()): string[] {
   const home = homedir();
   const candidates: string[] = [];
 
   // Project workspace locations
   candidates.push(join(cwd, "opencode.json"));
+  candidates.push(join(cwd, "opencode.jsonc"));
   candidates.push(join(cwd, ".opencode", "opencode.json"));
+  candidates.push(join(cwd, ".opencode", "opencode.jsonc"));
   candidates.push(join(cwd, ".opencode", "config.json"));
 
   // Global user locations
   if (platform() === "win32") {
     candidates.push(join(home, ".config", "opencode", "opencode.json"));
+    candidates.push(join(home, ".config", "opencode", "opencode.jsonc"));
     candidates.push(join(home, ".config", "opencode", "config.json"));
     if (process.env.APPDATA) {
       candidates.push(join(process.env.APPDATA, "opencode", "opencode.json"));
+      candidates.push(join(process.env.APPDATA, "opencode", "opencode.jsonc"));
       candidates.push(join(process.env.APPDATA, "opencode", "config.json"));
     }
   } else {
     const xdgConfig = process.env.XDG_CONFIG_HOME || join(home, ".config");
     candidates.push(join(xdgConfig, "opencode", "opencode.json"));
+    candidates.push(join(xdgConfig, "opencode", "opencode.jsonc"));
     candidates.push(join(xdgConfig, "opencode", "config.json"));
     candidates.push(join(home, ".opencode", "opencode.json"));
+    candidates.push(join(home, ".opencode", "opencode.jsonc"));
     candidates.push(join(home, ".opencode", "config.json"));
   }
 
@@ -129,7 +146,7 @@ export async function loadResolvedNotifierConfig(
     if (!item.exists) continue;
     try {
       const content = await readFile(item.path, "utf8");
-      const json = JSON.parse(content) as Record<string, unknown>;
+      const json = parseJsonc(content) as Record<string, unknown>;
       if (Array.isArray(json.plugin)) {
         for (const entry of json.plugin) {
           if (Array.isArray(entry) && entry.length >= 2) {
