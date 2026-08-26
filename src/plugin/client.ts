@@ -500,6 +500,7 @@ export function spawnDetachedBroker(input: { stateDirectory: string; port: numbe
       ...process.env,
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
+      OPENCODE_TELEGRAM_BROKER_BIND_HOST: "0.0.0.0",
     },
   });
   child.unref();

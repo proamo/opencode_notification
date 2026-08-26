@@ -47,7 +47,7 @@ export const NotifierConfigSchema = z
       .prefault({}),
     broker: z
       .object({
-        host: z.string().min(1).default("127.0.0.1"),
+        host: z.string().min(1).default("0.0.0.0"),
         port: z.number().int().min(1024).max(65535).default(42617),
       })
       .strict()
