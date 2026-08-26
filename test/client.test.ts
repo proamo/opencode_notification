@@ -160,17 +160,17 @@ describe("BrokerClient lifecycle", () => {
       route,
       text: "Continue safely",
     });
-    const stale = await brokers[0].sendCommand({
+    const offline = await brokers[0].sendCommand({
       type: "session.prompt",
       commandId: crypto.randomUUID(),
-      route: { ...route, routeGeneration: crypto.randomUUID() },
+      route: { ...route, sessionId: "ses_offline" },
       text: "Must not reroute",
     });
 
     expect(result.status).toBe("accepted");
     expect(handled).toHaveLength(1);
     expect(handled[0]).toMatchObject({ type: "session.prompt", route, text: "Continue safely" });
-    expect(stale).toMatchObject({ status: "stale", reason: "route is offline" });
+    expect(offline).toMatchObject({ status: "stale", reason: "route is offline" });
   });
 
   test("dispatches validated Telegram interactions only to the exact bound route", async () => {
@@ -182,7 +182,7 @@ describe("BrokerClient lifecycle", () => {
       { owner: "target", projectId: "opaque-project-alpha", sessionId: "ses_shared" },
       { owner: "other-project", projectId: "opaque-project-bravo", sessionId: "ses_shared" },
       { owner: "other-session", projectId: "opaque-project-alpha", sessionId: "ses_other" },
-      { owner: "other-instance", projectId: "opaque-project-alpha", sessionId: "ses_shared" },
+      { owner: "other-instance", projectId: "opaque-project-alpha", sessionId: "ses_instance" },
       { owner: "question", projectId: "opaque-project-charlie", sessionId: "ses_question" },
     ] as const;
     const routes = new Map<(typeof routeSpecs)[number]["owner"], RouteKey>();
@@ -296,8 +296,8 @@ describe("BrokerClient lifecycle", () => {
 
     const targetRoute = routes.get("target");
     if (!targetRoute) throw new Error("expected target route");
-    const staleRoute = { ...targetRoute, routeGeneration: crypto.randomUUID() };
-    saveRoute(broker, staleRoute, "session_prompt", { messageId: 82 });
+    const offlineRoute = { ...targetRoute, sessionId: "ses_offline" };
+    saveRoute(broker, offlineRoute, "session_prompt", { messageId: 82 });
     expect(
       validateTelegramInteraction(
         parseUpdate(
