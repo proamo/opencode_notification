@@ -119,6 +119,11 @@ On Machine B (e.g., your laptop or another server):
 }
 ```
 
+> 💡 **How to get the Gateway Secret Token?**  
+> Run the following command on Machine A (Gateway) to view and copy the secret token:  
+> `cat ~/.local/state/opencode-telegram-link/broker-secret`  
+> (Or on Windows: `type %USERPROFILE%\.local\state\opencode-telegram-link\broker-secret`).
+
 Notifications from Machine B will automatically display `🖥️ [MacBook]` in Telegram, and button clicks or replies from Telegram will automatically route back to Machine B!
 
 ---

@@ -129,6 +129,11 @@ bun run setup
 }
 ```
 
+> 💡 **如何取得主機 A (Gateway) 的連線金鑰？**  
+> 在主機 A 上執行以下指令即可查閱並複製金鑰：  
+> `cat ~/.local/state/opencode-telegram-link/broker-secret`  
+> （若主機 A 與主機 B 在安全的私有內網/Tailscale 且未設定密鑰，此欄位亦可為預設值）。
+
 設定完成後，主機 B 發出的通知會在 Telegram 頂部標註 `🖥️ [MacBook]`，而您在 Telegram 手機端點擊按鈕或回覆時，指令會自動精準轉發回主機 B！
 
 ---
