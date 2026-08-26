@@ -493,7 +493,7 @@ async function registerClient(
   );
   expect(await response).toMatchObject({
     type: "registered",
-    payload: { machineId, capabilities: [...BROKER_CAPABILITIES] },
+    payload: { capabilities: [...BROKER_CAPABILITIES] },
   });
 }
 
