@@ -70,16 +70,24 @@ The system SHALL accept an authorized response only for the exact pending questi
 - **WHEN** the question bound to the message is no longer pending but another question exists in the session
 - **THEN** the system MUST reject the reply and MUST NOT apply it to the other question
 
-### Requirement: Permission requests remain terminal-only
-V1 SHALL notify users of permission requests but MUST NOT approve, deny, or otherwise resolve OpenCode permissions from Telegram. Permission notifications and replies SHALL state that terminal intervention is required.
+### Requirement: Remote permission approval via interactive inline buttons
+V1.5 SHALL support remote permission decisions (`once`, `always`, `reject`) via Telegram inline keyboard buttons bound to single-use cryptographically secure callback tokens. Direct text replies to permission notifications SHALL continue to direct the user to use the inline buttons or terminal.
 
-#### Scenario: User replies with approval language
-- **WHEN** an authorized user replies "approve" or equivalent text to a permission notification
-- **THEN** the permission MUST remain unresolved and the system SHALL direct the user to the terminal
+#### Scenario: User clicks Allow Once button
+- **WHEN** an authorized user clicks the `[ ✅ 允許本次 ]` / `[ ✅ Allow Once ]` button for an active permission notice
+- **THEN** the broker SHALL validate the callback token and dispatch a `permission.reply` command with `response: "once"` to unblock OpenCode
 
-#### Scenario: User replies with denial language
-- **WHEN** an authorized user replies "deny" or equivalent text to a permission notification
-- **THEN** the permission MUST remain unresolved and the system SHALL direct the user to the terminal
+#### Scenario: User clicks Always Allow button
+- **WHEN** an authorized user clicks the `[ ⚡ 總是允許 ]` / `[ ⚡ Always Allow ]` button for an active permission notice
+- **THEN** the broker SHALL validate the callback token and dispatch a `permission.reply` command with `response: "always"` to unblock OpenCode
+
+#### Scenario: User clicks Reject button
+- **WHEN** an authorized user clicks the `[ ❌ 拒絕 ]` / `[ ❌ Reject ]` button for an active permission notice
+- **THEN** the broker SHALL validate the callback token and dispatch a `permission.reply` command with `response: "reject"` to reject the operation
+
+#### Scenario: User sends free-form text reply to permission notification
+- **WHEN** an authorized user sends a free-form text reply to a permission notice
+- **THEN** the broker SHALL return localized feedback directing the user to tap the buttons or use the terminal
 
 ### Requirement: Interaction expiry
 Every actionable message binding SHALL have a documented bounded expiry. A binding MUST also become unusable when its question is resolved, its route goes offline or is superseded, or its action is otherwise no longer valid; expiration MUST NOT cancel or mutate the underlying OpenCode session or pending terminal action.

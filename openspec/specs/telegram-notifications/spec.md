@@ -55,16 +55,20 @@ Every user-visible notifier message SHALL be rendered from an English or Traditi
 - **WHEN** no explicit, OpenCode, or operating-system locale resolves to a supported catalog
 - **THEN** all notifier-generated text in the notification SHALL use the English catalog
 
-### Requirement: Minimal notification content
-Notifications SHALL identify the event type and provide only the minimum routing context needed by the user, such as a safe project label and session label. Completion notifications MUST NOT include full prompts, responses, transcripts, source code, or tool output by default.
+### Requirement: Minimal notification content and execution summary
+Notifications SHALL identify the event type, formatted timestamp in host local time, and provide only the minimum routing context needed by the user (safe project label and session label). Completion notifications SHALL optionally include an AI-generated concise execution summary of completed actions while omitting raw transcripts, tool output, local paths, and secrets.
 
-#### Scenario: Session completes with sensitive transcript content
-- **WHEN** a session containing source code or secrets completes under default settings
-- **THEN** the completion notification MUST omit the transcript, source code, tool output, and full response
+#### Scenario: Session completes with summary
+- **WHEN** a session completes and AI summary fetching succeeds
+- **THEN** the completion notification SHALL display a localized summary block (e.g. `📝 執行結論：` / `📝 Summary:`) truncated to safety limits
 
-#### Scenario: User action is required
-- **WHEN** a question or permission request requires terminal action or an eligible Telegram response
-- **THEN** the notification SHALL state the event type and the permitted next action without exposing unrelated session content
+#### Scenario: Session completes without summary or error
+- **WHEN** a session completes and summary fetching is unavailable or fails
+- **THEN** the completion notification SHALL omit the summary block cleanly without failing delivery
+
+#### Scenario: User action is required with interactive buttons
+- **WHEN** a question or permission request requires user intervention
+- **THEN** the notification SHALL attach Telegram inline keyboard buttons (`[ ✅ 允許本次 ]`, `[ ⚡ 總是允許 ]`, `[ ❌ 拒絕 ]` for permissions, or option buttons for questions) bound to secure callback tokens
 
 ### Requirement: Redaction before delivery
 The notifier SHALL apply configured redaction rules and built-in secret redaction to every user-derived field before sending it to Telegram. Redaction MUST occur before persistence in delivery diagnostics, and an unredactable or invalid payload MUST fail closed rather than be sent unredacted.

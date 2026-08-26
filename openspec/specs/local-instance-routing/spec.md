@@ -44,16 +44,20 @@ At most one broker process on the computer SHALL own Telegram update polling for
 - **WHEN** two processes attempt to become broker owner concurrently
 - **THEN** no more than one process SHALL acquire polling ownership
 
-### Requirement: Exact composite route identity
-Every routable registration and actionable notification SHALL be bound to the exact composite identity of machine, OpenCode instance, project, and session. The broker MUST match all four components exactly and MUST NOT route by project path, display label, session title, Telegram chat, or session identifier alone.
+### Requirement: Exact composite route identity and session hot fallback
+Every routable registration and actionable notification SHALL be bound to the composite identity of machine, OpenCode instance, project, session, and route generation. For session continuation prompts (`session.prompt`), the broker SHALL prioritize exact route matching, and when the exact generation is superseded, SHALL hot-fallback match by `(machineId, projectId, sessionId)` to deliver prompts to the currently active live connection of that exact session. The broker MUST NOT cross machine boundaries or project boundaries.
 
 #### Scenario: All route components match one live registration
 - **WHEN** an authorized command contains machine, instance, project, and session identities that exactly match one live registration
 - **THEN** the broker SHALL forward the command only to that registration
 
-#### Scenario: One route component differs
-- **WHEN** any one of machine, instance, project, or session identity differs from the live registration
-- **THEN** the broker MUST reject the route and MUST NOT fall back to a partial match
+#### Scenario: Route generation superseded after reconnect for same session
+- **WHEN** an authorized session prompt refers to an earlier connection generation for an active `(machineId, projectId, sessionId)`
+- **THEN** the broker SHALL hot-forward the prompt to the currently active live registration of that session
+
+#### Scenario: Machine, project, or session differs
+- **WHEN** any one of machine, project, or session identity differs from active registrations
+- **THEN** the broker MUST reject the route as offline without cross-project or cross-machine fallback
 
 #### Scenario: Human-readable labels collide
 - **WHEN** two registrations have identical project or session display labels but different composite identities
