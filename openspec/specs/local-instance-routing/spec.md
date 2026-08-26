@@ -1,37 +1,29 @@
 # local-instance-routing Specification
 
 ## Purpose
-Defines the single-computer broker topology and the exact, fail-closed routing contract across concurrent OpenCode processes, projects, and sessions.
+Defines the Hub-and-Spoke Gateway & Node Agent broker topology and the exact, fail-closed routing contract across concurrent OpenCode processes, projects, sessions, and multi-host nodes.
 ## Requirements
-### Requirement: Single-computer V1 topology
-V1 SHALL support exactly one local broker and one user-owned Telegram bot per configured computer, serving multiple OpenCode processes, projects, and sessions on that computer. V1 MUST NOT claim or attempt routing between computers, and MUST NOT depend on a hosted relay, shared service, account system, or telemetry service.
+### Requirement: Multi-Host Hub-and-Spoke Topology
+V2 SHALL support a Central Gateway and multiple Node Agents sharing one user-owned Telegram bot. The Central Gateway SHALL be the singleton Telegram polling owner. Node Agents SHALL establish authenticated outbound WebSocket connections to the Central Gateway and register their distinct `machineId`, `instanceId`, and `hostLabel`.
 
-#### Scenario: Multiple local OpenCode processes connect
-- **WHEN** multiple OpenCode processes on the same computer use the configured notifier
-- **THEN** they SHALL share the computer's single local broker and bot polling owner
+#### Scenario: Multiple local and remote Node Agents connect
+- **WHEN** multiple OpenCode instances on local and remote machines connect to the configured Gateway
+- **THEN** they SHALL share the Gateway's single Telegram bot without polling collisions (`409 Conflict`)
 
-#### Scenario: Route names another computer
-- **WHEN** an inbound command refers to a machine identity other than the local configured machine
-- **THEN** the broker MUST reject it without forwarding or cross-machine discovery
+#### Scenario: Inbound command routed across machines
+- **WHEN** an authorized Telegram reply or button interaction is received for a remote Node Agent's route
+- **THEN** the Central Gateway SHALL forward the command to the exact WebSocket connection matching the target `machineId` and `route`
 
-### Requirement: Host-local broker access
-The broker SHALL be reachable only from the same computer and MUST reject unauthenticated clients. A native Broker SHALL listen only on loopback. A containerized Broker MAY listen on its container interface only when its container port is published exclusively to host loopback; it MUST NOT be published on all host interfaces, a LAN address, or a public address.
+### Requirement: Host-local and Remote Broker Access
+The Gateway SHALL require Bearer token authentication for all WebSocket connections. Local connections SHALL default to loopback, while remote Node Agents MAY connect over LAN, VPN (e.g. Tailscale), or reverse proxy using secure WebSocket (`ws://` or `wss://`).
 
-#### Scenario: Local authenticated plugin connects
-- **WHEN** a plugin on the same computer presents valid local broker authentication
-- **THEN** the broker SHALL permit registration
+#### Scenario: Authenticated Node Agent connects
+- **WHEN** a Node Agent on a remote machine presents a valid Gateway authentication token
+- **THEN** the Gateway SHALL permit connection registration and attach the node's `hostLabel` to registered routes
 
-#### Scenario: Remote or unauthenticated client connects
-- **WHEN** a client connects through a non-local interface or lacks valid local broker authentication
-- **THEN** the broker MUST reject the request without disclosing route state
-
-#### Scenario: Container port is published to host loopback
-- **WHEN** the single-container Broker maps its container port exclusively to `127.0.0.1` on the host and the plugin authenticates
-- **THEN** the deployment SHALL be treated as local-only and SHALL support the same routing contract as native mode
-
-#### Scenario: Container port is published on all host interfaces
-- **WHEN** Docker configuration publishes the Broker port through `0.0.0.0`, an unspecified host address, or a non-loopback host address
-- **THEN** setup and diagnostics MUST report an unsafe deployment and MUST NOT report the notifier as ready
+#### Scenario: Unauthenticated client connects
+- **WHEN** a client attempts connection without valid authentication
+- **THEN** the Gateway MUST reject the WebSocket upgrade immediately
 
 ### Requirement: Singleton polling ownership
 At most one broker process on the computer SHALL own Telegram update polling for the configured bot at a time. Concurrent startup attempts MUST converge on the existing healthy broker or fail visibly without starting a second poller.

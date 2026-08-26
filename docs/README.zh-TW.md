@@ -1,24 +1,23 @@
 # OpenCode Telegram Notifier
 
-OpenCode Telegram Notifier 是一個注重隱私與多專案精確路由的 OpenCode 外掛。它專為同時執行多個 OpenCode 專案的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並支援**手機端即時權限審批按鈕**、**選擇題按鈕點擊**與**AI 執行結論摘要**，確保使用者從 Telegram 做的每一則互動都能精準送回當初發出通知的那個專案與工作階段（Session）。
+OpenCode Telegram Notifier 是一個注重隱私與多專案精確路由的 OpenCode 外掛。它專為同時執行多個專案、多台電腦（開發主機、筆電、線上 VPS）的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並支援**手機端即時權限審批按鈕**、**選擇題按鈕點擊**、**AI 執行結論摘要**與**多主機標籤識別**，確保使用者從 Telegram 做的每一則互動都能精準送回當初發出通知的那個主機、專案與工作階段（Session）。
 
-> 目前版本：**v1.5.0**（支援 Telegram 互動按鈕、遠端權限審批、選擇題快速點擊與 AI 執行結論）。
+> 目前版本：**v2.0.0**（支援多主機 Hub-and-Spoke Gateway、節點 Agent 連線、主機標籤、Telegram 互動按鈕、遠端權限審批與 AI 執行結論）。
 > 目前狀態：pre-release implementation，尚未發布 npm 公開版本。
 
 [English Documentation](../README.md)
 
 ---
 
-## V1.5 核心功能與特色
+## V2.0 核心功能與特色
 
-V1.5 適用於「單台電腦」，支援：
-
+- 🌐 **多主機 Hub-and-Spoke Gateway 拓撲**：打破單機限制！透過單一 Telegram Bot 統一掌控多台電腦（公司電腦、MacBook、線上 VPS），完全免除訊息搶奪與 `409 Conflict` 衝突。
+- 🏷️ **主機身分標籤 (Host Tagging)**：推播頂部醒目標示來源主機（例如 `🖥️ [MacBook]` 或 `☁️ [Live-VPS]`），一目了然。
+- 🔄 **跨主機精準逆向路由 (Cross-Host Routing)**：在手機點擊按鈕或回覆文字，Central Gateway 自動分發指令精準回到該主機與 Session。
 - 🔘 **Telegram 互動式按鈕**：敏感操作（Bash 指令 / 檔案修改）觸發時，提供 `[ ✅ 允許本次 ]`、`[ ⚡ 總是允許 ]`、`[ ❌ 拒絕 ]` 一鍵遠端審批！
 - 📝 **AI 執行結論摘要**：任務完成時自動生成簡明扼要的執行結論，不用回到電腦看螢幕就知道做了什麼。
 - ⏰ **主機在地化時間**：通知時間直接採用安裝主機的本地時區（例如台北時間 UTC+8）。
 - 🔄 **Session-level 熱轉發**：支援跨夜排程回覆，即使 OpenCode 程序重新連線也能自動路由至最新活躍實例。
-- 🤖 **單一使用者 Bot & 本機 Broker**：多個 OpenCode 程序共用單一 loopback Broker，絕不搶奪或遺漏 Telegram 訊息。
-- 🛡️ **多專案與多 Session 精確隔離**：依據硬體身分碼、專案路徑 Hash 與 Session 唯一碼精準路由，絕不跨專案誤發。
 - 🌐 **繁體中文與英文雙語**：完整的繁體中文（`zh-TW`）與英文（`en`）介面與提示。
 
 ---
@@ -26,35 +25,26 @@ V1.5 適用於「單台電腦」，支援：
 ## 系統架構
 
 ```text
-OpenCode: 專案 A ─┐
-OpenCode: 專案 B ─┼── 本機 Broker ── Telegram Bot API
-OpenCode: 專案 C ─┘
+[ 節點 Agent 1 (MacBook) ] ──── (WebSocket) ──┐
+                                              ▼
+[ 節點 Agent 2 (線上 VPS) ] ─── (WebSocket) ──► [ Central Gateway Broker ] ──► Telegram Bot API
+                                              ▲     (可運行於 VPS/本機)              │
+[ 本地 OpenCode ] ────────────────────────────┘                                      ▼
+                                                                           [ 開發者 Telegram App ]
 ```
 
-本機上的所有 OpenCode 外掛皆連接至同一個僅監聽 loopback (`127.0.0.1`) 的 Broker。Broker 是唯一向 Telegram 進行 Long Polling 輪詢的程序，因此多個 OpenCode 程序同時執行也不會發生衝突。
-
-Broker 亦支援以單一 Docker 容器方式運行。主機上的 OpenCode 透過發布在 `127.0.0.1` 的連接埠與容器通訊，狀態目錄則掛載為持久化 Volume。預設推薦使用本機原生模式。
-
-每則可互動訊息皆綁定一組不透明的路由識別碼（包含電腦 ID、程序 ID、專案 ID、Session ID 與世代版本）。Telegram 回覆時**必須引用原始訊息**；系統絕不依靠專案顯示名稱或使用者文字來猜測目的地。
+- **Gateway 模式（預設）**：作為集中入口唯一擁有 Telegram Bot 輪詢，服務本機 OpenCode 並接收遠端節點連線。
+- **Node Agent 模式**：第二台/第三台電腦使用的輕量連線模式，反向連線至 Central Gateway，共用同一個 Telegram Bot。
 
 ---
 
 ## 安全與隱私
 
-- Broker 僅監聽本機 loopback (`127.0.0.1`)，並使用目前使用者專屬的密鑰進行外掛驗證。
+- Central Gateway 與 Node Agent 之間透過加密 Token 進行安全握手驗證。
 - 使用者使用自己建立的 Telegram Bot，無任何第三方託管中繼、帳號服務或遙測追蹤。
 - 預設不傳送對話紀錄、原始程式碼、工具輸出、檔案路徑或秘密金鑰。
 - 安裝時會固定授權的 Telegram User ID 與私人對話 Chat ID。
 - 離線、過期、模稜兩可或未授權的操作一律安全拒絕（Fail Closed），且離線指令絕不排隊。
-- 啟用 Telegram 通知代表選定的通知與回覆內容會經由 Telegram 官方伺服器傳輸。
-
----
-
-## 重要限制
-
-V1 不支援將同一個 Telegram Bot 同時用於多台電腦。Telegram Long Polling 限制單一消費者；多台電腦共用同一個 Bot 會互相搶走訊息或產生 `409 Conflict` 衝突。
-
-未來版本可能會提供獨立設計的 Remote Broker 模式。V1 內絕不包含任何未經稽核的區域網路監聽或遠端存取通道。
 
 ---
 
@@ -62,8 +52,7 @@ V1 不支援將同一個 Telegram Bot 同時用於多台電腦。Telegram Long P
 
 - Bun `>=1.3.0`
 - OpenCode 及 `@opencode-ai/plugin` `>=1.18.0 <2`
-- 向 `@BotFather` 申請的 Telegram Bot Token
-- 一個 Bot Token 對應一台電腦
+- 向 `@BotFather` 申請的 Telegram Bot Token（僅 Gateway 主機需要）
 
 ---
 
@@ -98,6 +87,49 @@ bun run setup
 5. 📝 **自動寫入外掛設定**：自動偵測全域與專案的 `opencode.json` 一鍵注入配置（自動建立 `.bak` 備份）。
 6. 🚀 **自動啟動 Broker**：選 Docker 模式時自動於背景啟動容器；選原生模式時完成配置。
 7. 💬 **發送測試通知**：發送歡迎測試訊息到您的 Telegram，即刻驗收成果！
+
+---
+
+## 多主機與第二台電腦連線設定 (Multi-Host & Node Agent)
+
+若您有多台電腦（例如：**主機 A 作為 Central Gateway**、**主機 B/筆電 作為 Node Agent**），並希望**共用同一個 Telegram Bot**：
+
+### 步驟 1：主機 A（Central Gateway 準備）
+在主機 A 上執行 `bun run setup`，選擇 `1) 獨立 Gateway 模式` 並完成 Telegram Bot 配對。
+確保主機 A 的 Broker 連接埠（預設 `42617`）可被主機 B 連線（例如透過區域網路 LAN、Tailscale VPN 內網 IP，或反向代理域名）。
+
+### 步驟 2：主機 B（Node Agent 設定）
+在主機 B（您的筆電或其他伺服器）上：
+1. 執行 `bun run setup`（或 `bunx opencode-telegram-link setup`）。
+2. 選擇 **`2) 節點 Agent 模式 (Node Agent Mode)`**。
+3. 輸入主機標籤（例如 `MacBook` 或 `Live-VPS`）。
+4. 輸入主機 A 的 Gateway WebSocket 位址（例如 `ws://192.168.1.100:42617`、`ws://100.x.x.x:42617` (Tailscale) 或 `wss://gateway.yourdomain.com`）。
+5. 輸入 Gateway 連線金鑰（若無設定可直接按 Enter）。
+
+### 主機 B 的 `opencode.json` 設定範例
+```json
+{
+  "plugin": {
+    "opencode-telegram-link": {
+      "mode": "local",
+      "role": "node",
+      "hostLabel": "MacBook",
+      "gateway": {
+        "url": "ws://gateway-host-ip:42617",
+        "secret": "your-secret-token"
+      },
+      "notifications": {
+        "completion": true,
+        "error": true,
+        "question": true,
+        "permission": true
+      }
+    }
+  }
+}
+```
+
+設定完成後，主機 B 發出的通知會在 Telegram 頂部標註 `🖥️ [MacBook]`，而您在 Telegram 手機端點擊按鈕或回覆時，指令會自動精準轉發回主機 B！
 
 ---
 

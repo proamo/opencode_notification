@@ -1,61 +1,50 @@
 # OpenCode Telegram Notifier
 
-OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications, interactive inline buttons, and safe remote replies. It is designed for developers who run several OpenCode projects at the same time and need every Telegram response to return to the exact originating process and session.
+OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications, interactive inline buttons, and safe remote replies. It is designed for developers who run OpenCode across multiple projects and multiple computers (dev machine, laptop, VPS) while routing every Telegram interaction to the exact originating host, process, and session.
 
-> Version: **v1.5.0** (Interactive Telegram Inline Keyboard, Remote Permission Approvals & AI Execution Summaries).
+> Version: **v2.0.0** (Multi-Host Gateway & Node Agent Architecture, Host Tagging, Remote Permission Approvals & AI Execution Summaries).
 > Status: Pre-release implementation. Install from a release tarball or source checkout until the first public npm package is published.
 
 [繁體中文總覽](docs/README.zh-TW.md)
 
-## V1.5 Features & Scope
+## V2.0 Features & Highlights
 
-V1.5 targets one computer with:
-
-- **Interactive Inline Buttons**: Single-tap remote permission approvals (`[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, `[ ❌ Reject ]`) and question option selections right inside Telegram.
+- **Multi-Host Hub-and-Spoke Gateway**: Control multiple computers (e.g. Office PC, MacBook, Live VPS) from a single Telegram Bot without message collisions (`409 Conflict`).
+- **Host Tagging**: Notification headers prominently display the origin machine (e.g., `🖥️ [MacBook]` or `☁️ [Live-VPS]`).
+- **Cross-Host Reverse Routing**: Tap buttons or reply to any notification—the Central Gateway routes commands back to the exact machine and session.
+- **Interactive Inline Buttons**: Single-tap remote permission approvals (`[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, `[ ❌ Reject ]`) and question option selections.
 - **AI Execution Summaries**: Task completion notifications automatically include a concise AI-generated summary of actions taken.
 - **Host Local Time**: Timestamps formatted in the server host's local timezone.
 - **Session Hot Fallback**: Seamless message routing across OpenCode restarts, reconnects, and scheduled Telegram replies.
-- **One User-Owned Telegram Bot & Local Singleton Broker**: Multiplexing concurrent OpenCode processes through a single loopback Broker without update collisions.
-- **Multi-Project & Multi-Session Isolation**: Absolute routing precision based on machine, project, and session identities.
 - **Bilingual Support**: Full Traditional Chinese (`zh-TW`) and English (`en`) notifications and guidance.
 
 ## Architecture
 
 ```text
-OpenCode: project A ─┐
-OpenCode: project B ─┼── local broker ── Telegram Bot API
-OpenCode: project C ─┘
+[ Node Agent 1 (MacBook) ] ──── (WebSocket) ──┐
+                                              ▼
+[ Node Agent 2 (Live VPS) ] ─── (WebSocket) ──► [ Central Gateway Broker ] ──► Telegram Bot API
+                                              ▲          (Local or VPS)                │
+[ Local OpenCode ] ───────────────────────────┘                                        ▼
+                                                                             [ Telegram App (Mobile) ]
 ```
 
-Every OpenCode plugin connects to the same loopback-only broker. The broker is the only Telegram long-polling consumer, so concurrent OpenCode processes do not compete for updates.
-
-The Broker also supports an optional single Docker container. OpenCode plugins remain on the host and connect through a port published only on `127.0.0.1`; the state directory is mounted as a persistent volume. Native mode remains the default.
-
-Each actionable message is bound to an opaque route containing machine, instance, project, session, and route-generation identities. A Telegram reply must reference the original bot message; display names and user-provided route text are never used for routing.
+- **Gateway Mode (Default)**: Runs as the singleton Telegram Poller. Serves local OpenCode instances and accepts reverse WebSocket connections from remote Node Agents.
+- **Node Agent Mode**: Lightweight mode for second/third machines that connects to the Central Gateway, allowing all machines to share one Telegram Bot seamlessly.
 
 ## Security and Privacy
 
-- The broker listens only on loopback and requires a current-user local secret.
-- V1 uses the user's own bot and has no hosted relay, account service, or telemetry.
-- Notifications omit transcripts, source code, tool output, paths, and secrets by default.
-- Telegram user and private-chat identities are pinned during setup.
+- Central Gateway and Node Agents authenticate over WebSocket using secure tokens.
+- Notifications omit transcripts, source code, tool output, local filesystem paths, and secrets by default.
+- Telegram user and private-chat identities are pinned during Gateway setup.
 - Offline, stale, ambiguous, or unauthorized actions fail closed and are never queued.
-- Telegram necessarily receives the notification and reply content that the user enables.
 
-## Important Limitation
-
-V1 does not support using the same Telegram bot on multiple computers. Telegram long polling allows one effective consumer, so multiple computers can consume each other's updates or produce `409 Conflict` errors.
-
-A future version may offer a separately designed remote-broker mode selected during installation. V1 contains no dormant LAN listener or unaudited remote access path.
-
-## Installation
+## Installation & Setup
 
 Requirements:
-
 - Bun `>=1.3.0`.
 - OpenCode with `@opencode-ai/plugin` `>=1.18.0 <2`.
-- A user-owned Telegram bot token from BotFather.
-- One computer per bot token.
+- A user-owned Telegram bot token from BotFather (only needed on the Gateway machine).
 
 ## Quick Start (4-Step Setup)
 
@@ -88,6 +77,49 @@ The interactive wizard will:
 - Automatically save the token in a secure private state file (`0600`/`0700`).
 - Automatically detect and update your `opencode.json` configuration file.
 - Send a test welcome notification to your Telegram!
+
+---
+
+## Multi-Host & Node Agent Setup (Connecting a 2nd Machine)
+
+To share the **same Telegram Bot** across multiple computers (e.g. Machine A as Central Gateway, Machine B as Node Agent):
+
+### Step 1: Set up Machine A (Central Gateway)
+Run `bun run setup` on Machine A, choose `1) Standalone Gateway Mode`, and pair your Telegram Bot.
+Ensure Machine A's Broker WebSocket port (`42617`) is accessible by Machine B (e.g., via LAN, Tailscale VPN, or reverse proxy).
+
+### Step 2: Set up Machine B (Node Agent)
+On Machine B (e.g., your laptop or another server):
+1. Run `bun run setup`.
+2. Choose **`2) Node Agent Mode`**.
+3. Enter your machine label (e.g., `MacBook` or `Live-VPS`).
+4. Enter Machine A's Gateway WebSocket URL (e.g., `ws://192.168.1.100:42617`, `ws://100.x.x.x:42617` via Tailscale, or `wss://gateway.example.com`).
+5. Enter Gateway Secret Token (if configured).
+
+### Machine B `opencode.json` Example
+```json
+{
+  "plugin": {
+    "opencode-telegram-link": {
+      "mode": "local",
+      "role": "node",
+      "hostLabel": "MacBook",
+      "gateway": {
+        "url": "ws://gateway-host-ip:42617",
+        "secret": "your-secret-token"
+      },
+      "notifications": {
+        "completion": true,
+        "error": true,
+        "question": true,
+        "permission": true
+      }
+    }
+  }
+}
+```
+
+Notifications from Machine B will automatically display `🖥️ [MacBook]` in Telegram, and button clicks or replies from Telegram will automatically route back to Machine B!
 
 ---
 

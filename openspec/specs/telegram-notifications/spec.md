@@ -55,8 +55,12 @@ Every user-visible notifier message SHALL be rendered from an English or Traditi
 - **WHEN** no explicit, OpenCode, or operating-system locale resolves to a supported catalog
 - **THEN** all notifier-generated text in the notification SHALL use the English catalog
 
-### Requirement: Minimal notification content and execution summary
-Notifications SHALL identify the event type, formatted timestamp in host local time, and provide only the minimum routing context needed by the user (safe project label and session label). Completion notifications SHALL optionally include an AI-generated concise execution summary of completed actions while omitting raw transcripts, tool output, local paths, and secrets.
+### Requirement: Minimal notification content, host tagging, and execution summary
+Notifications SHALL identify the event type, origin host label (when configured), formatted timestamp in host local time, and provide only the minimum routing context needed by the user (safe project label and session label). Completion notifications SHALL optionally include an AI-generated concise execution summary of completed actions while omitting raw transcripts, tool output, local paths, and secrets.
+
+#### Scenario: Notification includes host label
+- **WHEN** a notification is submitted with a configured `hostLabel` (e.g. `codeCenter` or `MacBook`)
+- **THEN** the rendered notification header SHALL display the host label tag (e.g. `🖥️ [MacBook]`) before the project title
 
 #### Scenario: Session completes with summary
 - **WHEN** a session completes and AI summary fetching succeeds
