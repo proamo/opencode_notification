@@ -745,6 +745,7 @@ function handleMessage(
           socket,
           envelope.payload.instanceId,
           envelope.payload.machineId,
+          envelope.payload.hostLabel,
         );
         if (envelope.payload.telegram) ensureTelegramRuntime(envelope.payload.telegram);
         activeConfigFingerprint.value ??= envelope.payload.configFingerprint;

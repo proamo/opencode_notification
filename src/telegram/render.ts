@@ -74,9 +74,14 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
   const loc = notification.locale;
   const lines = [
     `<b>${escapeHtml(eventTitle(notification.kind, loc))}</b>`,
+  ];
+  if (notification.hostLabel) {
+    lines.push(`🖥️ <b>[${escapeHtml(notification.hostLabel)}]</b>`);
+  }
+  lines.push(
     `${escapeHtml(translate(loc, "field.project"))}: ${escapeHtml(notification.projectLabel)}`,
     `${escapeHtml(translate(loc, "field.session"))}: ${escapeHtml(notification.sessionLabel)}`,
-  ];
+  );
   if (notification.rootSessionLabel)
     lines.push(
       `${escapeHtml(translate(loc, "field.root"))}: ${escapeHtml(notification.rootSessionLabel)}`,
@@ -136,9 +141,10 @@ function renderHtml(notification: NormalizedNotification, compact = false): stri
 
 function renderPlainTextFallback(notification: NormalizedNotification): string {
   const loc = notification.locale;
+  const host = notification.hostLabel ? `[${notification.hostLabel}] ` : "";
   const context = notification.rootSessionLabel
-    ? `${notification.projectLabel} / ${notification.rootSessionLabel} / ${notification.sessionLabel}`
-    : `${notification.projectLabel} / ${notification.sessionLabel}`;
+    ? `${host}${notification.projectLabel} / ${notification.rootSessionLabel} / ${notification.sessionLabel}`
+    : `${host}${notification.projectLabel} / ${notification.sessionLabel}`;
   const summaryBlock =
     notification.kind === "session.completed" && notification.summary
       ? `\n\n${translate(loc, "field.summary")}:\n${truncateText(notification.summary, 600)}`
@@ -149,7 +155,7 @@ function renderPlainTextFallback(notification: NormalizedNotification): string {
 function eventTitle(kind: NormalizedNotification["kind"], locale: SupportedLocale): string {
   switch (kind) {
     case "session.completed":
-      return translate(locale, "event.completed");
+      return translate(locale, "event.complete");
     case "session.error":
       return translate(locale, "event.error");
     case "question.pending":
@@ -164,6 +170,7 @@ function redactNotification(
   patterns: RegExp[] | undefined,
 ): NormalizedNotification {
   const base = {
+    ...(notification.hostLabel ? { hostLabel: redactDynamic(notification.hostLabel, patterns) } : {}),
     projectLabel: redactDynamic(notification.projectLabel, patterns),
     sessionLabel: redactDynamic(notification.sessionLabel, patterns),
     ...(notification.rootSessionLabel

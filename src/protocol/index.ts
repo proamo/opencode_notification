@@ -59,6 +59,7 @@ export const RegisterEnvelopeSchema = z.object({
     openCodeVersion: z.string().min(1).max(64),
     machineId: z.uuid(),
     instanceId: z.uuid(),
+    hostLabel: z.string().min(1).max(128).optional(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: z.array(z.string().min(1).max(64)).max(64),
     telegram: TelegramRuntimeConfigSchema.optional(),
@@ -70,6 +71,7 @@ export const RouteRegisterEnvelopeSchema = z.object({
   type: z.literal("route.register"),
   payload: z.object({
     route: RouteKeySchema,
+    hostLabel: z.string().min(1).max(128).optional(),
     projectLabel: z.string().min(1).max(128),
     sessionLabel: z.string().min(1).max(256),
   }),
@@ -179,6 +181,7 @@ const NotificationBaseSchema = z.object({
   eventId: z.string().min(1).max(256),
   route: RouteKeySchema,
   locale: z.enum(["en", "zh-TW"]),
+  hostLabel: z.string().min(1).max(128).optional(),
   projectLabel: z.string().min(1).max(128),
   sessionLabel: z.string().min(1).max(256),
   rootSessionLabel: z.string().min(1).max(256).optional(),

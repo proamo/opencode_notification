@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { platform } from "node:os";
+import { hostname, platform } from "node:os";
 import { join } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
 import type { SupportedLocale } from "./i18n";
@@ -190,7 +190,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
 
   stdout.write("\n┌  OpenCode Telegram Notifier — Setup Wizard\n│\n");
 
-  // Step 1: Language / Locale
+  // Step 1: Language / 語言
   stdout.write("◇  Language / 語言:\n");
   stdout.write("│  1) 繁體中文 (zh-TW) [預設/Default]\n");
   stdout.write("│  2) English (en)\n");
@@ -199,169 +199,253 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
   const isZh = locale === "zh-TW";
 
-  // Step 2: Deployment Mode
+  // Step 2: Role Selection
   stdout.write("│\n");
   stdout.write(
     isZh
-      ? "◇  部署模式選擇 / Deployment Mode:\n│  1) 本機原生模式 (Native Mode) [預設/Default] — Broker 作為本機常駐程序，OpenCode 自動在背景拉起\n│  2) Docker 容器模式 (Docker Container) — Broker 隔離於 Docker 容器中執行\n"
-      : "◇  Deployment Mode:\n│  1) Native Mode [Default] — Broker runs as a local background process, auto-spawned by OpenCode\n│  2) Docker Container Mode — Broker runs isolated inside a Docker container\n",
+      ? "◇  請選擇此機器的角色 (Role):\n│  1) 獨立 Gateway 模式 (Gateway Mode) [預設/Default] — 擁有專屬 Telegram Bot，可供本機與其他節點連線\n│  2) 節點 Agent 模式 (Node Agent Mode) — 連線至現有的 Gateway，共用 Telegram Bot\n"
+      : "◇  Select machine role:\n│  1) Standalone Gateway Mode [Default] — Owns a Telegram Bot, serves local and remote nodes\n│  2) Node Agent Mode — Connects to an existing Gateway, shares Telegram Bot\n",
   );
-  const modeChoice = await reader.ask(
+  const roleChoice = await reader.ask(
     isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
     stdout,
     "1",
   );
-  const isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+  const isNode = roleChoice === "2" || roleChoice.toLowerCase().includes("node");
 
-  // Step 3: BotFather Token
-  let botToken = "";
-  let botInfo: TelegramBot | undefined;
-  let attempts = 0;
-  while (!botInfo) {
-    attempts += 1;
-    if (attempts > 5) {
-      stderr.write(isZh ? "✖ 超過重試次數，設定終止。\n" : "✖ Too many attempts. Aborted.\n");
+  // Step 3: Host Label
+  const defaultHost = hostname() || "host";
+  stdout.write("│\n");
+  stdout.write(
+    isZh
+      ? `◇  主機識別標籤 (Host Label) [預設: ${defaultHost}]:\n│  (此標籤將顯示於 Telegram 通知頂部，便於識別來源主機)\n`
+      : `◇  Host Label [Default: ${defaultHost}]:\n│  (Shown in notification header to identify this machine)\n`,
+  );
+  const hostLabel = await reader.ask(
+    isZh ? `│  標籤名稱 [${defaultHost}]: ` : `│  Label [${defaultHost}]: `,
+    stdout,
+    defaultHost,
+  );
+
+  let configData: NotifierConfig;
+  let isDocker = false;
+
+  if (isNode) {
+    stdout.write("│\n");
+    stdout.write(
+      isZh
+        ? "◇  請輸入 Central Gateway 的 WebSocket 位址:\n│  (範例: ws://192.168.1.100:42617 或 wss://gateway.example.com)\n"
+        : "◇  Enter Central Gateway WebSocket URL:\n│  (Example: ws://192.168.1.100:42617 or wss://gateway.example.com)\n",
+    );
+    const gatewayUrl = await reader.ask("│  Gateway URL: ", stdout);
+    if (!gatewayUrl) {
+      stderr.write(isZh ? "✖ Gateway URL 不能為空。\n" : "✖ Gateway URL cannot be empty.\n");
       return 1;
     }
+
+    stdout.write("│\n");
+    stdout.write(
+      isZh
+        ? "◇  請輸入 Gateway 連線金鑰 (Secret Token):\n│  (若 Gateway 無需金鑰可直接按 Enter)\n"
+        : "◇  Enter Gateway Secret Token:\n│  (Press Enter if no secret required)\n",
+    );
+    const gatewaySecret = await reader.ask("│  Secret: ", stdout, "");
+
+    configData = {
+      mode: "local",
+      role: "node",
+      hostLabel,
+      locale,
+      gateway: {
+        url: gatewayUrl,
+        secret: gatewaySecret || "default-secret",
+      },
+      notifications: {
+        completion: true,
+        error: true,
+        question: true,
+        permission: true,
+        includeChildLifecycle: false,
+        completionDebounceMs: 1500,
+        pluginBufferSize: 100,
+      },
+      broker: {
+        host: "127.0.0.1",
+        port: 42617,
+      },
+      interaction: {
+        sessionPromptTtlMinutes: 1440,
+        questionTtlMinutes: 30,
+      },
+    };
+  } else {
+    // Gateway mode
+    // Deployment Mode
+    stdout.write("│\n");
+    stdout.write(
+      isZh
+        ? "◇  部署模式選擇 / Deployment Mode:\n│  1) 本機原生模式 (Native Mode) [預設/Default] — Broker 作為本機常駐程序，OpenCode 自動在背景拉起\n│  2) Docker 容器模式 (Docker Container) — Broker 隔離於 Docker 容器中執行\n"
+        : "◇  Deployment Mode:\n│  1) Native Mode [Default] — Broker runs as a local background process, auto-spawned by OpenCode\n│  2) Docker Container Mode — Broker runs isolated inside a Docker container\n",
+    );
+    const modeChoice = await reader.ask(
+      isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
+      stdout,
+      "1",
+    );
+    isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+
+    // BotFather Token
+    let botToken = "";
+    let botInfo: TelegramBot | undefined;
+    let attempts = 0;
+    while (!botInfo) {
+      attempts += 1;
+      if (attempts > 5) {
+        stderr.write(isZh ? "✖ 超過重試次數，設定終止。\n" : "✖ Too many attempts. Aborted.\n");
+        return 1;
+      }
+      stdout.write("│\n");
+      if (isZh) {
+        stdout.write("◇  請輸入向 @BotFather 申請的 Telegram Bot Token:\n");
+        stdout.write("│  (範例: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+      } else {
+        stdout.write("◇  Enter your Telegram Bot Token from @BotFather:\n");
+        stdout.write("│  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+      }
+      botToken = await reader.ask("│  Token: ", stdout);
+      if (!botToken) {
+        stdout.write(isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n");
+        continue;
+      }
+      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+        stdout.write(
+          isZh
+            ? "│  ✖ Token 格式不符合 Telegram 規範，請重新輸入。\n"
+            : "│  ✖ Invalid token format.\n",
+        );
+        continue;
+      }
+      stdout.write(
+        isZh
+          ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
+          : "│  ⠋ Verifying Bot Token with Telegram...\n",
+      );
+      const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+      try {
+        botInfo = await api.getMe();
+        const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
+        stdout.write(
+          isZh
+            ? `│  ✔ 連線成功！已辨識 Bot: ${botName} (ID: ${botInfo.id})\n`
+            : `│  ✔ Connected! Identified Bot: ${botName} (ID: ${botInfo.id})\n`,
+        );
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "connection failed";
+        stdout.write(
+          isZh
+            ? `│  ✖ Token 驗證失敗 (${errMsg})，請確認後重試。\n`
+            : `│  ✖ Verification failed (${errMsg}). Please retry.\n`,
+        );
+      }
+    }
+
+    // Nonce Pairing
+    const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+    const nonce = createPairingNonce();
+    const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
     stdout.write("│\n");
     if (isZh) {
-      stdout.write("◇  請輸入向 @BotFather 申請的 Telegram Bot Token:\n");
-      stdout.write("│  (範例: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+      stdout.write("◇  [身分驗證配對]\n");
+      stdout.write(`│  請在 Telegram 打開與 ${botName} 的私聊視窗，並發送此驗證碼：\n`);
+      stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+      stdout.write("│  ⠋ 等待 Telegram 私訊中...\n");
     } else {
-      stdout.write("◇  Enter your Telegram Bot Token from @BotFather:\n");
-      stdout.write("│  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+      stdout.write("◇  [Identity Pairing]\n");
+      stdout.write(`│  Open a private chat with ${botName} on Telegram and send this code:\n`);
+      stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+      stdout.write("│  ⠋ Waiting for Telegram private message...\n");
     }
-    botToken = await reader.ask("│  Token: ", stdout);
-    if (!botToken) {
-      stdout.write(isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n");
-      continue;
-    }
-    if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
-      stdout.write(
-        isZh
-          ? "│  ✖ Token 格式不符合 Telegram 規範，請重新輸入。\n"
-          : "│  ✖ Invalid token format.\n",
-      );
-      continue;
-    }
-    stdout.write(
-      isZh
-        ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
-        : "│  ⠋ Verifying Bot Token with Telegram...\n",
-    );
-    const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+
+    const expiresAt = now() + 120_000;
+    let pairing: PairingCandidate;
     try {
-      botInfo = await api.getMe();
-      const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
+      pairing = await waitForPairingMessage(api, {
+        nonce,
+        expiresAt,
+        now,
+        pollTimeoutSeconds: 5,
+      });
+    } catch {
       stdout.write(
         isZh
-          ? `│  ✔ 連線成功！已辨識 Bot: ${botName} (ID: ${botInfo.id})\n`
-          : `│  ✔ Connected! Identified Bot: ${botName} (ID: ${botInfo.id})\n`,
+          ? "│  ✖ 配對超時或未收到有效訊息，設定中止。\n"
+          : "│  ✖ Pairing timed out or no valid message received. Aborted.\n",
       );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : "connection failed";
-      stdout.write(
-        isZh
-          ? `│  ✖ Token 驗證失敗 (${errMsg})，請確認後重試。\n`
-          : `│  ✖ Verification failed (${errMsg}). Please retry.\n`,
-      );
+      return 1;
     }
-  }
 
-  // Step 3: Nonce Pairing
-  const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
-  const nonce = createPairingNonce();
-  const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
-  stdout.write("│\n");
-  if (isZh) {
-    stdout.write("◇  [身分驗證配對]\n");
-    stdout.write(`│  請在 Telegram 打開與 ${botName} 的私聊視窗，並發送此驗證碼：\n`);
-    stdout.write(`│\n│  👉  ${nonce}\n│\n`);
-    stdout.write("│  ⠋ 等待 Telegram 私訊中...\n");
-  } else {
-    stdout.write("◇  [Identity Pairing]\n");
-    stdout.write(`│  Open a private chat with ${botName} on Telegram and send this code:\n`);
-    stdout.write(`│\n│  👉  ${nonce}\n│\n`);
-    stdout.write("│  ⠋ Waiting for Telegram private message...\n");
-  }
-
-  const expiresAt = now() + 120_000;
-  let pairing: PairingCandidate;
-  try {
-    pairing = await waitForPairingMessage(api, {
-      nonce,
-      expiresAt,
-      now,
-      pollTimeoutSeconds: 5,
-    });
-  } catch {
     stdout.write(
       isZh
-        ? "│  ✖ 配對超時或未收到有效訊息，設定中止。\n"
-        : "│  ✖ Pairing timed out or no valid message received. Aborted.\n",
+        ? `│  ✔ 收到驗證訊息！來自 Telegram 用戶 (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`
+        : `│  ✔ Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`,
     );
-    return 1;
+
+    const confirmBind = await reader.ask(
+      isZh
+        ? "│  是否將此 Telegram 帳號綁定為 OpenCode 管理員？ [Y/n]: "
+        : "│  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ",
+      stdout,
+      "Y",
+    );
+    if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
+      stdout.write(isZh ? "│  ✖ 已取消綁定。\n" : "│  ✖ Pairing cancelled.\n");
+      return 1;
+    }
+
+    // Write secure token file
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+    await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
+    const identityFile = join(stateDirectory, "telegram-identity.json");
+    await writeFile(
+      identityFile,
+      `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
+      "utf8",
+    );
+    stdout.write(
+      isZh
+        ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
+        : `│  ✔ Secure token file saved (${tokenFile})\n`,
+    );
+
+    configData = {
+      mode: "local",
+      role: "gateway",
+      hostLabel,
+      locale,
+      telegram: {
+        tokenFile,
+        userId: pairing.userId,
+        chatId: pairing.chatId,
+      },
+      notifications: {
+        completion: true,
+        error: true,
+        question: true,
+        permission: true,
+        includeChildLifecycle: false,
+        completionDebounceMs: 1500,
+        pluginBufferSize: 100,
+      },
+      broker: {
+        host: "127.0.0.1",
+        port: 42617,
+      },
+      interaction: {
+        sessionPromptTtlMinutes: 1440,
+        questionTtlMinutes: 30,
+      },
+    };
   }
-
-  stdout.write(
-    isZh
-      ? `│  ✔ 收到驗證訊息！來自 Telegram 用戶 (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`
-      : `│  ✔ Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`,
-  );
-
-  const confirmBind = await reader.ask(
-    isZh
-      ? "│  是否將此 Telegram 帳號綁定為 OpenCode 管理員？ [Y/n]: "
-      : "│  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ",
-    stdout,
-    "Y",
-  );
-  if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
-    stdout.write(isZh ? "│  ✖ 已取消綁定。\n" : "│  ✖ Pairing cancelled.\n");
-    return 1;
-  }
-
-  // Step 4: Write secure token file
-  const tokenFile = join(stateDirectory, "telegram-bot-token");
-  await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
-  const identityFile = join(stateDirectory, "telegram-identity.json");
-  await writeFile(
-    identityFile,
-    `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
-    "utf8",
-  );
-  stdout.write(
-    isZh
-      ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
-      : `│  ✔ Secure token file saved (${tokenFile})\n`,
-  );
-
-  const configData: NotifierConfig = {
-    mode: "local",
-    locale,
-    telegram: {
-      tokenFile,
-      userId: pairing.userId,
-      chatId: pairing.chatId,
-    },
-    notifications: {
-      completion: true,
-      error: true,
-      question: true,
-      permission: true,
-      includeChildLifecycle: false,
-      completionDebounceMs: 1500,
-      pluginBufferSize: 100,
-    },
-    broker: {
-      host: "127.0.0.1",
-      port: 42617,
-    },
-    interaction: {
-      sessionPromptTtlMinutes: 1440,
-      questionTtlMinutes: 30,
-    },
-  };
 
   // Step 5: OpenCode config detection & injection
   stdout.write("│\n");

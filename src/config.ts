@@ -16,7 +16,15 @@ export type LocalePreference = z.infer<typeof LocalePreferenceSchema>;
 export const NotifierConfigSchema = z
   .object({
     mode: z.literal("local").default("local"),
+    role: z.enum(["gateway", "node"]).default("gateway"),
+    hostLabel: z.string().min(1).max(128).optional(),
     locale: LocalePreferenceSchema.default("auto"),
+    gateway: z
+      .object({
+        url: z.string().min(1),
+        secret: z.string().min(1),
+      })
+      .optional(),
     telegram: z
       .object({
         botToken: TelegramBotTokenSchema.optional(),
@@ -24,7 +32,8 @@ export const NotifierConfigSchema = z
         userId: TelegramIdSchema,
         chatId: TelegramIdSchema,
       })
-      .strict(),
+      .strict()
+      .optional(),
     notifications: z
       .object({
         completion: z.boolean().default(true),
@@ -39,7 +48,7 @@ export const NotifierConfigSchema = z
       .prefault({}),
     broker: z
       .object({
-        host: LoopbackHostSchema.default("127.0.0.1"),
+        host: z.string().min(1).default("127.0.0.1"),
         port: z.number().int().min(1024).max(65535).default(42617),
       })
       .strict()
@@ -63,7 +72,27 @@ export const NotifierConfigSchema = z
       .prefault({}),
   })
   .strict()
-  .superRefine(({ telegram }, context) => {
+  .superRefine(({ role, gateway, telegram }, context) => {
+    if (role === "node") {
+      if (!gateway) {
+        context.addIssue({
+          code: "custom",
+          message: "node role requires gateway configuration (url and secret)",
+          path: ["gateway"],
+        });
+      }
+      return;
+    }
+
+    if (!telegram) {
+      context.addIssue({
+        code: "custom",
+        message: "gateway role requires telegram configuration",
+        path: ["telegram"],
+      });
+      return;
+    }
+
     if (Boolean(telegram.botToken) === Boolean(telegram.tokenFile)) {
       context.addIssue({
         code: "custom",
@@ -75,7 +104,7 @@ export const NotifierConfigSchema = z
     if (telegram.chatId !== telegram.userId) {
       context.addIssue({
         code: "custom",
-        message: "V1 requires a private Telegram chat owned by the allowed user",
+        message: "requires a private Telegram chat owned by the allowed user",
         path: ["telegram", "chatId"],
       });
     }
@@ -95,6 +124,9 @@ export class ConfigValidationError extends Error {
 }
 
 export async function readNotifierBotToken(config: NotifierConfig): Promise<string> {
+  if (!config.telegram) {
+    throw new ConfigValidationError("TELEGRAM_CONFIG_MISSING", "Telegram configuration is missing");
+  }
   if (config.telegram.botToken) return TelegramBotTokenSchema.parse(config.telegram.botToken);
   const tokenFile = config.telegram.tokenFile;
   if (!tokenFile) {
@@ -138,12 +170,17 @@ export async function assertSecureTokenFile(path: string): Promise<void> {
 export function computeNotifierConfigFingerprint(config: NotifierConfig): ConfigFingerprint {
   const fingerprintInput = {
     mode: config.mode,
+    role: config.role,
+    hostLabel: config.hostLabel,
     locale: config.locale,
-    telegram: {
-      userId: config.telegram.userId,
-      chatId: config.telegram.chatId,
-      credentialSource: config.telegram.botToken ? "inline" : "file",
-    },
+    gateway: config.gateway,
+    telegram: config.telegram
+      ? {
+          userId: config.telegram.userId,
+          chatId: config.telegram.chatId,
+          credentialSource: config.telegram.botToken ? "inline" : "file",
+        }
+      : undefined,
     notifications: config.notifications,
     broker: config.broker,
     interaction: config.interaction,

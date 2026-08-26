@@ -80,23 +80,33 @@ export async function discoverOpenCodeConfigFiles(
 }
 
 export function generatePluginConfigSnippet(config: NotifierConfig): string {
+  const pluginConfig: Record<string, unknown> = {
+    mode: config.mode,
+    role: config.role,
+    ...(config.hostLabel ? { hostLabel: config.hostLabel } : {}),
+    locale: config.locale,
+    notifications: {
+      completion: config.notifications.completion,
+      error: config.notifications.error,
+      question: config.notifications.question,
+      permission: config.notifications.permission,
+    },
+  };
+  if (config.role === "node" && config.gateway) {
+    pluginConfig.gateway = {
+      url: config.gateway.url,
+      secret: config.gateway.secret,
+    };
+  } else if (config.telegram) {
+    pluginConfig.telegram = {
+      tokenFile: config.telegram.tokenFile,
+      userId: config.telegram.userId,
+      chatId: config.telegram.chatId,
+    };
+  }
   const snippet = {
     plugin: {
-      "opencode-telegram-link": {
-        mode: config.mode,
-        locale: config.locale,
-        telegram: {
-          tokenFile: config.telegram.tokenFile,
-          userId: config.telegram.userId,
-          chatId: config.telegram.chatId,
-        },
-        notifications: {
-          completion: config.notifications.completion,
-          error: config.notifications.error,
-          question: config.notifications.question,
-          permission: config.notifications.permission,
-        },
-      },
+      "opencode-telegram-link": pluginConfig,
     },
   };
   return JSON.stringify(snippet, null, 2);
@@ -128,77 +138,36 @@ export async function loadResolvedNotifierConfig(
               typeof key === "string" &&
               (key === "opencode-telegram-link" ||
                 key.includes("opencode_notification") ||
-                key.includes("opencode-telegram"))
+                key.includes("telegram"))
             ) {
               const parsed = NotifierConfigSchema.safeParse(value);
-              if (parsed.success) {
-                return parsed.data;
-              }
+              if (parsed.success) return parsed.data;
             }
           }
         }
       }
-      const pluginMap =
-        json.plugin && typeof json.plugin === "object" && !Array.isArray(json.plugin)
-          ? (json.plugin as Record<string, unknown>)
-          : undefined;
-      if (pluginMap) {
-        for (const [key, value] of Object.entries(pluginMap)) {
+      if (json.plugin && typeof json.plugin === "object") {
+        for (const [key, value] of Object.entries(json.plugin)) {
           if (
             key === "opencode-telegram-link" ||
             key.includes("opencode_notification") ||
-            key.includes("opencode-telegram")
+            key.includes("telegram")
           ) {
             const parsed = NotifierConfigSchema.safeParse(value);
-            if (parsed.success) {
-              return parsed.data;
-            }
+            if (parsed.success) return parsed.data;
           }
         }
       }
-    } catch {
-      // Continue to next candidate
-    }
+    } catch {}
   }
 
-  // Fallback: check stateDirectory for paired credentials
+  // Final fallback: look inside default stateDirectory config
   try {
-    const stateDir = defaultStateDirectory();
-    const identityPath = join(stateDir, "telegram-identity.json");
-    const tokenPath = join(stateDir, "telegram-bot-token");
-    let userId: string | undefined;
-    let chatId: string | undefined;
-    let locale: "auto" | "en" | "zh-TW" = "auto";
-
-    try {
-      const identityContent = await readFile(identityPath, "utf8");
-      const identityJson = JSON.parse(identityContent) as Record<string, unknown>;
-      if (typeof identityJson.userId === "string") userId = identityJson.userId;
-      if (typeof identityJson.chatId === "string") chatId = identityJson.chatId;
-      if (identityJson.locale === "zh-TW" || identityJson.locale === "en") {
-        locale = identityJson.locale;
-      }
-    } catch {}
-
-    if (!userId || !chatId) {
-      if (process.env.OPENCODE_TELEGRAM_USER_ID) userId = process.env.OPENCODE_TELEGRAM_USER_ID;
-      if (process.env.OPENCODE_TELEGRAM_CHAT_ID) chatId = process.env.OPENCODE_TELEGRAM_CHAT_ID;
-    }
-
-    if (userId && chatId) {
-      const parsed = NotifierConfigSchema.safeParse({
-        mode: "local",
-        locale,
-        telegram: {
-          tokenFile: tokenPath,
-          userId,
-          chatId,
-        },
-      });
-      if (parsed.success) {
-        return parsed.data;
-      }
-    }
+    const fallbackPath = join(defaultStateDirectory(), "opencode-notifier.json");
+    const content = await readFile(fallbackPath, "utf8");
+    const json = JSON.parse(content);
+    const parsed = NotifierConfigSchema.safeParse(json);
+    if (parsed.success) return parsed.data;
   } catch {}
 
   return undefined;
@@ -227,6 +196,31 @@ export async function injectOpenCodeConfig(
   }
 
   // Merge plugin config while preserving existing plugins
+  const pluginConfig: Record<string, unknown> = {
+    mode: config.mode,
+    role: config.role,
+    ...(config.hostLabel ? { hostLabel: config.hostLabel } : {}),
+    locale: config.locale,
+    notifications: {
+      completion: config.notifications.completion,
+      error: config.notifications.error,
+      question: config.notifications.question,
+      permission: config.notifications.permission,
+    },
+  };
+  if (config.role === "node" && config.gateway) {
+    pluginConfig.gateway = {
+      url: config.gateway.url,
+      secret: config.gateway.secret,
+    };
+  } else if (config.telegram) {
+    pluginConfig.telegram = {
+      tokenFile: config.telegram.tokenFile,
+      userId: config.telegram.userId,
+      chatId: config.telegram.chatId,
+    };
+  }
+
   if (Array.isArray(existingJson.plugin)) {
     if (!existingJson.plugin.includes("opencode-telegram-link")) {
       existingJson.plugin.push("opencode-telegram-link");
@@ -243,21 +237,7 @@ export async function injectOpenCodeConfig(
         ? (existingJson.plugin as Record<string, unknown>)
         : {};
 
-    existingPluginMap["opencode-telegram-link"] = {
-      mode: config.mode,
-      locale: config.locale,
-      telegram: {
-        tokenFile: config.telegram.tokenFile,
-        userId: config.telegram.userId,
-        chatId: config.telegram.chatId,
-      },
-      notifications: {
-        completion: config.notifications.completion,
-        error: config.notifications.error,
-        question: config.notifications.question,
-        permission: config.notifications.permission,
-      },
-    };
+    existingPluginMap["opencode-telegram-link"] = pluginConfig;
     existingJson.plugin = existingPluginMap;
   }
 

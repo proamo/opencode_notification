@@ -70,6 +70,9 @@ export type RouteIntent = {
 export type BrokerClientOptions = {
   stateDirectory?: string;
   port?: number;
+  hostLabel?: string;
+  gatewayUrl?: string;
+  gatewaySecret?: string;
   packageVersion: string;
   openCodeVersion: string;
   startupTimeoutMs?: number;
@@ -258,6 +261,7 @@ export class BrokerClient {
   }
 
   async #ensureBroker(): Promise<void> {
+    if (this.#options.gatewayUrl) return;
     const identity = this.#requireIdentity();
     if (await probeBroker(this.#options.port, identity.brokerSecret)) return;
 
@@ -276,7 +280,21 @@ export class BrokerClient {
 
   async #connectAndServe(): Promise<void> {
     const identity = this.#requireIdentity();
-    const url = `ws://127.0.0.1:${this.#options.port}/v1/connect?token=${encodeURIComponent(identity.brokerSecret)}`;
+    let url: string;
+    if (this.#options.gatewayUrl) {
+      const base = this.#options.gatewayUrl.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+      const parsedUrl = new URL(base.includes("://") ? base : `ws://${base}`);
+      if (!parsedUrl.pathname || parsedUrl.pathname === "/") {
+        parsedUrl.pathname = "/v1/connect";
+      }
+      if (this.#options.gatewaySecret) {
+        parsedUrl.searchParams.set("token", this.#options.gatewaySecret);
+      }
+      url = parsedUrl.toString();
+    } else {
+      url = `ws://127.0.0.1:${this.#options.port}/v1/connect?token=${encodeURIComponent(identity.brokerSecret)}`;
+    }
+
     const socket = new WebSocket(url);
     try {
       await waitForOpen(socket, this.#options.requestTimeoutMs);
@@ -300,13 +318,14 @@ export class BrokerClient {
           openCodeVersion: this.#options.openCodeVersion,
           machineId: identity.machineId,
           instanceId: this.instanceId,
+          ...(this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {}),
           configFingerprint: this.#options.configFingerprint,
           capabilities: [...BROKER_CAPABILITIES],
           ...(this.#options.telegram ? { telegram: this.#options.telegram } : {}),
         },
       });
-      if (registered.type !== "registered" || registered.payload.machineId !== identity.machineId) {
-        throw new Error("broker registration identity mismatch");
+      if (registered.type !== "registered") {
+        throw new Error("broker registration was rejected");
       }
 
       this.#activeRoutes.clear();
@@ -339,6 +358,7 @@ export class BrokerClient {
       type: "route.register",
       payload: {
         route,
+        ...(this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {}),
         projectLabel: intent.projectLabel,
         sessionLabel: intent.sessionLabel,
       },

@@ -63,6 +63,7 @@ export type OpenCodeEventBridgeOptions = {
   broker: RouteClient;
   projectId: string;
   projectLabel: string;
+  hostLabel?: string;
   locale: SupportedLocale;
   now?: () => Date;
   notificationFilters?: Partial<NotificationFilters>;
@@ -79,6 +80,7 @@ export class OpenCodeEventBridge {
   readonly #broker: RouteClient;
   readonly #projectId: string;
   readonly #projectLabel: string;
+  readonly #hostLabel: string | undefined;
   readonly #locale: SupportedLocale;
   readonly #now: () => Date;
   readonly #filters: NotificationFilters;
@@ -104,6 +106,7 @@ export class OpenCodeEventBridge {
     this.#broker = options.broker;
     this.#projectId = options.projectId;
     this.#projectLabel = options.projectLabel;
+    this.#hostLabel = options.hostLabel;
     this.#locale = options.locale;
     this.#now = options.now ?? (() => new Date());
     this.#filters = { ...DEFAULT_FILTERS, ...options.notificationFilters };
@@ -241,6 +244,7 @@ export class OpenCodeEventBridge {
       eventId: this.#eventId(event),
       route,
       locale: this.#locale,
+      ...(this.#hostLabel ? { hostLabel: this.#hostLabel } : {}),
       projectLabel: this.#projectLabel,
       sessionLabel: session.title,
       ...this.#rootLabel(session),

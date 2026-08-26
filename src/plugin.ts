@@ -29,18 +29,20 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     return {};
   }
 
-  let botToken: string;
-  try {
-    botToken = await readNotifierBotToken(configData);
-  } catch {
-    await client.app.log({
-      body: {
-        service: "opencode-telegram-link",
-        level: "error",
-        message: "Telegram bot token could not be loaded",
-      },
-    });
-    return {};
+  let botToken: string | undefined;
+  if (configData.role !== "node") {
+    try {
+      botToken = await readNotifierBotToken(configData);
+    } catch {
+      await client.app.log({
+        body: {
+          service: "opencode-telegram-link",
+          level: "error",
+          message: "Telegram bot token could not be loaded",
+        },
+      });
+      return {};
+    }
   }
   const localeInput: { explicit?: string; system?: string } = {};
   if (configData.locale !== "auto") localeInput.explicit = configData.locale;
@@ -50,17 +52,24 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
 
   const broker = new BrokerClient({
     port: configData.broker.port,
+    hostLabel: configData.hostLabel,
+    gatewayUrl: configData.gateway?.url,
+    gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
     packageVersion: "0.1.0",
     openCodeVersion: "1.18.x",
-    telegram: {
-      botToken,
-      userId: configData.telegram.userId,
-      chatId: configData.telegram.chatId,
-      locale,
-      sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
-      questionTtlMinutes: configData.interaction.questionTtlMinutes,
-    },
+    ...(botToken && configData.telegram
+      ? {
+          telegram: {
+            botToken,
+            userId: configData.telegram.userId,
+            chatId: configData.telegram.chatId,
+            locale,
+            sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
+            questionTtlMinutes: configData.interaction.questionTtlMinutes,
+          },
+        }
+      : {}),
     onCommand: async (command) => runOpenCodeCommand(client, directory, command),
     onDiagnostic: (code, message) => {
       trace(`BrokerClient diagnostic: ${code} - ${message}`);
@@ -125,6 +134,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
       broker,
       projectId,
       projectLabel: basename(directory) || "project",
+      hostLabel: configData.hostLabel,
       locale,
       fetchSummary,
       notificationFilters: {

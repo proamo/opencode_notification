@@ -10,6 +10,7 @@ export type BrokerConnectionData = {
 
 export type RegisteredRoute = {
   route: RouteKey;
+  hostLabel?: string;
   projectLabel: string;
   sessionLabel: string;
   connectionId: string;
@@ -18,6 +19,8 @@ export type RegisteredRoute = {
 type OwnedConnection = {
   socket: ServerWebSocket<BrokerConnectionData>;
   instanceId: string;
+  machineId: string;
+  hostLabel?: string;
   routeKeys: Set<string>;
 };
 
@@ -35,11 +38,8 @@ export class RouteRegistry {
     socket: ServerWebSocket<BrokerConnectionData>,
     instanceId: string,
     machineId: string,
+    hostLabel?: string,
   ): void {
-    if (machineId !== this.#machineId) {
-      throw new RouteRegistrationError("MACHINE_MISMATCH", "route belongs to another machine");
-    }
-
     const currentOwner = this.#instances.get(instanceId);
     if (currentOwner && currentOwner !== socket.data.connectionId) {
       throw new RouteRegistrationError(
@@ -59,6 +59,8 @@ export class RouteRegistry {
     this.#connections.set(socket.data.connectionId, {
       socket,
       instanceId,
+      machineId,
+      hostLabel,
       routeKeys: existing?.routeKeys ?? new Set(),
     });
     this.#instances.set(instanceId, socket.data.connectionId);
@@ -67,7 +69,7 @@ export class RouteRegistry {
 
   registerRoute(
     connectionId: string,
-    input: { route: RouteKey; projectLabel: string; sessionLabel: string },
+    input: { route: RouteKey; hostLabel?: string; projectLabel: string; sessionLabel: string },
   ): RegisteredRoute {
     const connection = this.#connections.get(connectionId);
     if (!connection) {
@@ -75,8 +77,8 @@ export class RouteRegistry {
     }
 
     const route = RouteKeySchema.parse(input.route);
-    if (route.machineId !== this.#machineId) {
-      throw new RouteRegistrationError("MACHINE_MISMATCH", "route belongs to another machine");
+    if (route.machineId !== connection.machineId) {
+      throw new RouteRegistrationError("MACHINE_MISMATCH", "route machine does not match connection");
     }
     if (route.instanceId !== connection.instanceId) {
       throw new RouteRegistrationError(
@@ -102,7 +104,12 @@ export class RouteRegistry {
       }
     }
 
-    const registered = { ...input, route, connectionId };
+    const registered: RegisteredRoute = {
+      ...input,
+      hostLabel: input.hostLabel ?? connection.hostLabel,
+      route,
+      connectionId,
+    };
     this.#routes.set(key, registered);
     connection.routeKeys.add(key);
     return registered;
