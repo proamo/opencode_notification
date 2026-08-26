@@ -229,6 +229,9 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
 
   let configData: NotifierConfig;
   let isDocker = false;
+  let pairing: PairingCandidate | undefined;
+  let api: TelegramBotApi | undefined;
+  let botInfo: TelegramBot | undefined;
 
   if (isNode) {
     stdout.write("│\n");
@@ -296,7 +299,6 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
 
     // BotFather Token
     let botToken = "";
-    let botInfo: TelegramBot | undefined;
     let attempts = 0;
     while (!botInfo) {
       attempts += 1;
@@ -330,7 +332,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
           : "│  ⠋ Verifying Bot Token with Telegram...\n",
       );
-      const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+      api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
       try {
         botInfo = await api.getMe();
         const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
@@ -350,7 +352,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     }
 
     // Nonce Pairing
-    const api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+    api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
     const nonce = createPairingNonce();
     const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
     stdout.write("│\n");
@@ -367,7 +369,6 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     }
 
     const expiresAt = now() + 120_000;
-    let pairing: PairingCandidate;
     try {
       pairing = await waitForPairingMessage(api, {
         nonce,
