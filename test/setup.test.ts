@@ -500,6 +500,69 @@ describe("interactive uninstaller wizard", () => {
     // Verify token deleted
     expect(await Bun.file(tokenFile).exists()).toBe(false);
   });
+
+  test("runs uninstall flow on a Node Agent machine without error", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    const configFile = join(workspace, "opencode.json");
+
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        plugins: ["opencode-telegram-link"],
+        plugin: {
+          "opencode-telegram-link": {
+            mode: "local",
+            role: "node",
+            hostLabel: "laptop",
+            gateway: { url: "ws://1.2.3.4:42617", secret: "sec" },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    // Responses:
+    // 1. Language: 2 (English)
+    // 2. Confirm uninstall: Y
+    // 3. Clean OpenCode configs: Y
+    // 4. Clean SQLite state: Y
+    // 5. Delete Token file: y (even if not present)
+    // 6. Delete state directory: y
+    const inputs = ["2\n", "Y\n", "Y\n", "Y\n", "Y\n", "Y\n"];
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(inputs),
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    });
+
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OpenCode Telegram Notifier — Uninstaller");
+    expect(stdout).toContain("Removed plugin config");
+    expect(stdout).toContain("successfully uninstalled!");
+
+    // Verify opencode.json cleaned
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    expect(parsed.plugins).toEqual([]);
+    expect(parsed.plugin).toEqual({});
+  });
 });
 
 async function createTemporaryDirectory(): Promise<string> {
