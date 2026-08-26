@@ -155,7 +155,7 @@ function renderPlainTextFallback(notification: NormalizedNotification): string {
 function eventTitle(kind: NormalizedNotification["kind"], locale: SupportedLocale): string {
   switch (kind) {
     case "session.completed":
-      return translate(locale, "event.complete");
+      return translate(locale, "event.completed");
     case "session.error":
       return translate(locale, "event.error");
     case "question.pending":

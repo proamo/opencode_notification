@@ -208,12 +208,24 @@ describe("interactive setup wizard", () => {
 
     // Responses:
     // 1. Language: 1 (zh-TW)
-    // 2. Mode: 1 (Native Mode)
-    // 3. Token: invalid_token then valid TOKEN
-    // 4. Confirm pairing: Y
-    // 5. Update OpenCode config: Y
-    // 6. Send test notification: Y
-    const inputs = ["1\n", "1\n", "invalid_token\n", `${TOKEN}\n`, "Y\n", "Y\n", "Y\n"];
+    // 2. Role: 1 (Gateway Mode)
+    // 3. Host label: codeCenter
+    // 4. Mode: 1 (Native Mode)
+    // 5. Token: invalid_token then valid TOKEN
+    // 6. Confirm pairing: Y
+    // 7. Update OpenCode config: Y
+    // 8. Send test notification: Y
+    const inputs = [
+      "1\n",
+      "1\n",
+      "codeCenter\n",
+      "1\n",
+      "invalid_token\n",
+      `${TOKEN}\n`,
+      "Y\n",
+      "Y\n",
+      "Y\n",
+    ];
 
     const status = await runInteractiveSetup({
       stateDirectory,
@@ -294,6 +306,8 @@ describe("interactive setup wizard", () => {
 
     const inputs = [
       "2\n", // English
+      "1\n", // Gateway mode
+      "dev-laptop\n", // Host label
       "2\n", // Docker mode
       `${TOKEN}\n`,
       "Y\n", // Confirm pairing

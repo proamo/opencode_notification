@@ -69,11 +69,12 @@ describe("NotifierConfigSchema", () => {
     ).toBe(false);
   });
 
-  test("rejects non-loopback V1 modes and invalid bounds", () => {
+  test("rejects invalid modes, missing node gateway, and invalid bounds", () => {
     expect(NotifierConfigSchema.safeParse({ ...validConfig, mode: "remote" }).success).toBe(false);
-    expect(
-      NotifierConfigSchema.safeParse({ ...validConfig, broker: { host: "0.0.0.0" } }).success,
-    ).toBe(false);
+    expect(NotifierConfigSchema.safeParse({ ...validConfig, role: "node" }).success).toBe(false);
+    expect(NotifierConfigSchema.safeParse({ ...validConfig, broker: { host: "" } }).success).toBe(
+      false,
+    );
     expect(NotifierConfigSchema.safeParse({ ...validConfig, broker: { port: 80 } }).success).toBe(
       false,
     );
