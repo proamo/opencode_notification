@@ -148,8 +148,8 @@ describe("local broker", () => {
     await registerRoute(socket, current, "backend", "Implement auth");
 
     expect(broker.registry.routeCount).toBe(1);
-    expect(broker.registry.resolve(previous)).toBeUndefined();
-    expect(broker.registry.resolve(current)).toBeDefined();
+    expect(broker.registry.resolve(previous)?.route).toEqual(current);
+    expect(broker.registry.resolve(current)?.route).toEqual(current);
   });
 
   test("rejects clients missing a required protocol capability", async () => {

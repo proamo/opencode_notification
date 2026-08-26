@@ -138,8 +138,9 @@ export class BrokerServer {
     command: BrokerCommand,
     timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   ): Promise<CommandResult> {
-    const socket = this.registry.owner(command.route);
-    if (!socket) {
+    const registered = this.registry.resolve(command.route);
+    const socket = registered ? this.registry.owner(registered.route) : undefined;
+    if (!registered || !socket) {
       return { commandId: command.commandId, status: "stale", reason: "route is offline" };
     }
 
@@ -166,7 +167,10 @@ export class BrokerServer {
       type: "command",
       requestId,
       sentAt: new Date().toISOString(),
-      payload: command,
+      payload: {
+        ...command,
+        route: registered.route,
+      },
     });
     return await result;
   }

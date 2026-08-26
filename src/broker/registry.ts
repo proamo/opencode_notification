@@ -119,7 +119,21 @@ export class RouteRegistry {
   }
 
   resolve(route: RouteKey): RegisteredRoute | undefined {
-    return this.#routes.get(serializeRouteKey(RouteKeySchema.parse(route)));
+    const parsed = RouteKeySchema.parse(route);
+    const exact = this.#routes.get(serializeRouteKey(parsed));
+    if (exact) return exact;
+
+    // Hot fallback: match by (machineId, projectId, sessionId) across active registered routes
+    for (const registered of this.#routes.values()) {
+      if (
+        registered.route.machineId === parsed.machineId &&
+        registered.route.projectId === parsed.projectId &&
+        registered.route.sessionId === parsed.sessionId
+      ) {
+        return registered;
+      }
+    }
+    return undefined;
   }
 
   owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined {
