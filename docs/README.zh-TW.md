@@ -118,19 +118,50 @@ OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-
 
 ---
 
-## 外掛設定範例（Configuration）
+## 外掛設定說明（Configuration）
 
-在您的專案目錄下的 `.opencode/opencode.json` 或全域 `~/.config/opencode/opencode.json` 中加入：
+OpenCode 同時支援 **「全域設定（Global Config）」** 與 **「專案獨立設定（Project Workspace Config）」**：
+
+- **全域設定**：`~/.config/opencode/opencode.json`（對所有未自訂獨立設定的專案生效）。
+- **專案獨立設定**：`<專案目錄>/.opencode/opencode.json` 或 `<專案目錄>/opencode.json`。
+
+> ⚠️ **重要注意事項：專案設定會覆蓋全域外掛清單**
+> 當某個專案目錄下存在自己的 `.opencode/opencode.json`（或 `opencode.json`）且定義了 `"plugin"` 陣列時，OpenCode 會優先採用該專案內的設定，**不會自動繼承全域的 `plugin` 清單**。
+> 
+> 因此，如果您的專案有自己的 `opencode.json`（例如設定了特定的模型、授權或外掛），**必須在該專案的 `opencode.json` 內也加入本外掛路徑**，通知功能才會在該專案生效。
+
+---
+
+### 如何為具有自訂 `opencode.json` 的專案設定外掛？
+
+#### 方式 1：手動編輯專案設定檔（推薦）
+打開該專案下的 `.opencode/opencode.json`（或 `opencode.json`），在 `"plugin"` 陣列中加入本外掛的絕對路徑：
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": [
+    "oc-codex-multi-auth@6.12.1",
     "/home/you/opencode_notification"
   ]
 }
 ```
 
-> 💡 **本地安裝說明**：在套件發布至 npm 官方 registry 之前，請直接填入本專案的本機絕對目錄路徑。外掛會自動讀取配對產生的金鑰設定。
+> 💡 **提示**：
+> - **本地開發/原始碼安裝階段**：請填寫本倉庫的**本機絕對路徑**（如 `/home/amo/opencode_notification`）。
+> - **套件發布至 npm 後**：直接填入套件名稱 `"opencode-telegram-link"` 即可。
+> - 外掛啟動時會自動讀取安裝時已配對好的安全金鑰與 Telegram 綁定設定，專案內不需重複填寫 Token。
+
+#### 方式 2：使用安裝精靈自動注入
+切換到該專案目錄下，直接呼叫安裝精靈的一鍵配置：
+
+```sh
+cd /path/to/your/project
+bun run --cwd /path/to/opencode_notification setup --config-only
+```
+精靈會自動偵測當前目錄的專案設定檔、建立 `.bak` 備份，並安全注入外掛路徑。
+
+---
 
 ### 權限設定（免手動確認 Allow）
 

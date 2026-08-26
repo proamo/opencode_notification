@@ -107,19 +107,43 @@ OPENCODE_TELEGRAM_BOT_TOKEN_FILE=~/.local/state/opencode-telegram-link/telegram-
 ```
 
 ## Configuration
- 
-In your project `.opencode/opencode.json` or global `~/.config/opencode/opencode.json`:
- 
+
+OpenCode supports both **Global Configuration** and **Project-Specific Configuration**:
+
+- **Global Config**: `~/.config/opencode/opencode.json` (applied to all projects).
+- **Project-Specific Config**: `<project-root>/.opencode/opencode.json` or `<project-root>/opencode.json`.
+
+> ⚠️ **Important: Project Config Overrides Global Plugins**
+> If your project contains its own `.opencode/opencode.json` or `opencode.json` that defines a `"plugin"` array, OpenCode will use that workspace `"plugin"` list and **will not inherit** plugins from your global configuration.
+> 
+> Therefore, if a project has its own `opencode.json`, you **must** also add the notification plugin to that project's configuration.
+
+### How to Configure a Project with its Own `opencode.json`
+
+#### Option 1: Manual Edit (Recommended)
+Open your project's `.opencode/opencode.json` (or `opencode.json`) and add the absolute directory path to the `"plugin"` array:
+
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugin": [
+    "oc-codex-multi-auth@6.12.1",
     "/home/you/opencode_notification"
   ]
 }
 ```
- 
-> 💡 **Source / Local Install**: Until published on npm registry, specify the absolute directory path to this repository. The plugin automatically reads the paired credentials from the secure local state directory.
- 
+
+> 💡 **Local Install vs npm Package**: Until published on the official npm registry, specify the absolute directory path to this repository. Once published, you can simply write `"opencode-telegram-link"`. The plugin automatically reads the paired credentials from the secure local state directory.
+
+#### Option 2: Automatic Injection via Setup Wizard
+You can run the setup tool directly inside your target project workspace:
+
+```sh
+cd /path/to/your/project
+bun run --cwd /path/to/opencode_notification setup --config-only
+```
+The wizard will automatically detect the local workspace `opencode.json`, create a `.bak` backup, and inject the plugin entry safely.
+
 ### Permission Configuration (Automatic Command Execution)
  
 To allow shell and file operations without manual approval prompts, configure permissions in `opencode.json` or in your `.opencode/agent/<agent-name>.md`:
