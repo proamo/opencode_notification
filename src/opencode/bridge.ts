@@ -63,7 +63,7 @@ export type OpenCodeEventBridgeOptions = {
   broker: RouteClient;
   projectId: string;
   projectLabel: string;
-  hostLabel?: string;
+  hostLabel?: string | undefined;
   locale: SupportedLocale;
   now?: () => Date;
   notificationFilters?: Partial<NotificationFilters>;

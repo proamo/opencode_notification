@@ -112,8 +112,8 @@ describe("guided Telegram setup", () => {
 
     expect(result.status).toBe("ready");
     if (result.status !== "ready") throw new Error("expected ready setup");
-    expect(result.config.telegram.userId).toBe("123456789");
-    expect(result.config.telegram.chatId).toBe("123456789");
+    expect(result.config.telegram?.userId).toBe("123456789");
+    expect(result.config.telegram?.chatId).toBe("123456789");
     expect(result.pairing).toEqual({ userId: "123456789", chatId: "123456789", updateId: 7 });
     expect(confirmed).toEqual([{ userId: "123456789", chatId: "123456789", updateId: 7 }]);
     expect(requests.map((request) => request.method)).toEqual(["getMe", "getUpdates"]);
@@ -371,6 +371,7 @@ describe("OpenCode config helper", () => {
 
     const result = await injectOpenCodeConfig(configFile, {
       mode: "local",
+      role: "gateway",
       locale: "zh-TW",
       telegram: {
         tokenFile: "/path/to/token",

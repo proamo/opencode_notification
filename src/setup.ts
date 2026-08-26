@@ -882,7 +882,7 @@ function setupSummary(result: Extract<GuidedSetupResult, { status: "ready" }>): 
   return [
     `Telegram ${username} validated.`,
     `Token stored at ${result.tokenFile}.`,
-    `Allowed Telegram user/chat: ${result.config.telegram.userId}.`,
+    `Allowed Telegram user/chat: ${result.config.telegram?.userId ?? "N/A"}.`,
     `Locale: ${result.config.locale}.`,
     "Notifier is ready for a test notification.",
     "",

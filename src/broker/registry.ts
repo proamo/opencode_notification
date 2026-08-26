@@ -10,7 +10,7 @@ export type BrokerConnectionData = {
 
 export type RegisteredRoute = {
   route: RouteKey;
-  hostLabel?: string;
+  hostLabel?: string | undefined;
   projectLabel: string;
   sessionLabel: string;
   connectionId: string;
@@ -20,19 +20,16 @@ type OwnedConnection = {
   socket: ServerWebSocket<BrokerConnectionData>;
   instanceId: string;
   machineId: string;
-  hostLabel?: string;
+  hostLabel?: string | undefined;
   routeKeys: Set<string>;
 };
 
 export class RouteRegistry {
-  readonly #machineId: string;
   readonly #connections = new Map<string, OwnedConnection>();
   readonly #instances = new Map<string, string>();
   readonly #routes = new Map<string, RegisteredRoute>();
 
-  constructor(machineId: string) {
-    this.#machineId = machineId;
-  }
+  constructor(_machineId?: string) {}
 
   registerConnection(
     socket: ServerWebSocket<BrokerConnectionData>,
@@ -69,7 +66,12 @@ export class RouteRegistry {
 
   registerRoute(
     connectionId: string,
-    input: { route: RouteKey; hostLabel?: string; projectLabel: string; sessionLabel: string },
+    input: {
+      route: RouteKey;
+      hostLabel?: string | undefined;
+      projectLabel: string;
+      sessionLabel: string;
+    },
   ): RegisteredRoute {
     const connection = this.#connections.get(connectionId);
     if (!connection) {

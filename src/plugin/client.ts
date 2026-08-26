@@ -70,9 +70,9 @@ export type RouteIntent = {
 export type BrokerClientOptions = {
   stateDirectory?: string;
   port?: number;
-  hostLabel?: string;
-  gatewayUrl?: string;
-  gatewaySecret?: string;
+  hostLabel?: string | undefined;
+  gatewayUrl?: string | undefined;
+  gatewaySecret?: string | undefined;
   packageVersion: string;
   openCodeVersion: string;
   startupTimeoutMs?: number;
@@ -115,6 +115,9 @@ export class BrokerClient {
   > & {
     stateDirectory: string;
     port: number;
+    hostLabel: string | undefined;
+    gatewayUrl: string | undefined;
+    gatewaySecret: string | undefined;
     spawnBroker: BrokerClientOptions["spawnBroker"] | undefined;
     telegram: TelegramRuntimeConfig | undefined;
   };
@@ -135,6 +138,9 @@ export class BrokerClient {
     this.#options = {
       stateDirectory: options.stateDirectory ?? defaultStateDirectory(),
       port: options.port ?? DEFAULT_PORT,
+      hostLabel: options.hostLabel,
+      gatewayUrl: options.gatewayUrl,
+      gatewaySecret: options.gatewaySecret,
       packageVersion: options.packageVersion,
       openCodeVersion: options.openCodeVersion,
       startupTimeoutMs: options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
