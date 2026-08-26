@@ -175,6 +175,14 @@ export async function loadResolvedNotifierConfig(
           }
         }
       }
+      if (json["opencode-telegram-link"]) {
+        const parsed = NotifierConfigSchema.safeParse(json["opencode-telegram-link"]);
+        if (parsed.success) return parsed.data;
+      }
+      if (json["telegram-link"]) {
+        const parsed = NotifierConfigSchema.safeParse(json["telegram-link"]);
+        if (parsed.success) return parsed.data;
+      }
     } catch {}
   }
 
