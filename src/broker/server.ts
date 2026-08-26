@@ -734,6 +734,7 @@ function handleMessage(
           );
         }
         if (
+          envelope.payload.machineId === state.machineId &&
           activeConfigFingerprint.value &&
           activeConfigFingerprint.value !== envelope.payload.configFingerprint
         ) {
