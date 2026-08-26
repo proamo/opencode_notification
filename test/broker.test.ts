@@ -226,6 +226,90 @@ describe("local broker", () => {
     expect(broker.registry.resolve(route)).toBeUndefined();
   });
 
+  test("registers multiple remote hosts with different machineIds and routes commands independently", async () => {
+    const sent: SendMessageInput[] = [];
+    const updates: TelegramUpdate[] = [];
+    const { broker, secret } = await createBroker({
+      telegramApi: new FakeTelegramBotApi(sent, updates),
+    });
+
+    const hostA = await connectClient(broker.port, secret);
+    const hostB = await connectClient(broker.port, secret);
+    const machineA = crypto.randomUUID();
+    const machineB = crypto.randomUUID();
+    const instanceA = crypto.randomUUID();
+    const instanceB = crypto.randomUUID();
+
+    await registerClient(hostA, machineA, instanceA, undefined, telegramConfig());
+    await registerClient(hostB, machineB, instanceB);
+
+    const routeA = createRouteKey({
+      machineId: machineA,
+      instanceId: instanceA,
+      projectId: "project-on-host-a",
+      sessionId: "session-a",
+    });
+    const routeB = createRouteKey({
+      machineId: machineB,
+      instanceId: instanceB,
+      projectId: "project-on-host-b",
+      sessionId: "session-b",
+    });
+
+    await registerRoute(hostA, routeA, "App-A", "Task A");
+    await registerRoute(hostB, routeB, "App-B", "Task B");
+
+    expect(broker.registry.connectionCount).toBe(2);
+    expect(broker.registry.routeCount).toBe(2);
+
+    // Publish notification from Host B with hostLabel
+    const publishResponse = waitForMessage(hostB);
+    hostB.send(
+      JSON.stringify({
+        ...envelope("notification.publish"),
+        payload: {
+          notification: {
+            kind: "session.completed",
+            eventId: "evt-host-b",
+            route: routeB,
+            hostLabel: "Remote-VPS",
+            locale: "en",
+            projectLabel: "App-B",
+            sessionLabel: "Task B",
+            occurredAt: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+    expect(await publishResponse).toMatchObject({
+      type: "notification.published",
+      payload: { eventId: "evt-host-b", status: "queued" },
+    });
+
+    await waitUntil(() => sent.length === 1);
+    expect(sent[0]?.text).toContain("[Remote-VPS]");
+    expect(sent[0]?.text).toContain("App-B");
+
+    // Reply on Telegram to Host B's notification
+    const hostBCommand = waitForMessage(hostB);
+    updates.push(
+      messageReply({
+        updateId: 99,
+        replyToMessageId: 77,
+        text: "Continue task on VPS",
+      }),
+    );
+
+    const command = await hostBCommand;
+    expect(command).toMatchObject({
+      type: "command",
+      payload: {
+        type: "session.prompt",
+        text: "Continue task on VPS",
+      },
+    });
+  });
+
   test("acknowledges heartbeat only after registration", async () => {
     const { broker, secret } = await createBroker();
     const socket = await connectClient(broker.port, secret);
