@@ -29,8 +29,6 @@ export class RouteRegistry {
   readonly #instances = new Map<string, string>();
   readonly #routes = new Map<string, RegisteredRoute>();
 
-  constructor(_machineId?: string) {}
-
   registerConnection(
     socket: ServerWebSocket<BrokerConnectionData>,
     instanceId: string,

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { RouteRegistry } from "../src/broker/registry";
+import type { ServerWebSocket } from "bun";
+import { type BrokerConnectionData, RouteRegistry } from "../src/broker/registry";
+import type { BrokerCommand, CommandResult, RouteKey } from "../src/protocol";
 import {
   executeSlashCommand,
   isSlashCommand,
   parseSlashCommand,
-  type SlashCommandContext,
 } from "../src/telegram/commands";
-import type { BrokerCommand, CommandResult, RouteKey } from "../src/protocol";
 
 describe("Slash Commands System", () => {
   test("isSlashCommand recognizes valid slash commands", () => {
@@ -91,7 +91,10 @@ describe("Slash Commands System", () => {
     expect(emptyResult).toContain("目前沒有任何在線電腦");
 
     // Register a mock node
-    const fakeSocket = { data: { connectionId: "conn-1" }, close: () => {} } as any;
+    const fakeSocket = {
+      data: { connectionId: "conn-1" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
     registry.registerConnection(fakeSocket, "inst-1", "mach-12345678", "d009-win10");
 
     const populatedResult = await executeSlashCommand({
@@ -116,7 +119,10 @@ describe("Slash Commands System", () => {
 
     const machineId = crypto.randomUUID();
     const instanceId = crypto.randomUUID();
-    const fakeSocket = { data: { connectionId: "conn-1" }, close: () => {} } as any;
+    const fakeSocket = {
+      data: { connectionId: "conn-1" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
     registry.registerConnection(fakeSocket, instanceId, machineId, "d009-win10");
 
     const route: RouteKey = {

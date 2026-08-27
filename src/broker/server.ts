@@ -502,13 +502,13 @@ class BrokerTelegramRuntime {
         const auth = authorizer.authorize(update);
         if (!auth.authorized) {
           return {
-            disposition: "ignored",
+            disposition: "rejected",
             payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
           };
         }
 
         const messageText = update.message?.text?.trim();
-        if (update.message && isSlashCommand(messageText)) {
+        if (messageText && isSlashCommand(messageText)) {
           try {
             const replyText = await executeSlashCommand({
               text: messageText,
@@ -522,7 +522,6 @@ class BrokerTelegramRuntime {
               chatId: input.config.chatId,
               text: replyText,
               parseMode: "HTML",
-              replyToMessageId: update.message.message_id,
             });
             return {
               disposition: "acknowledged",
