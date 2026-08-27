@@ -303,21 +303,21 @@ export class RouteRegistry {
 
     // 2. Exact match on projectLabel
     for (const conn of this.#connections.values()) {
-      if (conn.projectLabel && conn.projectLabel.toLowerCase() === lower) {
+      if (conn.projectLabel?.toLowerCase() === lower) {
         return conn;
       }
     }
 
     // 3. Substring match on projectLabel
     for (const conn of this.#connections.values()) {
-      if (conn.projectLabel && conn.projectLabel.toLowerCase().includes(lower)) {
+      if (conn.projectLabel?.toLowerCase().includes(lower)) {
         return conn;
       }
     }
 
     // 4. Match on hostLabel
     for (const conn of this.#connections.values()) {
-      if (conn.hostLabel && conn.hostLabel.toLowerCase().includes(lower)) {
+      if (conn.hostLabel?.toLowerCase().includes(lower)) {
         return conn;
       }
     }

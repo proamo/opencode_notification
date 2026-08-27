@@ -117,6 +117,7 @@ export class BrokerClient {
     stateDirectory: string;
     port: number;
     hostLabel: string | undefined;
+    projectLabel: string | undefined;
     gatewayUrl: string | undefined;
     gatewaySecret: string | undefined;
     spawnBroker: BrokerClientOptions["spawnBroker"] | undefined;
@@ -140,6 +141,7 @@ export class BrokerClient {
       stateDirectory: options.stateDirectory ?? defaultStateDirectory(),
       port: options.port ?? DEFAULT_PORT,
       hostLabel: options.hostLabel,
+      projectLabel: options.projectLabel,
       gatewayUrl: options.gatewayUrl,
       gatewaySecret: options.gatewaySecret,
       packageVersion: options.packageVersion,
