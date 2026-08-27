@@ -12,6 +12,9 @@ export type RouteIntent = {
 export type BrokerClientOptions = {
     stateDirectory?: string;
     port?: number;
+    hostLabel?: string | undefined;
+    gatewayUrl?: string | undefined;
+    gatewaySecret?: string | undefined;
     packageVersion: string;
     openCodeVersion: string;
     startupTimeoutMs?: number;

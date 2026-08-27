@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
 import { type BrokerConnectionData, RouteRegistry } from "../src/broker/registry";
 import type { BrokerCommand, CommandResult, RouteKey } from "../src/protocol";
-import {
-  executeSlashCommand,
-  isSlashCommand,
-  parseSlashCommand,
-} from "../src/telegram/commands";
+import { executeSlashCommand, isSlashCommand, parseSlashCommand } from "../src/telegram/commands";
 
 describe("Slash Commands System", () => {
   test("isSlashCommand recognizes valid slash commands", () => {
@@ -35,7 +31,9 @@ describe("Slash Commands System", () => {
 
   test("renders help menu in Traditional Chinese and English", async () => {
     const registry = new RouteRegistry();
-    const dispatcher = { sendCommand: async () => ({ commandId: "123", status: "accepted" as const }) };
+    const dispatcher = {
+      sendCommand: async () => ({ commandId: "123", status: "accepted" as const }),
+    };
 
     const zhResult = await executeSlashCommand({
       text: "/help",
@@ -60,7 +58,9 @@ describe("Slash Commands System", () => {
 
   test("renders gateway status with uptime and memory", async () => {
     const registry = new RouteRegistry();
-    const dispatcher = { sendCommand: async () => ({ commandId: "123", status: "accepted" as const }) };
+    const dispatcher = {
+      sendCommand: async () => ({ commandId: "123", status: "accepted" as const }),
+    };
 
     const result = await executeSlashCommand({
       text: "/status",
@@ -79,7 +79,9 @@ describe("Slash Commands System", () => {
 
   test("renders connected nodes list", async () => {
     const registry = new RouteRegistry();
-    const dispatcher = { sendCommand: async () => ({ commandId: "123", status: "accepted" as const }) };
+    const dispatcher = {
+      sendCommand: async () => ({ commandId: "123", status: "accepted" as const }),
+    };
 
     // When empty
     const emptyResult = await executeSlashCommand({

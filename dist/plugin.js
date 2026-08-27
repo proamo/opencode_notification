@@ -14504,8 +14504,8 @@ var DiagnosticSchema = exports_external.object({
 });
 
 // src/plugin.ts
-import { tmpdir } from "os";
 import { appendFileSync } from "fs";
+import { tmpdir } from "os";
 import { basename as basename2, join as join4 } from "path";
 
 // src/config.ts
@@ -16448,7 +16448,10 @@ async function runSessionCancelCommand(client, directory, command) {
   const maybeSession = client.session;
   try {
     if (typeof maybeSession?.abort === "function") {
-      const res = await maybeSession.abort({ path: { id: command.route.sessionId }, query: { directory } });
+      const res = await maybeSession.abort({
+        path: { id: command.route.sessionId },
+        query: { directory }
+      });
       if (res && typeof res === "object" && "error" in res && res.error) {
         return { commandId: command.commandId, status: "rejected", reason: "session abort failed" };
       }
@@ -16464,13 +16467,25 @@ async function runSessionCancelCommand(client, directory, command) {
     if (typeof maybeSession?.cancel === "function") {
       const res = await maybeSession.cancel({ path: { id: command.route.sessionId } });
       if (res && typeof res === "object" && "error" in res && res.error) {
-        return { commandId: command.commandId, status: "rejected", reason: "session cancel failed" };
+        return {
+          commandId: command.commandId,
+          status: "rejected",
+          reason: "session cancel failed"
+        };
       }
       return { commandId: command.commandId, status: "accepted" };
     }
-    return { commandId: command.commandId, status: "rejected", reason: "cancel API not supported by OpenCode client" };
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "cancel API not supported by OpenCode client"
+    };
   } catch {
-    return { commandId: command.commandId, status: "indeterminate", reason: "cancel execution error" };
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: "cancel execution error"
+    };
   }
 }
 
@@ -16655,4 +16670,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=C8D59AEFCB45202164756E2164756E21
+//# debugId=902C499300AE43A664756E2164756E21

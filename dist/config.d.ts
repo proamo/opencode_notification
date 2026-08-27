@@ -8,17 +8,26 @@ export declare const LocalePreferenceSchema: z.ZodEnum<{
 export type LocalePreference = z.infer<typeof LocalePreferenceSchema>;
 export declare const NotifierConfigSchema: z.ZodObject<{
     mode: z.ZodDefault<z.ZodLiteral<"local">>;
+    role: z.ZodDefault<z.ZodEnum<{
+        gateway: "gateway";
+        node: "node";
+    }>>;
+    hostLabel: z.ZodOptional<z.ZodString>;
     locale: z.ZodDefault<z.ZodEnum<{
         auto: "auto";
         en: "en";
         "zh-TW": "zh-TW";
     }>>;
-    telegram: z.ZodObject<{
+    gateway: z.ZodOptional<z.ZodObject<{
+        url: z.ZodString;
+        secret: z.ZodString;
+    }, z.core.$strip>>;
+    telegram: z.ZodOptional<z.ZodObject<{
         botToken: z.ZodOptional<z.ZodString>;
         tokenFile: z.ZodOptional<z.ZodString>;
         userId: z.ZodString;
         chatId: z.ZodString;
-    }, z.core.$strict>;
+    }, z.core.$strict>>;
     notifications: z.ZodPrefault<z.ZodObject<{
         completion: z.ZodDefault<z.ZodBoolean>;
         error: z.ZodDefault<z.ZodBoolean>;
@@ -29,11 +38,7 @@ export declare const NotifierConfigSchema: z.ZodObject<{
         pluginBufferSize: z.ZodDefault<z.ZodNumber>;
     }, z.core.$strict>>;
     broker: z.ZodPrefault<z.ZodObject<{
-        host: z.ZodDefault<z.ZodEnum<{
-            "127.0.0.1": "127.0.0.1";
-            localhost: "localhost";
-            "::1": "::1";
-        }>>;
+        host: z.ZodDefault<z.ZodString>;
         port: z.ZodDefault<z.ZodNumber>;
     }, z.core.$strict>>;
     interaction: z.ZodPrefault<z.ZodObject<{

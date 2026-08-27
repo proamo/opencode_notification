@@ -37,6 +37,7 @@ export declare const RegisterEnvelopeSchema: z.ZodObject<{
         openCodeVersion: z.ZodString;
         machineId: z.ZodUUID;
         instanceId: z.ZodUUID;
+        hostLabel: z.ZodOptional<z.ZodString>;
         configFingerprint: z.ZodString;
         capabilities: z.ZodArray<z.ZodString>;
         telegram: z.ZodOptional<z.ZodObject<{
@@ -68,6 +69,7 @@ export declare const RouteRegisterEnvelopeSchema: z.ZodObject<{
             sessionId: z.ZodString;
             routeGeneration: z.ZodUUID;
         }, z.core.$strip>;
+        hostLabel: z.ZodOptional<z.ZodString>;
         projectLabel: z.ZodString;
         sessionLabel: z.ZodString;
     }, z.core.$strip>;
@@ -145,6 +147,17 @@ export declare const BrokerCommandSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         always: "always";
         reject: "reject";
     }>;
+}, z.core.$strip>, z.ZodObject<{
+    type: z.ZodLiteral<"session.cancel">;
+    commandId: z.ZodUUID;
+    route: z.ZodObject<{
+        machineId: z.ZodUUID;
+        instanceId: z.ZodUUID;
+        projectId: z.ZodString;
+        sessionId: z.ZodString;
+        routeGeneration: z.ZodUUID;
+    }, z.core.$strip>;
+    reason: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>], "type">;
 export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
 export declare const CommandResultSchema: z.ZodObject<{
@@ -288,6 +301,17 @@ export declare const BrokerEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
             always: "always";
             reject: "reject";
         }>;
+    }, z.core.$strip>, z.ZodObject<{
+        type: z.ZodLiteral<"session.cancel">;
+        commandId: z.ZodUUID;
+        route: z.ZodObject<{
+            machineId: z.ZodUUID;
+            instanceId: z.ZodUUID;
+            projectId: z.ZodString;
+            sessionId: z.ZodString;
+            routeGeneration: z.ZodUUID;
+        }, z.core.$strip>;
+        reason: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>], "type">;
     protocol: z.ZodObject<{
         major: z.ZodLiteral<1>;
@@ -333,6 +357,7 @@ export declare const NormalizedNotificationSchema: z.ZodDiscriminatedUnion<[z.Zo
         en: "en";
         "zh-TW": "zh-TW";
     }>;
+    hostLabel: z.ZodOptional<z.ZodString>;
     projectLabel: z.ZodString;
     sessionLabel: z.ZodString;
     rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -352,6 +377,7 @@ export declare const NormalizedNotificationSchema: z.ZodDiscriminatedUnion<[z.Zo
         en: "en";
         "zh-TW": "zh-TW";
     }>;
+    hostLabel: z.ZodOptional<z.ZodString>;
     projectLabel: z.ZodString;
     sessionLabel: z.ZodString;
     rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -371,6 +397,7 @@ export declare const NormalizedNotificationSchema: z.ZodDiscriminatedUnion<[z.Zo
         en: "en";
         "zh-TW": "zh-TW";
     }>;
+    hostLabel: z.ZodOptional<z.ZodString>;
     projectLabel: z.ZodString;
     sessionLabel: z.ZodString;
     rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -400,6 +427,7 @@ export declare const NormalizedNotificationSchema: z.ZodDiscriminatedUnion<[z.Zo
         en: "en";
         "zh-TW": "zh-TW";
     }>;
+    hostLabel: z.ZodOptional<z.ZodString>;
     projectLabel: z.ZodString;
     sessionLabel: z.ZodString;
     rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -425,6 +453,7 @@ export declare const NotificationPublishEnvelopeSchema: z.ZodObject<{
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -444,6 +473,7 @@ export declare const NotificationPublishEnvelopeSchema: z.ZodObject<{
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -463,6 +493,7 @@ export declare const NotificationPublishEnvelopeSchema: z.ZodObject<{
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -492,6 +523,7 @@ export declare const NotificationPublishEnvelopeSchema: z.ZodObject<{
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -515,6 +547,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
         openCodeVersion: z.ZodString;
         machineId: z.ZodUUID;
         instanceId: z.ZodUUID;
+        hostLabel: z.ZodOptional<z.ZodString>;
         configFingerprint: z.ZodString;
         capabilities: z.ZodArray<z.ZodString>;
         telegram: z.ZodOptional<z.ZodObject<{
@@ -545,6 +578,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
             sessionId: z.ZodString;
             routeGeneration: z.ZodUUID;
         }, z.core.$strip>;
+        hostLabel: z.ZodOptional<z.ZodString>;
         projectLabel: z.ZodString;
         sessionLabel: z.ZodString;
     }, z.core.$strip>;
@@ -587,6 +621,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -606,6 +641,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -625,6 +661,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;
@@ -654,6 +691,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
                 en: "en";
                 "zh-TW": "zh-TW";
             }>;
+            hostLabel: z.ZodOptional<z.ZodString>;
             projectLabel: z.ZodString;
             sessionLabel: z.ZodString;
             rootSessionLabel: z.ZodOptional<z.ZodString>;

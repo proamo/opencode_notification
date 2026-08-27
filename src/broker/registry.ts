@@ -198,7 +198,9 @@ export class RouteRegistry {
         instanceId: conn.instanceId,
         ...(conn.hostLabel ? { hostLabel: conn.hostLabel } : {}),
         activeRoutesCount: conn.routeKeys.size,
-        ...(conn.socket.data.lastHeartbeatAt ? { lastHeartbeatAt: conn.socket.data.lastHeartbeatAt } : {}),
+        ...(conn.socket.data.lastHeartbeatAt
+          ? { lastHeartbeatAt: conn.socket.data.lastHeartbeatAt }
+          : {}),
       });
     }
     return nodes;

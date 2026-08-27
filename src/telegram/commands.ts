@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { RouteRegistry } from "../broker/registry";
 import { type SupportedLocale, translate } from "../i18n";
 import type { BrokerCommand, CommandResult, RouteKey } from "../protocol";
-import type { RouteRegistry } from "../broker/registry";
 
 export type SlashCommandContext = {
   text: string;

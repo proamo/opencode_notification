@@ -33,6 +33,22 @@ export declare const en: {
     readonly "interaction.stale": "This notification is no longer active. Wait for a new notification.";
     readonly "interaction.terminalOnly": "This action must be handled in the OpenCode terminal.";
     readonly "test.message": "OpenCode Telegram Link test notification";
+    readonly "cmd.help.title": "🤖 <b>OpenCode Commander - Commands:</b>";
+    readonly "cmd.help.status": "Show Gateway & system status";
+    readonly "cmd.help.nodes": "List connected node machines";
+    readonly "cmd.help.sessions": "List active working sessions";
+    readonly "cmd.help.cancel": "Cancel an active session";
+    readonly "cmd.help.help": "Show this help menu";
+    readonly "cmd.status.title": "📊 <b>Gateway System Status:</b>";
+    readonly "cmd.nodes.title": "🌐 <b>Connected Machines:</b>";
+    readonly "cmd.nodes.empty": "No nodes currently connected.";
+    readonly "cmd.sessions.title": "📝 <b>Active Sessions:</b>";
+    readonly "cmd.sessions.empty": "No active sessions running.";
+    readonly "cmd.cancel.success": "🛑 Task canceled successfully.";
+    readonly "cmd.cancel.failed": "❌ Failed to cancel task.";
+    readonly "cmd.cancel.notFound": "⚠️ Session not found or target host is offline.";
+    readonly "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>";
+    readonly "cmd.unknown": "❓ Unknown command. Type /help to view available commands.";
 };
 export type MessageKey = keyof typeof en;
 export declare const zhTW: {
@@ -70,5 +86,21 @@ export declare const zhTW: {
     readonly "interaction.stale": "此通知已不再有效，請等待新的通知。";
     readonly "interaction.terminalOnly": "此操作必須在 OpenCode 終端機中處理。";
     readonly "test.message": "OpenCode Telegram Link 測試通知";
+    readonly "cmd.help.title": "🤖 <b>OpenCode 行動指揮官 - 可用指令：</b>";
+    readonly "cmd.help.status": "查看 Gateway 與系統狀態";
+    readonly "cmd.help.nodes": "列出所有在線連線中的電腦主機";
+    readonly "cmd.help.sessions": "列出目前活躍的工作階段";
+    readonly "cmd.help.cancel": "中止正在執行中的任務";
+    readonly "cmd.help.help": "顯示此說明選單";
+    readonly "cmd.status.title": "📊 <b>Gateway 系統狀態：</b>";
+    readonly "cmd.nodes.title": "🌐 <b>已連線電腦主機：</b>";
+    readonly "cmd.nodes.empty": "目前沒有任何在線電腦。";
+    readonly "cmd.sessions.title": "📝 <b>活躍工作階段：</b>";
+    readonly "cmd.sessions.empty": "目前沒有任何進行中的工作階段。";
+    readonly "cmd.cancel.success": "🛑 任務已成功中止。";
+    readonly "cmd.cancel.failed": "❌ 任務中止失敗。";
+    readonly "cmd.cancel.notFound": "⚠️ 找不到指定 Session 或目標主機已離線。";
+    readonly "cmd.cancel.usage": "ℹ️ 使用方式：<code>/cancel &lt;session_id&gt;</code>";
+    readonly "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。";
 };
 //# sourceMappingURL=catalogs.d.ts.map

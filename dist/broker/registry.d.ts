@@ -8,16 +8,17 @@ export type BrokerConnectionData = {
 };
 export type RegisteredRoute = {
     route: RouteKey;
+    hostLabel?: string | undefined;
     projectLabel: string;
     sessionLabel: string;
     connectionId: string;
 };
 export declare class RouteRegistry {
     #private;
-    constructor(machineId: string);
-    registerConnection(socket: ServerWebSocket<BrokerConnectionData>, instanceId: string, machineId: string): void;
+    registerConnection(socket: ServerWebSocket<BrokerConnectionData>, instanceId: string, machineId: string, hostLabel?: string): void;
     registerRoute(connectionId: string, input: {
         route: RouteKey;
+        hostLabel?: string | undefined;
         projectLabel: string;
         sessionLabel: string;
     }): RegisteredRoute;
@@ -27,6 +28,20 @@ export declare class RouteRegistry {
     removeConnection(connectionId: string): void;
     get connectionCount(): number;
     get routeCount(): number;
+    listNodes(): Array<{
+        connectionId: string;
+        machineId: string;
+        instanceId: string;
+        hostLabel?: string;
+        activeRoutesCount: number;
+        lastHeartbeatAt?: number;
+    }>;
+    listActiveSessions(): Array<{
+        route: RouteKey;
+        projectLabel: string;
+        sessionLabel: string;
+        hostLabel?: string;
+    }>;
 }
 export declare class RouteRegistrationError extends Error {
     readonly code: string;

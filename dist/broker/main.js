@@ -17165,7 +17165,6 @@ class RouteRegistry {
   #connections = new Map;
   #instances = new Map;
   #routes = new Map;
-  constructor(_machineId) {}
   registerConnection(socket, instanceId, machineId, hostLabel) {
     const currentOwner = this.#instances.get(instanceId);
     if (currentOwner && currentOwner !== socket.data.connectionId) {
@@ -17531,8 +17530,166 @@ function rejected(reason) {
 function rejectionHash(updateId, reason) {
   return createHash3("sha256").update(`${updateId}:${reason}`).digest("hex");
 }
+// src/telegram/commands.ts
+import { randomUUID as randomUUID4 } from "crypto";
+function isSlashCommand(text) {
+  if (!text)
+    return false;
+  const trimmed = text.trim();
+  return trimmed.startsWith("/") && trimmed.length > 1;
+}
+function parseSlashCommand(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/"))
+    return;
+  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
+  if (parts.length === 0)
+    return;
+  const rawCommand = parts[0];
+  if (!rawCommand)
+    return;
+  const command = rawCommand.split("@")[0]?.toLowerCase() ?? "";
+  const args = parts.slice(1);
+  return { command, args };
+}
+async function executeSlashCommand(context) {
+  const parsed = parseSlashCommand(context.text);
+  const locale = context.locale ?? "zh-TW";
+  if (!parsed) {
+    return translate(locale, "cmd.unknown");
+  }
+  const { command, args } = parsed;
+  switch (command) {
+    case "start":
+    case "help": {
+      return renderHelpMenu(locale);
+    }
+    case "status": {
+      return renderGatewayStatus(context, locale);
+    }
+    case "nodes": {
+      return renderConnectedNodes(context, locale);
+    }
+    case "sessions": {
+      return renderActiveSessions(context, locale);
+    }
+    case "cancel": {
+      return await handleCancelCommand(args, context, locale);
+    }
+    default: {
+      return translate(locale, "cmd.unknown");
+    }
+  }
+}
+function renderHelpMenu(locale) {
+  const lines = [
+    translate(locale, "cmd.help.title"),
+    "",
+    `\u2022 <code>/status</code> - ${translate(locale, "cmd.help.status")}`,
+    `\u2022 <code>/nodes</code> - ${translate(locale, "cmd.help.nodes")}`,
+    `\u2022 <code>/sessions</code> - ${translate(locale, "cmd.help.sessions")}`,
+    `\u2022 <code>/cancel &lt;session_id&gt;</code> - ${translate(locale, "cmd.help.cancel")}`,
+    `\u2022 <code>/help</code> - ${translate(locale, "cmd.help.help")}`
+  ];
+  return lines.join(`
+`);
+}
+function renderGatewayStatus(context, locale) {
+  const uptimeMs = Date.now() - (context.startedAt ?? Date.now());
+  const uptimeMinutes = Math.floor(uptimeMs / 60000);
+  const uptimeHours = Math.floor(uptimeMinutes / 60);
+  const uptimeString = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
+  const memUsage = process.memoryUsage();
+  const rssMb = Math.round(memUsage.rss / 1024 / 1024 * 10) / 10;
+  const nodes = context.registry.listNodes();
+  const totalRoutes = context.registry.routeCount;
+  const lines = [
+    translate(locale, "cmd.status.title"),
+    "",
+    `\uD83C\uDFE2 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "3.0.0"}</code>`,
+    `\u23F1\uFE0F <b>Uptime:</b> <code>${uptimeString}</code>`,
+    `\uD83D\uDCBE <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
+    `\uD83C\uDF10 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,
+    `\uD83D\uDEE3\uFE0F <b>Active Routes:</b> <code>${totalRoutes}</code>`
+  ];
+  return lines.join(`
+`);
+}
+function renderConnectedNodes(context, locale) {
+  const nodes = context.registry.listNodes();
+  if (nodes.length === 0) {
+    return `${translate(locale, "cmd.nodes.title")}
+
+${translate(locale, "cmd.nodes.empty")}`;
+  }
+  const lines = [translate(locale, "cmd.nodes.title"), ""];
+  for (const node of nodes) {
+    const label = node.hostLabel || "local";
+    lines.push(`\uD83D\uDDA5\uFE0F <b>[${label}]</b> \uD83D\uDFE2 Online`);
+    lines.push(`  \u2022 Machine ID: <code>${node.machineId.slice(0, 8)}...</code>`);
+    lines.push(`  \u2022 Active Routes: <code>${node.activeRoutesCount}</code>`);
+    lines.push("");
+  }
+  return lines.join(`
+`).trimEnd();
+}
+function renderActiveSessions(context, locale) {
+  const sessions = context.registry.listActiveSessions();
+  if (sessions.length === 0) {
+    return `${translate(locale, "cmd.sessions.title")}
+
+${translate(locale, "cmd.sessions.empty")}`;
+  }
+  const lines = [translate(locale, "cmd.sessions.title"), ""];
+  for (const session of sessions) {
+    const hostTag = session.hostLabel ? `[${session.hostLabel}] ` : "";
+    lines.push(`\uD83D\uDCCC <b>${hostTag}${session.projectLabel}</b>`);
+    lines.push(`  \u2022 Session: <b>${session.sessionLabel}</b>`);
+    lines.push(`  \u2022 ID: <code>${session.route.sessionId}</code>`);
+    lines.push(`  \u2022 Cancel: <code>/cancel ${session.route.sessionId}</code>`);
+    lines.push("");
+  }
+  return lines.join(`
+`).trimEnd();
+}
+async function handleCancelCommand(args, context, locale) {
+  const sessionId = args[0]?.trim();
+  if (!sessionId) {
+    return translate(locale, "cmd.cancel.usage");
+  }
+  const activeSessions = context.registry.listActiveSessions();
+  const target = activeSessions.find((s) => s.route.sessionId === sessionId || s.route.sessionId.startsWith(sessionId));
+  let targetRoute = target?.route;
+  if (!targetRoute) {
+    const dummyRoute = {
+      machineId: "00000000-0000-0000-0000-000000000000",
+      instanceId: "00000000-0000-0000-0000-000000000000",
+      projectId: "unknown-project-placeholder",
+      sessionId,
+      routeGeneration: "00000000-0000-0000-0000-000000000000"
+    };
+    const resolved = context.registry.resolve(dummyRoute);
+    if (resolved) {
+      targetRoute = resolved.route;
+    }
+  }
+  if (!targetRoute) {
+    return translate(locale, "cmd.cancel.notFound");
+  }
+  const commandId = randomUUID4();
+  const result = await context.dispatcher.sendCommand({
+    type: "session.cancel",
+    commandId,
+    route: targetRoute,
+    reason: "canceled via Telegram /cancel command"
+  });
+  if (result.status === "accepted") {
+    return translate(locale, "cmd.cancel.success");
+  }
+  return `${translate(locale, "cmd.cancel.failed")} (${result.reason ?? result.status})`;
+}
 // src/telegram/interaction.ts
-import { createHash as createHash4, randomUUID as randomUUID4 } from "crypto";
+import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
 var QuestionAnswersSchema = exports_external.array(exports_external.array(exports_external.string().trim().min(1).max(2048)).min(1).max(20)).min(1).max(20);
 var QuestionCallbackPayloadSchema = exports_external.object({ answers: QuestionAnswersSchema });
 function validateTelegramInteraction(update, subject, options) {
@@ -17575,20 +17732,20 @@ function createValidatedInteractionHandler(authorizer, options, handleValidated)
 }
 async function submitCompletedSessionReply(dispatcher, interaction) {
   if (interaction.kind !== "session_prompt") {
-    return { commandId: randomUUID4(), status: "rejected", reason: "not a session prompt binding" };
+    return { commandId: randomUUID5(), status: "rejected", reason: "not a session prompt binding" };
   }
   const text = interaction.text?.trim();
   if (!text)
-    return { commandId: randomUUID4(), status: "rejected", reason: "empty prompt" };
+    return { commandId: randomUUID5(), status: "rejected", reason: "empty prompt" };
   return await dispatcher.sendCommand({
     type: "session.prompt",
-    commandId: randomUUID4(),
+    commandId: randomUUID5(),
     route: interaction.route,
     text
   });
 }
 async function submitQuestionReply(dispatcher, interaction) {
-  const commandId = randomUUID4();
+  const commandId = randomUUID5();
   if (interaction.kind !== "question_reply") {
     return { commandId, status: "rejected", reason: "not a question binding" };
   }
@@ -17607,7 +17764,7 @@ async function submitQuestionReply(dispatcher, interaction) {
   });
 }
 async function submitPermissionReply(dispatcher, interaction) {
-  const commandId = randomUUID4();
+  const commandId = randomUUID5();
   if (interaction.kind !== "permission_notice") {
     return { commandId, status: "rejected", reason: "not a permission binding" };
   }
@@ -17642,7 +17799,7 @@ async function submitTelegramInteraction(dispatcher, interaction) {
     }
     return {
       result: {
-        commandId: randomUUID4(),
+        commandId: randomUUID5(),
         status: "rejected",
         reason: "terminal intervention required"
       },
@@ -17651,7 +17808,7 @@ async function submitTelegramInteraction(dispatcher, interaction) {
   }
   return {
     result: {
-      commandId: randomUUID4(),
+      commandId: randomUUID5(),
       status: "rejected",
       reason: "notification is not actionable"
     },
@@ -18229,164 +18386,6 @@ async function abortableDelay(milliseconds, signal) {
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
-// src/telegram/commands.ts
-import { randomUUID as randomUUID5 } from "crypto";
-function isSlashCommand(text) {
-  if (!text)
-    return false;
-  const trimmed = text.trim();
-  return trimmed.startsWith("/") && trimmed.length > 1;
-}
-function parseSlashCommand(text) {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("/"))
-    return;
-  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
-  if (parts.length === 0)
-    return;
-  const rawCommand = parts[0];
-  if (!rawCommand)
-    return;
-  const command = rawCommand.split("@")[0]?.toLowerCase() ?? "";
-  const args = parts.slice(1);
-  return { command, args };
-}
-async function executeSlashCommand(context) {
-  const parsed = parseSlashCommand(context.text);
-  const locale = context.locale ?? "zh-TW";
-  if (!parsed) {
-    return translate(locale, "cmd.unknown");
-  }
-  const { command, args } = parsed;
-  switch (command) {
-    case "start":
-    case "help": {
-      return renderHelpMenu(locale);
-    }
-    case "status": {
-      return renderGatewayStatus(context, locale);
-    }
-    case "nodes": {
-      return renderConnectedNodes(context, locale);
-    }
-    case "sessions": {
-      return renderActiveSessions(context, locale);
-    }
-    case "cancel": {
-      return await handleCancelCommand(args, context, locale);
-    }
-    default: {
-      return translate(locale, "cmd.unknown");
-    }
-  }
-}
-function renderHelpMenu(locale) {
-  const lines = [
-    translate(locale, "cmd.help.title"),
-    "",
-    `\u2022 <code>/status</code> - ${translate(locale, "cmd.help.status")}`,
-    `\u2022 <code>/nodes</code> - ${translate(locale, "cmd.help.nodes")}`,
-    `\u2022 <code>/sessions</code> - ${translate(locale, "cmd.help.sessions")}`,
-    `\u2022 <code>/cancel &lt;session_id&gt;</code> - ${translate(locale, "cmd.help.cancel")}`,
-    `\u2022 <code>/help</code> - ${translate(locale, "cmd.help.help")}`
-  ];
-  return lines.join(`
-`);
-}
-function renderGatewayStatus(context, locale) {
-  const uptimeMs = Date.now() - (context.startedAt ?? Date.now());
-  const uptimeMinutes = Math.floor(uptimeMs / 60000);
-  const uptimeHours = Math.floor(uptimeMinutes / 60);
-  const uptimeString = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
-  const memUsage = process.memoryUsage();
-  const rssMb = Math.round(memUsage.rss / 1024 / 1024 * 10) / 10;
-  const nodes = context.registry.listNodes();
-  const totalRoutes = context.registry.routeCount;
-  const lines = [
-    translate(locale, "cmd.status.title"),
-    "",
-    `\uD83C\uDFE2 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "3.0.0"}</code>`,
-    `\u23F1\uFE0F <b>Uptime:</b> <code>${uptimeString}</code>`,
-    `\uD83D\uDCBE <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
-    `\uD83C\uDF10 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,
-    `\uD83D\uDEE3\uFE0F <b>Active Routes:</b> <code>${totalRoutes}</code>`
-  ];
-  return lines.join(`
-`);
-}
-function renderConnectedNodes(context, locale) {
-  const nodes = context.registry.listNodes();
-  if (nodes.length === 0) {
-    return `${translate(locale, "cmd.nodes.title")}
-
-${translate(locale, "cmd.nodes.empty")}`;
-  }
-  const lines = [translate(locale, "cmd.nodes.title"), ""];
-  for (const node of nodes) {
-    const label = node.hostLabel || "local";
-    lines.push(`\uD83D\uDDA5\uFE0F <b>[${label}]</b> \uD83D\uDFE2 Online`);
-    lines.push(`  \u2022 Machine ID: <code>${node.machineId.slice(0, 8)}...</code>`);
-    lines.push(`  \u2022 Active Routes: <code>${node.activeRoutesCount}</code>`);
-    lines.push("");
-  }
-  return lines.join(`
-`).trimEnd();
-}
-function renderActiveSessions(context, locale) {
-  const sessions = context.registry.listActiveSessions();
-  if (sessions.length === 0) {
-    return `${translate(locale, "cmd.sessions.title")}
-
-${translate(locale, "cmd.sessions.empty")}`;
-  }
-  const lines = [translate(locale, "cmd.sessions.title"), ""];
-  for (const session of sessions) {
-    const hostTag = session.hostLabel ? `[${session.hostLabel}] ` : "";
-    lines.push(`\uD83D\uDCCC <b>${hostTag}${session.projectLabel}</b>`);
-    lines.push(`  \u2022 Session: <b>${session.sessionLabel}</b>`);
-    lines.push(`  \u2022 ID: <code>${session.route.sessionId}</code>`);
-    lines.push(`  \u2022 Cancel: <code>/cancel ${session.route.sessionId}</code>`);
-    lines.push("");
-  }
-  return lines.join(`
-`).trimEnd();
-}
-async function handleCancelCommand(args, context, locale) {
-  const sessionId = args[0]?.trim();
-  if (!sessionId) {
-    return translate(locale, "cmd.cancel.usage");
-  }
-  const activeSessions = context.registry.listActiveSessions();
-  const target = activeSessions.find((s) => s.route.sessionId === sessionId || s.route.sessionId.startsWith(sessionId));
-  let targetRoute = target?.route;
-  if (!targetRoute) {
-    const dummyRoute = {
-      machineId: "00000000-0000-0000-0000-000000000000",
-      instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown-project-placeholder",
-      sessionId,
-      routeGeneration: "00000000-0000-0000-0000-000000000000"
-    };
-    const resolved = context.registry.resolve(dummyRoute);
-    if (resolved) {
-      targetRoute = resolved.route;
-    }
-  }
-  if (!targetRoute) {
-    return translate(locale, "cmd.cancel.notFound");
-  }
-  const commandId = randomUUID5();
-  const result = await context.dispatcher.sendCommand({
-    type: "session.cancel",
-    commandId,
-    route: targetRoute,
-    reason: "canceled via Telegram /cancel command"
-  });
-  if (result.status === "accepted") {
-    return translate(locale, "cmd.cancel.success");
-  }
-  return `${translate(locale, "cmd.cancel.failed")} (${result.reason ?? result.status})`;
-}
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var DEFAULT_BIND_HOST = "0.0.0.0";
@@ -18494,7 +18493,7 @@ class BrokerServer {
 }
 async function startBroker(options = {}) {
   const state = await loadOrCreateStateIdentity(options.stateDirectory ?? defaultStateDirectory());
-  const registry2 = new RouteRegistry(state.machineId);
+  const registry2 = new RouteRegistry;
   const database = await StateDatabase.open({
     stateDirectory: state.stateDirectory,
     machineId: state.machineId
@@ -18760,12 +18759,12 @@ class BrokerTelegramRuntime {
         const auth = authorizer.authorize(update);
         if (!auth.authorized) {
           return {
-            disposition: "ignored",
+            disposition: "rejected",
             payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
           };
         }
         const messageText = update.message?.text?.trim();
-        if (update.message && isSlashCommand(messageText)) {
+        if (messageText && isSlashCommand(messageText)) {
           try {
             const replyText = await executeSlashCommand({
               text: messageText,
@@ -18778,8 +18777,7 @@ class BrokerTelegramRuntime {
             await input.api.sendMessage({
               chatId: input.config.chatId,
               text: replyText,
-              parseMode: "HTML",
-              replyToMessageId: update.message.message_id
+              parseMode: "HTML"
             });
             return {
               disposition: "acknowledged",
@@ -19740,4 +19738,4 @@ export {
   runBroker
 };
 
-//# debugId=94BBCE19DC5B2FE364756E2164756E21
+//# debugId=7AFE8148649941ED64756E2164756E21

@@ -1,5 +1,5 @@
-import { tmpdir } from "node:os";
 import { appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
 import { computeNotifierConfigFingerprint, readNotifierBotToken } from "./config";
@@ -11,7 +11,10 @@ import { deriveProjectId, loadOrCreateStateIdentity } from "./state/identity";
 
 function trace(msg: string) {
   try {
-    appendFileSync(join(tmpdir(), "opencode_telegram_plugin.log"), `[${new Date().toISOString()}] ${msg}\n`);
+    appendFileSync(
+      join(tmpdir(), "opencode_telegram_plugin.log"),
+      `[${new Date().toISOString()}] ${msg}\n`,
+    );
   } catch {}
 }
 

@@ -168,14 +168,20 @@ async function runSessionCancelCommand(
   command: Extract<BrokerCommand, { type: "session.cancel" }>,
 ): Promise<CommandResult> {
   const maybeSession = client.session as unknown as {
-    abort?: (params: { path: { id: string }; query?: { directory?: string } }) => Promise<{ error?: unknown }>;
+    abort?: (params: {
+      path: { id: string };
+      query?: { directory?: string };
+    }) => Promise<{ error?: unknown }>;
     stop?: (params: { path: { id: string } }) => Promise<{ error?: unknown }>;
     cancel?: (params: { path: { id: string } }) => Promise<{ error?: unknown }>;
   };
 
   try {
     if (typeof maybeSession?.abort === "function") {
-      const res = await maybeSession.abort({ path: { id: command.route.sessionId }, query: { directory } });
+      const res = await maybeSession.abort({
+        path: { id: command.route.sessionId },
+        query: { directory },
+      });
       if (res && typeof res === "object" && "error" in res && res.error) {
         return { commandId: command.commandId, status: "rejected", reason: "session abort failed" };
       }
@@ -191,13 +197,25 @@ async function runSessionCancelCommand(
     if (typeof maybeSession?.cancel === "function") {
       const res = await maybeSession.cancel({ path: { id: command.route.sessionId } });
       if (res && typeof res === "object" && "error" in res && res.error) {
-        return { commandId: command.commandId, status: "rejected", reason: "session cancel failed" };
+        return {
+          commandId: command.commandId,
+          status: "rejected",
+          reason: "session cancel failed",
+        };
       }
       return { commandId: command.commandId, status: "accepted" };
     }
 
-    return { commandId: command.commandId, status: "rejected", reason: "cancel API not supported by OpenCode client" };
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "cancel API not supported by OpenCode client",
+    };
   } catch {
-    return { commandId: command.commandId, status: "indeterminate", reason: "cancel execution error" };
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: "cancel execution error",
+    };
   }
 }

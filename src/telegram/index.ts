@@ -15,6 +15,12 @@ export {
   TelegramUpdateAuthorizer,
 } from "./authorization";
 export {
+  executeSlashCommand,
+  isSlashCommand,
+  parseSlashCommand,
+  type SlashCommandContext,
+} from "./commands";
+export {
   type BrokerCommandDispatcher,
   createValidatedInteractionHandler,
   type InteractionFeedbackCode,
@@ -49,9 +55,3 @@ export {
   TelegramRenderError,
   type TelegramRenderOptions,
 } from "./render";
-export {
-  executeSlashCommand,
-  isSlashCommand,
-  parseSlashCommand,
-  type SlashCommandContext,
-} from "./commands";
