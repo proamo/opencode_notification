@@ -15594,12 +15594,37 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
     } catch {}
   }
   try {
-    const fallbackPath = join2(defaultStateDirectory(), "opencode-notifier.json");
+    const stateDir = defaultStateDirectory();
+    const fallbackPath = join2(stateDir, "opencode-notifier.json");
     const content = await readFile3(fallbackPath, "utf8");
     const json2 = JSON.parse(content);
     const parsed = NotifierConfigSchema.safeParse(json2);
     if (parsed.success)
       return parsed.data;
+  } catch {}
+  try {
+    const stateDir = defaultStateDirectory();
+    const identityPath = join2(stateDir, "telegram-identity.json");
+    const content = await readFile3(identityPath, "utf8");
+    const idJson = JSON.parse(content);
+    if (idJson.userId && idJson.chatId) {
+      return NotifierConfigSchema.parse({
+        mode: "local",
+        role: "gateway",
+        locale: idJson.locale || "auto",
+        telegram: {
+          tokenFile: idJson.tokenFile || join2(stateDir, "telegram-bot-token"),
+          userId: String(idJson.userId),
+          chatId: String(idJson.chatId)
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true
+        }
+      });
+    }
   } catch {}
   return;
 }
@@ -17207,6 +17232,20 @@ class RouteRegistry {
         return registered;
       }
     }
+    for (const connection of this.#connections.values()) {
+      if (connection.machineId === parsed.machineId) {
+        return {
+          route: {
+            ...parsed,
+            instanceId: connection.instanceId
+          },
+          connectionId: connection.socket.data.connectionId,
+          projectLabel: "project",
+          sessionLabel: "session",
+          hostLabel: connection.hostLabel
+        };
+      }
+    }
     return;
   }
   owner(route) {
@@ -18692,9 +18731,6 @@ function handleMessage(socket, message, machineId, registry2, pendingCommands, a
         if (missingCapability) {
           throw new RouteRegistrationError("CAPABILITY_REQUIRED", `required capability is missing: ${missingCapability}`);
         }
-        if (envelope.payload.machineId === machineId && activeConfigFingerprint.value && activeConfigFingerprint.value !== envelope.payload.configFingerprint) {
-          throw new RouteRegistrationError("CONFIG_FINGERPRINT_MISMATCH", "connection configuration does not match the active local broker configuration");
-        }
         registry2.registerConnection(socket, envelope.payload.instanceId, envelope.payload.machineId, envelope.payload.hostLabel);
         if (envelope.payload.telegram)
           ensureTelegramRuntime(envelope.payload.telegram);
@@ -19450,4 +19486,4 @@ export {
   runBroker
 };
 
-//# debugId=6458B26F633F222D64756E2164756E21
+//# debugId=FFEF745B371534B864756E2164756E21

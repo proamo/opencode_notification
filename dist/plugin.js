@@ -15689,12 +15689,37 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
     } catch {}
   }
   try {
-    const fallbackPath = join2(defaultStateDirectory(), "opencode-notifier.json");
+    const stateDir = defaultStateDirectory();
+    const fallbackPath = join2(stateDir, "opencode-notifier.json");
     const content = await readFile3(fallbackPath, "utf8");
     const json2 = JSON.parse(content);
     const parsed = NotifierConfigSchema.safeParse(json2);
     if (parsed.success)
       return parsed.data;
+  } catch {}
+  try {
+    const stateDir = defaultStateDirectory();
+    const identityPath = join2(stateDir, "telegram-identity.json");
+    const content = await readFile3(identityPath, "utf8");
+    const idJson = JSON.parse(content);
+    if (idJson.userId && idJson.chatId) {
+      return NotifierConfigSchema.parse({
+        mode: "local",
+        role: "gateway",
+        locale: idJson.locale || "auto",
+        telegram: {
+          tokenFile: idJson.tokenFile || join2(stateDir, "telegram-bot-token"),
+          userId: String(idJson.userId),
+          chatId: String(idJson.chatId)
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true
+        }
+      });
+    }
   } catch {}
   return;
 }
@@ -16560,4 +16585,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=A093D9A1568FFDB464756E2164756E21
+//# debugId=C35A36921A11B9F664756E2164756E21
