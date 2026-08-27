@@ -38,6 +38,7 @@ export declare const en: {
     readonly "cmd.help.nodes": "List connected node machines";
     readonly "cmd.help.sessions": "List active working sessions";
     readonly "cmd.help.cancel": "Cancel an active session";
+    readonly "cmd.help.run": "Dispatch new task to a machine or project";
     readonly "cmd.help.help": "Show this help menu";
     readonly "cmd.status.title": "📊 <b>Gateway System Status:</b>";
     readonly "cmd.nodes.title": "🌐 <b>Connected Machines:</b>";
@@ -48,6 +49,10 @@ export declare const en: {
     readonly "cmd.cancel.failed": "❌ Failed to cancel task.";
     readonly "cmd.cancel.notFound": "⚠️ Session not found or target host is offline.";
     readonly "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>";
+    readonly "cmd.run.spawned": "🚀 Task dispatched successfully to";
+    readonly "cmd.run.failed": "❌ Failed to dispatch task";
+    readonly "cmd.run.notFound": "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.";
+    readonly "cmd.run.usage": "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>";
     readonly "cmd.unknown": "❓ Unknown command. Type /help to view available commands.";
 };
 export type MessageKey = keyof typeof en;
@@ -91,6 +96,7 @@ export declare const zhTW: {
     readonly "cmd.help.nodes": "列出所有在線連線中的電腦主機";
     readonly "cmd.help.sessions": "列出目前活躍的工作階段";
     readonly "cmd.help.cancel": "中止正在執行中的任務";
+    readonly "cmd.help.run": "向指定主機或專案派發新任務";
     readonly "cmd.help.help": "顯示此說明選單";
     readonly "cmd.status.title": "📊 <b>Gateway 系統狀態：</b>";
     readonly "cmd.nodes.title": "🌐 <b>已連線電腦主機：</b>";
@@ -101,6 +107,10 @@ export declare const zhTW: {
     readonly "cmd.cancel.failed": "❌ 任務中止失敗。";
     readonly "cmd.cancel.notFound": "⚠️ 找不到指定 Session 或目標主機已離線。";
     readonly "cmd.cancel.usage": "ℹ️ 使用方式：<code>/cancel &lt;session_id&gt;</code>";
+    readonly "cmd.run.spawned": "🚀 任務已成功指派至";
+    readonly "cmd.run.failed": "❌ 任務指派失敗";
+    readonly "cmd.run.notFound": "⚠️ 找不到指定的目標主機或專案。請先輸入 /nodes 確認。";
+    readonly "cmd.run.usage": "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>";
     readonly "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。";
 };
 //# sourceMappingURL=catalogs.d.ts.map

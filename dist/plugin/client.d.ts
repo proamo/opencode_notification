@@ -13,6 +13,7 @@ export type BrokerClientOptions = {
     stateDirectory?: string;
     port?: number;
     hostLabel?: string | undefined;
+    projectLabel?: string | undefined;
     gatewayUrl?: string | undefined;
     gatewaySecret?: string | undefined;
     packageVersion: string;

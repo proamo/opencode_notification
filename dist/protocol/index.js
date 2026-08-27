@@ -14334,6 +14334,7 @@ var RegisterEnvelopeSchema = exports_external.object({
     machineId: exports_external.uuid(),
     instanceId: exports_external.uuid(),
     hostLabel: exports_external.string().min(1).max(128).optional(),
+    projectLabel: exports_external.string().min(1).max(128).optional(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: exports_external.array(exports_external.string().min(1).max(64)).max(64),
     telegram: TelegramRuntimeConfigSchema.optional()
@@ -14385,6 +14386,13 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     commandId: exports_external.uuid(),
     route: RouteKeySchema,
     reason: exports_external.string().min(1).max(256).optional()
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.spawn"),
+    commandId: exports_external.uuid(),
+    instanceId: exports_external.uuid().optional(),
+    title: exports_external.string().min(1).max(256).optional(),
+    prompt: exports_external.string().min(1).max(16384)
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -14525,4 +14533,4 @@ export {
   BROKER_CAPABILITIES
 };
 
-//# debugId=97CF2F4ADAD5A50164756E2164756E21
+//# debugId=8076F595763CDAD364756E2164756E21

@@ -38,6 +38,7 @@ export declare const RegisterEnvelopeSchema: z.ZodObject<{
         machineId: z.ZodUUID;
         instanceId: z.ZodUUID;
         hostLabel: z.ZodOptional<z.ZodString>;
+        projectLabel: z.ZodOptional<z.ZodString>;
         configFingerprint: z.ZodString;
         capabilities: z.ZodArray<z.ZodString>;
         telegram: z.ZodOptional<z.ZodObject<{
@@ -158,6 +159,12 @@ export declare const BrokerCommandSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         routeGeneration: z.ZodUUID;
     }, z.core.$strip>;
     reason: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>, z.ZodObject<{
+    type: z.ZodLiteral<"session.spawn">;
+    commandId: z.ZodUUID;
+    instanceId: z.ZodOptional<z.ZodUUID>;
+    title: z.ZodOptional<z.ZodString>;
+    prompt: z.ZodString;
 }, z.core.$strip>], "type">;
 export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
 export declare const CommandResultSchema: z.ZodObject<{
@@ -312,6 +319,12 @@ export declare const BrokerEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
             routeGeneration: z.ZodUUID;
         }, z.core.$strip>;
         reason: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>, z.ZodObject<{
+        type: z.ZodLiteral<"session.spawn">;
+        commandId: z.ZodUUID;
+        instanceId: z.ZodOptional<z.ZodUUID>;
+        title: z.ZodOptional<z.ZodString>;
+        prompt: z.ZodString;
     }, z.core.$strip>], "type">;
     protocol: z.ZodObject<{
         major: z.ZodLiteral<1>;
@@ -548,6 +561,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
         machineId: z.ZodUUID;
         instanceId: z.ZodUUID;
         hostLabel: z.ZodOptional<z.ZodString>;
+        projectLabel: z.ZodOptional<z.ZodString>;
         configFingerprint: z.ZodString;
         capabilities: z.ZodArray<z.ZodString>;
         telegram: z.ZodOptional<z.ZodObject<{

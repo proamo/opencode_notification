@@ -14334,6 +14334,7 @@ var RegisterEnvelopeSchema = exports_external.object({
     machineId: exports_external.uuid(),
     instanceId: exports_external.uuid(),
     hostLabel: exports_external.string().min(1).max(128).optional(),
+    projectLabel: exports_external.string().min(1).max(128).optional(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: exports_external.array(exports_external.string().min(1).max(64)).max(64),
     telegram: TelegramRuntimeConfigSchema.optional()
@@ -14385,6 +14386,13 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     commandId: exports_external.uuid(),
     route: RouteKeySchema,
     reason: exports_external.string().min(1).max(256).optional()
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.spawn"),
+    commandId: exports_external.uuid(),
+    instanceId: exports_external.uuid().optional(),
+    title: exports_external.string().min(1).max(256).optional(),
+    prompt: exports_external.string().min(1).max(16384)
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -14705,6 +14713,7 @@ var en = {
   "cmd.help.nodes": "List connected node machines",
   "cmd.help.sessions": "List active working sessions",
   "cmd.help.cancel": "Cancel an active session",
+  "cmd.help.run": "Dispatch new task to a machine or project",
   "cmd.help.help": "Show this help menu",
   "cmd.status.title": "\uD83D\uDCCA <b>Gateway System Status:</b>",
   "cmd.nodes.title": "\uD83C\uDF10 <b>Connected Machines:</b>",
@@ -14715,6 +14724,11 @@ var en = {
   "cmd.cancel.failed": "\u274C Failed to cancel task.",
   "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
   "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "\uD83D\uDE80 Task dispatched successfully to",
+  "cmd.run.failed": "\u274C Failed to dispatch task",
+  "cmd.run.notFound": "\u26A0\uFE0F Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.usage": `\u2139\uFE0F Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>
+Example: <code>/run adspower-farm check crawling logs</code>`,
   "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
 };
 var zhTW = {
@@ -14757,6 +14771,7 @@ var zhTW = {
   "cmd.help.nodes": "\u5217\u51FA\u6240\u6709\u5728\u7DDA\u9023\u7DDA\u4E2D\u7684\u96FB\u8166\u4E3B\u6A5F",
   "cmd.help.sessions": "\u5217\u51FA\u76EE\u524D\u6D3B\u8E8D\u7684\u5DE5\u4F5C\u968E\u6BB5",
   "cmd.help.cancel": "\u4E2D\u6B62\u6B63\u5728\u57F7\u884C\u4E2D\u7684\u4EFB\u52D9",
+  "cmd.help.run": "\u5411\u6307\u5B9A\u4E3B\u6A5F\u6216\u5C08\u6848\u6D3E\u767C\u65B0\u4EFB\u52D9",
   "cmd.help.help": "\u986F\u793A\u6B64\u8AAA\u660E\u9078\u55AE",
   "cmd.status.title": "\uD83D\uDCCA <b>Gateway \u7CFB\u7D71\u72C0\u614B\uFF1A</b>",
   "cmd.nodes.title": "\uD83C\uDF10 <b>\u5DF2\u9023\u7DDA\u96FB\u8166\u4E3B\u6A5F\uFF1A</b>",
@@ -14767,6 +14782,11 @@ var zhTW = {
   "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
   "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
   "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "\uD83D\uDE80 \u4EFB\u52D9\u5DF2\u6210\u529F\u6307\u6D3E\u81F3",
+  "cmd.run.failed": "\u274C \u4EFB\u52D9\u6307\u6D3E\u5931\u6557",
+  "cmd.run.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A\u7684\u76EE\u6A19\u4E3B\u6A5F\u6216\u5C08\u6848\u3002\u8ACB\u5148\u8F38\u5165 /nodes \u78BA\u8A8D\u3002",
+  "cmd.run.usage": `\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/run &lt;\u4E3B\u6A5F\u6216\u5C08\u6848&gt; &lt;\u4EFB\u52D9\u6307\u4EE4&gt;</code>
+\u4F8B\u5982\uFF1A<code>/run adspower-farm \u8ACB\u6AA2\u67E5\u722C\u87F2\u65E5\u8A8C</code>`,
   "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
 };
 
@@ -15924,6 +15944,7 @@ class BrokerClient {
       stateDirectory: options.stateDirectory ?? defaultStateDirectory(),
       port: options.port ?? DEFAULT_PORT,
       hostLabel: options.hostLabel,
+      projectLabel: options.projectLabel,
       gatewayUrl: options.gatewayUrl,
       gatewaySecret: options.gatewaySecret,
       packageVersion: options.packageVersion,
@@ -16104,6 +16125,7 @@ class BrokerClient {
           machineId: identity.machineId,
           instanceId: this.instanceId,
           ...this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {},
+          ...this.#options.projectLabel ? { projectLabel: this.#options.projectLabel } : {},
           configFingerprint: this.#options.configFingerprint,
           capabilities: [...BROKER_CAPABILITIES],
           ...this.#options.telegram ? { telegram: this.#options.telegram } : {}
@@ -16342,6 +16364,9 @@ async function runOpenCodeCommand(client, directory, command) {
   if (command.type === "session.cancel") {
     return await runSessionCancelCommand(client, directory, command);
   }
+  if (command.type === "session.spawn") {
+    return await runSessionSpawnCommand(client, directory, command);
+  }
   const exhaustive = command;
   return exhaustive;
 }
@@ -16488,6 +16513,52 @@ async function runSessionCancelCommand(client, directory, command) {
     };
   }
 }
+async function runSessionSpawnCommand(client, directory, command) {
+  const maybeSession = client.session;
+  try {
+    let sessionId;
+    if (typeof maybeSession?.create === "function") {
+      const createRes = await maybeSession.create({
+        query: { directory },
+        body: { title: command.title ?? "Telegram Remote Task" }
+      });
+      if (createRes && typeof createRes === "object" && "data" in createRes && createRes.data) {
+        sessionId = createRes.data.id ?? createRes.data.sessionID;
+      }
+    }
+    if (!sessionId) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: "failed to create new OpenCode session"
+      };
+    }
+    const promptRes = await client.session.prompt({
+      path: { id: sessionId },
+      query: { directory },
+      body: { parts: [{ type: "text", text: command.prompt }] }
+    });
+    if (promptRes.error) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: "failed to submit initial prompt"
+      };
+    }
+    return {
+      commandId: command.commandId,
+      status: "accepted",
+      reason: sessionId
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "session spawn failed";
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: msg
+    };
+  }
+}
 
 // src/plugin.ts
 function trace(msg) {
@@ -16535,6 +16606,7 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
   const broker = new BrokerClient({
     port: configData.broker.port,
     hostLabel: configData.hostLabel,
+    projectLabel: basename2(directory),
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
@@ -16670,4 +16742,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=902C499300AE43A664756E2164756E21
+//# debugId=635D3B7A47CFB15864756E2164756E21

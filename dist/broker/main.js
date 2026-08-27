@@ -14335,6 +14335,7 @@ var RegisterEnvelopeSchema = exports_external.object({
     machineId: exports_external.uuid(),
     instanceId: exports_external.uuid(),
     hostLabel: exports_external.string().min(1).max(128).optional(),
+    projectLabel: exports_external.string().min(1).max(128).optional(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: exports_external.array(exports_external.string().min(1).max(64)).max(64),
     telegram: TelegramRuntimeConfigSchema.optional()
@@ -14386,6 +14387,13 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     commandId: exports_external.uuid(),
     route: RouteKeySchema,
     reason: exports_external.string().min(1).max(256).optional()
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.spawn"),
+    commandId: exports_external.uuid(),
+    instanceId: exports_external.uuid().optional(),
+    title: exports_external.string().min(1).max(256).optional(),
+    prompt: exports_external.string().min(1).max(16384)
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -17165,7 +17173,7 @@ class RouteRegistry {
   #connections = new Map;
   #instances = new Map;
   #routes = new Map;
-  registerConnection(socket, instanceId, machineId, hostLabel) {
+  registerConnection(socket, instanceId, machineId, hostLabel, projectLabel) {
     const currentOwner = this.#instances.get(instanceId);
     if (currentOwner && currentOwner !== socket.data.connectionId) {
       throw new RouteRegistrationError("INSTANCE_ALREADY_REGISTERED", "instance is already owned by another connection");
@@ -17179,6 +17187,7 @@ class RouteRegistry {
       instanceId,
       machineId,
       hostLabel,
+      projectLabel,
       routeKeys: existing?.routeKeys ?? new Set
     });
     this.#instances.set(instanceId, socket.data.connectionId);
@@ -17250,6 +17259,12 @@ class RouteRegistry {
       return;
     return this.#connections.get(registered.connectionId)?.socket;
   }
+  ownerByInstance(instanceId) {
+    const connectionId = this.#instances.get(instanceId);
+    if (!connectionId)
+      return;
+    return this.#connections.get(connectionId)?.socket;
+  }
   removeConnection(connectionId) {
     const connection = this.#connections.get(connectionId);
     if (!connection)
@@ -17301,18 +17316,59 @@ class RouteRegistry {
       if (conn.hostLabel) {
         machine.hostLabel = conn.hostLabel;
       }
-      for (const routeKey of conn.routeKeys) {
-        const reg = this.#routes.get(routeKey);
-        if (reg) {
-          machine.projects.push({
-            projectLabel: reg.projectLabel,
-            sessionLabel: reg.sessionLabel,
-            sessionId: reg.route.sessionId
-          });
+      if (conn.routeKeys.size > 0) {
+        for (const routeKey of conn.routeKeys) {
+          const reg = this.#routes.get(routeKey);
+          if (reg) {
+            machine.projects.push({
+              projectLabel: reg.projectLabel,
+              sessionLabel: reg.sessionLabel,
+              sessionId: reg.route.sessionId
+            });
+          }
         }
+      } else if (conn.projectLabel) {
+        machine.projects.push({
+          projectLabel: conn.projectLabel
+        });
       }
     }
     return Array.from(machineMap.values());
+  }
+  findConnection(target) {
+    if (!target) {
+      if (this.#connections.size === 1) {
+        return this.#connections.values().next().value;
+      }
+      return;
+    }
+    const lower = target.toLowerCase().trim();
+    for (const conn of this.#connections.values()) {
+      if (conn.instanceId.toLowerCase().startsWith(lower) || conn.machineId.toLowerCase().startsWith(lower)) {
+        return conn;
+      }
+    }
+    for (const conn of this.#connections.values()) {
+      if (conn.projectLabel?.toLowerCase() === lower) {
+        return conn;
+      }
+    }
+    for (const conn of this.#connections.values()) {
+      if (conn.projectLabel?.toLowerCase().includes(lower)) {
+        return conn;
+      }
+    }
+    for (const conn of this.#connections.values()) {
+      if (conn.hostLabel?.toLowerCase().includes(lower)) {
+        return conn;
+      }
+    }
+    for (const reg of this.#routes.values()) {
+      if (reg.projectLabel.toLowerCase().includes(lower)) {
+        return this.#connections.get(reg.connectionId);
+      }
+    }
+    return;
   }
   listActiveSessions() {
     const sessions = [];
@@ -17392,6 +17448,7 @@ var en = {
   "cmd.help.nodes": "List connected node machines",
   "cmd.help.sessions": "List active working sessions",
   "cmd.help.cancel": "Cancel an active session",
+  "cmd.help.run": "Dispatch new task to a machine or project",
   "cmd.help.help": "Show this help menu",
   "cmd.status.title": "\uD83D\uDCCA <b>Gateway System Status:</b>",
   "cmd.nodes.title": "\uD83C\uDF10 <b>Connected Machines:</b>",
@@ -17402,6 +17459,11 @@ var en = {
   "cmd.cancel.failed": "\u274C Failed to cancel task.",
   "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
   "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "\uD83D\uDE80 Task dispatched successfully to",
+  "cmd.run.failed": "\u274C Failed to dispatch task",
+  "cmd.run.notFound": "\u26A0\uFE0F Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.usage": `\u2139\uFE0F Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>
+Example: <code>/run adspower-farm check crawling logs</code>`,
   "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
 };
 var zhTW = {
@@ -17444,6 +17506,7 @@ var zhTW = {
   "cmd.help.nodes": "\u5217\u51FA\u6240\u6709\u5728\u7DDA\u9023\u7DDA\u4E2D\u7684\u96FB\u8166\u4E3B\u6A5F",
   "cmd.help.sessions": "\u5217\u51FA\u76EE\u524D\u6D3B\u8E8D\u7684\u5DE5\u4F5C\u968E\u6BB5",
   "cmd.help.cancel": "\u4E2D\u6B62\u6B63\u5728\u57F7\u884C\u4E2D\u7684\u4EFB\u52D9",
+  "cmd.help.run": "\u5411\u6307\u5B9A\u4E3B\u6A5F\u6216\u5C08\u6848\u6D3E\u767C\u65B0\u4EFB\u52D9",
   "cmd.help.help": "\u986F\u793A\u6B64\u8AAA\u660E\u9078\u55AE",
   "cmd.status.title": "\uD83D\uDCCA <b>Gateway \u7CFB\u7D71\u72C0\u614B\uFF1A</b>",
   "cmd.nodes.title": "\uD83C\uDF10 <b>\u5DF2\u9023\u7DDA\u96FB\u8166\u4E3B\u6A5F\uFF1A</b>",
@@ -17454,6 +17517,11 @@ var zhTW = {
   "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
   "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
   "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "\uD83D\uDE80 \u4EFB\u52D9\u5DF2\u6210\u529F\u6307\u6D3E\u81F3",
+  "cmd.run.failed": "\u274C \u4EFB\u52D9\u6307\u6D3E\u5931\u6557",
+  "cmd.run.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A\u7684\u76EE\u6A19\u4E3B\u6A5F\u6216\u5C08\u6848\u3002\u8ACB\u5148\u8F38\u5165 /nodes \u78BA\u8A8D\u3002",
+  "cmd.run.usage": `\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/run &lt;\u4E3B\u6A5F\u6216\u5C08\u6848&gt; &lt;\u4EFB\u52D9\u6307\u4EE4&gt;</code>
+\u4F8B\u5982\uFF1A<code>/run adspower-farm \u8ACB\u6AA2\u67E5\u722C\u87F2\u65E5\u8A8C</code>`,
   "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
 };
 
@@ -17609,6 +17677,9 @@ async function executeSlashCommand(context) {
     case "cancel": {
       return await handleCancelCommand(args, context, locale);
     }
+    case "run": {
+      return await handleRunCommand(args, context, locale);
+    }
     default: {
       return translate(locale, "cmd.unknown");
     }
@@ -17618,6 +17689,7 @@ function renderHelpMenu(locale) {
   const lines = [
     translate(locale, "cmd.help.title"),
     "",
+    `\u2022 <code>/run &lt;project&gt; &lt;prompt&gt;</code> - ${translate(locale, "cmd.help.run")}`,
     `\u2022 <code>/status</code> - ${translate(locale, "cmd.help.status")}`,
     `\u2022 <code>/nodes</code> - ${translate(locale, "cmd.help.nodes")}`,
     `\u2022 <code>/sessions</code> - ${translate(locale, "cmd.help.sessions")}`,
@@ -17729,6 +17801,58 @@ async function handleCancelCommand(args, context, locale) {
     return translate(locale, "cmd.cancel.success");
   }
   return `${translate(locale, "cmd.cancel.failed")} (${result.reason ?? result.status})`;
+}
+async function handleRunCommand(args, context, locale) {
+  if (args.length === 0) {
+    return translate(locale, "cmd.run.usage");
+  }
+  const targetArg = args[0] ?? "";
+  let prompt = args.slice(1).join(" ").trim();
+  let targetConn = context.registry.findConnection(targetArg);
+  if (!targetConn && args.length >= 3) {
+    const conn2 = context.registry.findConnection(args[1]) ?? context.registry.findConnection(args[0]);
+    if (conn2) {
+      targetConn = conn2;
+      prompt = args.slice(2).join(" ").trim();
+    }
+  }
+  if (!targetConn) {
+    const defaultConn = context.registry.findConnection(undefined);
+    if (defaultConn) {
+      targetConn = defaultConn;
+      prompt = args.join(" ").trim();
+    }
+  }
+  if (!targetConn || !prompt) {
+    return `${translate(locale, "cmd.run.notFound")}
+
+${translate(locale, "cmd.run.usage")}`;
+  }
+  const commandId = randomUUID4();
+  const hostName = targetConn.hostLabel || "codeCenter";
+  const projectName = targetConn.projectLabel || "project";
+  const result = await context.dispatcher.sendCommand({
+    type: "session.spawn",
+    commandId,
+    instanceId: targetConn.instanceId,
+    title: prompt.slice(0, 50),
+    prompt
+  });
+  if (result.status === "accepted") {
+    const sessionId = result.reason ? `<code>${result.reason}</code>` : "";
+    const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+    const lines = [
+      `${translate(locale, "cmd.run.spawned")} <b>[${hostName}] ${projectName}</b> \uD83D\uDE80`,
+      "",
+      `\uD83D\uDCDD <b>\u6307\u4EE4\uFF1A</b> <i>${promptDisplay}</i>`,
+      ...sessionId ? [`\uD83C\uDD94 <b>Session:</b> ${sessionId}`] : [],
+      "",
+      locale === "zh-TW" ? "\u23F3 \u4EFB\u52D9\u5DF2\u555F\u52D5\uFF0C\u57F7\u884C\u5B8C\u6210\u5F8C\u5C07\u81EA\u52D5\u63A8\u64AD\u7D50\u8AD6\u81F3\u6B64\uFF01" : "\u23F3 Task started! A notification with the summary will arrive upon completion."
+    ];
+    return lines.join(`
+`);
+  }
+  return `${translate(locale, "cmd.run.failed")}: ${result.reason ?? result.status}`;
 }
 // src/telegram/interaction.ts
 import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
@@ -18497,10 +18621,29 @@ class BrokerServer {
     this.#resolveFinished();
   }
   async sendCommand(command, timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS) {
-    const registered = this.registry.resolve(command.route);
-    const socket = registered ? this.registry.owner(registered.route) : undefined;
-    if (!registered || !socket) {
-      return { commandId: command.commandId, status: "stale", reason: "route is offline" };
+    let socket;
+    let payloadCommand = { ...command };
+    if (command.type === "session.spawn") {
+      if (command.instanceId) {
+        socket = this.registry.ownerByInstance(command.instanceId);
+      }
+      if (!socket) {
+        return {
+          commandId: command.commandId,
+          status: "stale",
+          reason: "target instance is offline"
+        };
+      }
+    } else {
+      const registered = this.registry.resolve(command.route);
+      socket = registered ? this.registry.owner(registered.route) : undefined;
+      if (!registered || !socket) {
+        return { commandId: command.commandId, status: "stale", reason: "route is offline" };
+      }
+      payloadCommand = {
+        ...command,
+        route: registered.route
+      };
     }
     const requestId = randomUUID6();
     const result = new Promise((resolve2) => {
@@ -18525,10 +18668,7 @@ class BrokerServer {
       type: "command",
       requestId,
       sentAt: new Date().toISOString(),
-      payload: {
-        ...command,
-        route: registered.route
-      }
+      payload: payloadCommand
     });
     return await result;
   }
@@ -19025,7 +19165,7 @@ function handleMessage(socket, message, machineId, registry2, pendingCommands, a
         if (missingCapability) {
           throw new RouteRegistrationError("CAPABILITY_REQUIRED", `required capability is missing: ${missingCapability}`);
         }
-        registry2.registerConnection(socket, envelope.payload.instanceId, envelope.payload.machineId, envelope.payload.hostLabel);
+        registry2.registerConnection(socket, envelope.payload.instanceId, envelope.payload.machineId, envelope.payload.hostLabel, envelope.payload.projectLabel);
         if (envelope.payload.telegram)
           ensureTelegramRuntime(envelope.payload.telegram);
         activeConfigFingerprint.value ??= envelope.payload.configFingerprint;
@@ -19780,4 +19920,4 @@ export {
   runBroker
 };
 
-//# debugId=99C0078627E6645A64756E2164756E21
+//# debugId=0F022CBE010701CF64756E2164756E21

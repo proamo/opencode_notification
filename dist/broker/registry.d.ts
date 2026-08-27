@@ -13,9 +13,17 @@ export type RegisteredRoute = {
     sessionLabel: string;
     connectionId: string;
 };
+type OwnedConnection = {
+    socket: ServerWebSocket<BrokerConnectionData>;
+    instanceId: string;
+    machineId: string;
+    hostLabel?: string | undefined;
+    projectLabel?: string | undefined;
+    routeKeys: Set<string>;
+};
 export declare class RouteRegistry {
     #private;
-    registerConnection(socket: ServerWebSocket<BrokerConnectionData>, instanceId: string, machineId: string, hostLabel?: string): void;
+    registerConnection(socket: ServerWebSocket<BrokerConnectionData>, instanceId: string, machineId: string, hostLabel?: string, projectLabel?: string): void;
     registerRoute(connectionId: string, input: {
         route: RouteKey;
         hostLabel?: string | undefined;
@@ -25,6 +33,7 @@ export declare class RouteRegistry {
     unregisterRoute(connectionId: string, route: RouteKey): boolean;
     resolve(route: RouteKey): RegisteredRoute | undefined;
     owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined;
+    ownerByInstance(instanceId: string): ServerWebSocket<BrokerConnectionData> | undefined;
     removeConnection(connectionId: string): void;
     get connectionCount(): number;
     get routeCount(): number;
@@ -43,10 +52,11 @@ export declare class RouteRegistry {
         totalRoutesCount: number;
         projects: Array<{
             projectLabel: string;
-            sessionLabel: string;
-            sessionId: string;
+            sessionLabel?: string;
+            sessionId?: string;
         }>;
     }>;
+    findConnection(target?: string): OwnedConnection | undefined;
     listActiveSessions(): Array<{
         route: RouteKey;
         projectLabel: string;
@@ -59,4 +69,5 @@ export declare class RouteRegistrationError extends Error {
     constructor(code: string, message: string);
 }
 export declare function serializeRouteKey(route: RouteKey): string;
+export {};
 //# sourceMappingURL=registry.d.ts.map
