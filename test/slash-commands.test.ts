@@ -114,15 +114,17 @@ describe("Slash Commands System", () => {
       },
     };
 
+    const machineId = crypto.randomUUID();
+    const instanceId = crypto.randomUUID();
     const fakeSocket = { data: { connectionId: "conn-1" }, close: () => {} } as any;
-    registry.registerConnection(fakeSocket, "inst-1", "mach-1", "d009-win10");
+    registry.registerConnection(fakeSocket, instanceId, machineId, "d009-win10");
 
     const route: RouteKey = {
-      machineId: "mach-1",
-      instanceId: "inst-1",
-      projectId: "proj-1",
+      machineId,
+      instanceId,
+      projectId: "opaque-project-alpha-12345",
       sessionId: "ses_task_999",
-      routeGeneration: "gen-1",
+      routeGeneration: crypto.randomUUID(),
     };
     registry.registerRoute("conn-1", {
       route,
