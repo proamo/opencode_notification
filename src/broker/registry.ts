@@ -206,6 +206,66 @@ export class RouteRegistry {
     return nodes;
   }
 
+  listMachines(): Array<{
+    machineId: string;
+    hostLabel: string;
+    connectionsCount: number;
+    totalRoutesCount: number;
+    projects: Array<{
+      projectLabel: string;
+      sessionLabel: string;
+      sessionId: string;
+    }>;
+  }> {
+    const machineMap = new Map<
+      string,
+      {
+        machineId: string;
+        hostLabel: string;
+        connectionsCount: number;
+        totalRoutesCount: number;
+        projects: Array<{
+          projectLabel: string;
+          sessionLabel: string;
+          sessionId: string;
+        }>;
+      }
+    >();
+
+    for (const conn of this.#connections.values()) {
+      const label = conn.hostLabel || "codeCenter";
+      let machine = machineMap.get(conn.machineId);
+      if (!machine) {
+        machine = {
+          machineId: conn.machineId,
+          hostLabel: label,
+          connectionsCount: 0,
+          totalRoutesCount: 0,
+          projects: [],
+        };
+        machineMap.set(conn.machineId, machine);
+      }
+      machine.connectionsCount += 1;
+      machine.totalRoutesCount += conn.routeKeys.size;
+      if (conn.hostLabel) {
+        machine.hostLabel = conn.hostLabel;
+      }
+
+      for (const routeKey of conn.routeKeys) {
+        const reg = this.#routes.get(routeKey);
+        if (reg) {
+          machine.projects.push({
+            projectLabel: reg.projectLabel,
+            sessionLabel: reg.sessionLabel,
+            sessionId: reg.route.sessionId,
+          });
+        }
+      }
+    }
+
+    return Array.from(machineMap.values());
+  }
+
   listActiveSessions(): Array<{
     route: RouteKey;
     projectLabel: string;

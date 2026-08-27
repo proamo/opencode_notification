@@ -109,18 +109,32 @@ function renderGatewayStatus(context: SlashCommandContext, locale: SupportedLoca
 }
 
 function renderConnectedNodes(context: SlashCommandContext, locale: SupportedLocale): string {
-  const nodes = context.registry.listNodes();
-  if (nodes.length === 0) {
+  const machines = context.registry.listMachines();
+  if (machines.length === 0) {
     return `${translate(locale, "cmd.nodes.title")}\n\n${translate(locale, "cmd.nodes.empty")}`;
   }
 
   const lines = [translate(locale, "cmd.nodes.title"), ""];
 
-  for (const node of nodes) {
-    const label = node.hostLabel || "local";
-    lines.push(`🖥️ <b>[${label}]</b> 🟢 Online`);
-    lines.push(`  • Machine ID: <code>${node.machineId.slice(0, 8)}...</code>`);
-    lines.push(`  • Active Routes: <code>${node.activeRoutesCount}</code>`);
+  for (const m of machines) {
+    const isLocal = m.hostLabel === "local" ? "codeCenter" : m.hostLabel;
+    const projectCountText =
+      locale === "zh-TW"
+        ? `${m.connectionsCount} 個專案連線`
+        : `${m.connectionsCount} project connection(s)`;
+
+    lines.push(`🖥️ <b>[${isLocal}]</b> 🟢 Online (${projectCountText})`);
+    lines.push(`  • Machine ID: <code>${m.machineId.slice(0, 8)}...</code>`);
+
+    if (m.projects.length > 0) {
+      lines.push("  • <b>活躍專案與 Session：</b>");
+      for (const p of m.projects) {
+        lines.push(`    📁 <code>${p.projectLabel}</code> - <i>${p.sessionLabel}</i>`);
+      }
+    } else {
+      const idleText = locale === "zh-TW" ? "待命中（無進行中任務）" : "Idle (no active tasks)";
+      lines.push(`  • 狀態：<i>${idleText}</i>`);
+    }
     lines.push("");
   }
 
