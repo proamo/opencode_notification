@@ -14310,8 +14310,8 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   userId: TelegramIdSchema,
   chatId: TelegramIdSchema,
   locale: exports_external.enum(["en", "zh-TW"]),
-  sessionPromptTtlMinutes: exports_external.number().int().min(1).max(24 * 60),
-  questionTtlMinutes: exports_external.number().int().min(1).max(24 * 60)
+  sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
+  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60)
 });
 var RouteKeySchema = exports_external.object({
   machineId: exports_external.uuid(),
@@ -14553,8 +14553,8 @@ var NotifierConfigSchema = exports_external.object({
     port: exports_external.number().int().min(1024).max(65535).default(42617)
   }).strict().prefault({}),
   interaction: exports_external.object({
-    sessionPromptTtlMinutes: exports_external.number().int().min(1).max(24 * 60).default(24 * 60),
-    questionTtlMinutes: exports_external.number().int().min(1).max(24 * 60).default(30)
+    sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30 * 24 * 60),
+    questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30)
   }).strict().prefault({})
 }).strict().superRefine(({ role, gateway, telegram }, context) => {
   if (role === "node") {
@@ -16742,4 +16742,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=635D3B7A47CFB15864756E2164756E21
+//# debugId=74295BB097300FBB64756E2164756E21

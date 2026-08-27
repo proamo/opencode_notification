@@ -14311,8 +14311,8 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   userId: TelegramIdSchema,
   chatId: TelegramIdSchema,
   locale: exports_external.enum(["en", "zh-TW"]),
-  sessionPromptTtlMinutes: exports_external.number().int().min(1).max(24 * 60),
-  questionTtlMinutes: exports_external.number().int().min(1).max(24 * 60)
+  sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
+  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60)
 });
 var RouteKeySchema = exports_external.object({
   machineId: exports_external.uuid(),
@@ -14555,8 +14555,8 @@ var NotifierConfigSchema = exports_external.object({
     port: exports_external.number().int().min(1024).max(65535).default(42617)
   }).strict().prefault({}),
   interaction: exports_external.object({
-    sessionPromptTtlMinutes: exports_external.number().int().min(1).max(24 * 60).default(24 * 60),
-    questionTtlMinutes: exports_external.number().int().min(1).max(24 * 60).default(30)
+    sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30 * 24 * 60),
+    questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30)
   }).strict().prefault({})
 }).strict().superRefine(({ role, gateway, telegram }, context) => {
   if (role === "node") {
@@ -17808,6 +17808,52 @@ async function handleRunCommand(args, context, locale) {
   }
   const targetArg = args[0] ?? "";
   let prompt = args.slice(1).join(" ").trim();
+  const activeSessions = context.registry.listActiveSessions();
+  const sessionMatch = activeSessions.find((s) => s.route.sessionId.toLowerCase() === targetArg.toLowerCase() || targetArg.startsWith("ses_") && s.route.sessionId.toLowerCase().startsWith(targetArg.toLowerCase()));
+  let sessionRoute = sessionMatch?.route;
+  let sessionProjectLabel = sessionMatch?.projectLabel;
+  let sessionTitle = sessionMatch?.sessionLabel;
+  let sessionHost = sessionMatch?.hostLabel;
+  if (!sessionRoute && targetArg.startsWith("ses_")) {
+    const dummyRoute = {
+      machineId: "00000000-0000-0000-0000-000000000000",
+      instanceId: "00000000-0000-0000-0000-000000000000",
+      projectId: "unknown-project-placeholder",
+      sessionId: targetArg,
+      routeGeneration: "00000000-0000-0000-0000-000000000000"
+    };
+    const resolved = context.registry.resolve(dummyRoute);
+    if (resolved) {
+      sessionRoute = resolved.route;
+      sessionProjectLabel = resolved.projectLabel;
+      sessionTitle = resolved.sessionLabel;
+      sessionHost = resolved.hostLabel;
+    }
+  }
+  if (sessionRoute && prompt) {
+    const commandId2 = randomUUID4();
+    const result2 = await context.dispatcher.sendCommand({
+      type: "session.prompt",
+      commandId: commandId2,
+      route: sessionRoute,
+      text: prompt
+    });
+    if (result2.status === "accepted") {
+      const hostTag = sessionHost ? `[${sessionHost}] ` : "";
+      const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+      const lines = [
+        locale === "zh-TW" ? `\uD83D\uDD04 <b>\u5DF2\u6210\u529F\u63A5\u7E8C\u81F3\u6B77\u53F2\u5DE5\u4F5C\u968E\u6BB5\uFF1A${hostTag}${sessionProjectLabel ?? "\u5C08\u6848"}</b>` : `\uD83D\uDD04 <b>Resumed session: ${hostTag}${sessionProjectLabel ?? "project"}</b>`,
+        "",
+        `\uD83D\uDCDD <b>Session:</b> <i>${sessionTitle ?? "\u4EFB\u52D9"}</i> (<code>${sessionRoute.sessionId}</code>)`,
+        `\uD83D\uDCAC <b>\u6307\u4EE4\uFF1A</b> <i>${promptDisplay}</i>`,
+        "",
+        locale === "zh-TW" ? "\u23F3 \u6B63\u5728\u8A72 Session \u4E0A\u4E0B\u6587\u4E2D\u57F7\u884C\uFF0C\u5B8C\u6210\u5F8C\u5C07\u81EA\u52D5\u63A8\u64AD\u7D50\u8AD6\uFF01" : "\u23F3 Running in existing session context, a notification will arrive upon completion."
+      ];
+      return lines.join(`
+`);
+    }
+    return `${translate(locale, "cmd.run.failed")}: ${result2.reason ?? result2.status}`;
+  }
   let targetConn = context.registry.findConnection(targetArg);
   if (!targetConn && args.length >= 3) {
     const conn2 = context.registry.findConnection(args[1]) ?? context.registry.findConnection(args[0]);
@@ -19920,4 +19966,4 @@ export {
   runBroker
 };
 
-//# debugId=0F022CBE010701CF64756E2164756E21
+//# debugId=F35EFC3698F8346064756E2164756E21
