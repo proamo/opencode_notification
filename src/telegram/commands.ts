@@ -170,7 +170,7 @@ async function handleCancelCommand(
     const dummyRoute: RouteKey = {
       machineId: "00000000-0000-0000-0000-000000000000",
       instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown",
+      projectId: "unknown-project-placeholder",
       sessionId,
       routeGeneration: "00000000-0000-0000-0000-000000000000",
     };
