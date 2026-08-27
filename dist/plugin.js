@@ -14379,6 +14379,12 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     route: RouteKeySchema,
     interactionId: exports_external.string().min(1).max(256),
     response: exports_external.enum(["once", "always", "reject"])
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.cancel"),
+    commandId: exports_external.uuid(),
+    route: RouteKeySchema,
+    reason: exports_external.string().min(1).max(256).optional()
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -14693,7 +14699,23 @@ var en = {
   "interaction.replyRequired": "Reply directly to an actionable notification.",
   "interaction.stale": "This notification is no longer active. Wait for a new notification.",
   "interaction.terminalOnly": "This action must be handled in the OpenCode terminal.",
-  "test.message": "OpenCode Telegram Link test notification"
+  "test.message": "OpenCode Telegram Link test notification",
+  "cmd.help.title": "\uD83E\uDD16 <b>OpenCode Commander - Commands:</b>",
+  "cmd.help.status": "Show Gateway & system status",
+  "cmd.help.nodes": "List connected node machines",
+  "cmd.help.sessions": "List active working sessions",
+  "cmd.help.cancel": "Cancel an active session",
+  "cmd.help.help": "Show this help menu",
+  "cmd.status.title": "\uD83D\uDCCA <b>Gateway System Status:</b>",
+  "cmd.nodes.title": "\uD83C\uDF10 <b>Connected Machines:</b>",
+  "cmd.nodes.empty": "No nodes currently connected.",
+  "cmd.sessions.title": "\uD83D\uDCDD <b>Active Sessions:</b>",
+  "cmd.sessions.empty": "No active sessions running.",
+  "cmd.cancel.success": "\uD83D\uDED1 Task canceled successfully.",
+  "cmd.cancel.failed": "\u274C Failed to cancel task.",
+  "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
+  "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
+  "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
 };
 var zhTW = {
   "event.completed": "\u5DE5\u4F5C\u5DF2\u5B8C\u6210",
@@ -14729,7 +14751,23 @@ var zhTW = {
   "interaction.replyRequired": "\u8ACB\u76F4\u63A5\u56DE\u8986\u53EF\u64CD\u4F5C\u7684\u901A\u77E5\u3002",
   "interaction.stale": "\u6B64\u901A\u77E5\u5DF2\u4E0D\u518D\u6709\u6548\uFF0C\u8ACB\u7B49\u5F85\u65B0\u7684\u901A\u77E5\u3002",
   "interaction.terminalOnly": "\u6B64\u64CD\u4F5C\u5FC5\u9808\u5728 OpenCode \u7D42\u7AEF\u6A5F\u4E2D\u8655\u7406\u3002",
-  "test.message": "OpenCode Telegram Link \u6E2C\u8A66\u901A\u77E5"
+  "test.message": "OpenCode Telegram Link \u6E2C\u8A66\u901A\u77E5",
+  "cmd.help.title": "\uD83E\uDD16 <b>OpenCode \u884C\u52D5\u6307\u63EE\u5B98 - \u53EF\u7528\u6307\u4EE4\uFF1A</b>",
+  "cmd.help.status": "\u67E5\u770B Gateway \u8207\u7CFB\u7D71\u72C0\u614B",
+  "cmd.help.nodes": "\u5217\u51FA\u6240\u6709\u5728\u7DDA\u9023\u7DDA\u4E2D\u7684\u96FB\u8166\u4E3B\u6A5F",
+  "cmd.help.sessions": "\u5217\u51FA\u76EE\u524D\u6D3B\u8E8D\u7684\u5DE5\u4F5C\u968E\u6BB5",
+  "cmd.help.cancel": "\u4E2D\u6B62\u6B63\u5728\u57F7\u884C\u4E2D\u7684\u4EFB\u52D9",
+  "cmd.help.help": "\u986F\u793A\u6B64\u8AAA\u660E\u9078\u55AE",
+  "cmd.status.title": "\uD83D\uDCCA <b>Gateway \u7CFB\u7D71\u72C0\u614B\uFF1A</b>",
+  "cmd.nodes.title": "\uD83C\uDF10 <b>\u5DF2\u9023\u7DDA\u96FB\u8166\u4E3B\u6A5F\uFF1A</b>",
+  "cmd.nodes.empty": "\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u5728\u7DDA\u96FB\u8166\u3002",
+  "cmd.sessions.title": "\uD83D\uDCDD <b>\u6D3B\u8E8D\u5DE5\u4F5C\u968E\u6BB5\uFF1A</b>",
+  "cmd.sessions.empty": "\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u9032\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5\u3002",
+  "cmd.cancel.success": "\uD83D\uDED1 \u4EFB\u52D9\u5DF2\u6210\u529F\u4E2D\u6B62\u3002",
+  "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
+  "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
+  "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
+  "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
 };
 
 // src/i18n/index.ts
@@ -16301,6 +16339,9 @@ async function runOpenCodeCommand(client, directory, command) {
   if (command.type === "permission.reply") {
     return await runPermissionReplyCommand(client, directory, command);
   }
+  if (command.type === "session.cancel") {
+    return await runSessionCancelCommand(client, directory, command);
+  }
   const exhaustive = command;
   return exhaustive;
 }
@@ -16402,6 +16443,35 @@ function permissionReplyApi(client) {
     };
   }
   return;
+}
+async function runSessionCancelCommand(client, directory, command) {
+  const maybeSession = client.session;
+  try {
+    if (typeof maybeSession?.abort === "function") {
+      const res = await maybeSession.abort({ path: { id: command.route.sessionId }, query: { directory } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session abort failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+    if (typeof maybeSession?.stop === "function") {
+      const res = await maybeSession.stop({ path: { id: command.route.sessionId } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session stop failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+    if (typeof maybeSession?.cancel === "function") {
+      const res = await maybeSession.cancel({ path: { id: command.route.sessionId } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session cancel failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+    return { commandId: command.commandId, status: "rejected", reason: "cancel API not supported by OpenCode client" };
+  } catch {
+    return { commandId: command.commandId, status: "indeterminate", reason: "cancel execution error" };
+  }
 }
 
 // src/plugin.ts
@@ -16585,4 +16655,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=C35A36921A11B9F664756E2164756E21
+//# debugId=C8D59AEFCB45202164756E2164756E21

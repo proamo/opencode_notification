@@ -14380,6 +14380,12 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     route: RouteKeySchema,
     interactionId: exports_external.string().min(1).max(256),
     response: exports_external.enum(["once", "always", "reject"])
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.cancel"),
+    commandId: exports_external.uuid(),
+    route: RouteKeySchema,
+    reason: exports_external.string().min(1).max(256).optional()
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -17262,6 +17268,32 @@ class RouteRegistry {
   get routeCount() {
     return this.#routes.size;
   }
+  listNodes() {
+    const nodes = [];
+    for (const [connectionId, conn] of this.#connections) {
+      nodes.push({
+        connectionId,
+        machineId: conn.machineId,
+        instanceId: conn.instanceId,
+        ...conn.hostLabel ? { hostLabel: conn.hostLabel } : {},
+        activeRoutesCount: conn.routeKeys.size,
+        ...conn.socket.data.lastHeartbeatAt ? { lastHeartbeatAt: conn.socket.data.lastHeartbeatAt } : {}
+      });
+    }
+    return nodes;
+  }
+  listActiveSessions() {
+    const sessions = [];
+    for (const registered of this.#routes.values()) {
+      sessions.push({
+        route: registered.route,
+        projectLabel: registered.projectLabel,
+        sessionLabel: registered.sessionLabel,
+        ...registered.hostLabel ? { hostLabel: registered.hostLabel } : {}
+      });
+    }
+    return sessions;
+  }
 }
 
 class RouteRegistrationError extends Error {
@@ -17285,7 +17317,7 @@ function sameSessionRoute(left, right) {
   return left.machineId === right.machineId && left.instanceId === right.instanceId && left.projectId === right.projectId && left.sessionId === right.sessionId;
 }
 // src/broker/server.ts
-import { createHash as createHash5, randomUUID as randomUUID5, timingSafeEqual } from "crypto";
+import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
 
 // src/i18n/catalogs.ts
 var en = {
@@ -17322,7 +17354,23 @@ var en = {
   "interaction.replyRequired": "Reply directly to an actionable notification.",
   "interaction.stale": "This notification is no longer active. Wait for a new notification.",
   "interaction.terminalOnly": "This action must be handled in the OpenCode terminal.",
-  "test.message": "OpenCode Telegram Link test notification"
+  "test.message": "OpenCode Telegram Link test notification",
+  "cmd.help.title": "\uD83E\uDD16 <b>OpenCode Commander - Commands:</b>",
+  "cmd.help.status": "Show Gateway & system status",
+  "cmd.help.nodes": "List connected node machines",
+  "cmd.help.sessions": "List active working sessions",
+  "cmd.help.cancel": "Cancel an active session",
+  "cmd.help.help": "Show this help menu",
+  "cmd.status.title": "\uD83D\uDCCA <b>Gateway System Status:</b>",
+  "cmd.nodes.title": "\uD83C\uDF10 <b>Connected Machines:</b>",
+  "cmd.nodes.empty": "No nodes currently connected.",
+  "cmd.sessions.title": "\uD83D\uDCDD <b>Active Sessions:</b>",
+  "cmd.sessions.empty": "No active sessions running.",
+  "cmd.cancel.success": "\uD83D\uDED1 Task canceled successfully.",
+  "cmd.cancel.failed": "\u274C Failed to cancel task.",
+  "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
+  "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
+  "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
 };
 var zhTW = {
   "event.completed": "\u5DE5\u4F5C\u5DF2\u5B8C\u6210",
@@ -17358,7 +17406,23 @@ var zhTW = {
   "interaction.replyRequired": "\u8ACB\u76F4\u63A5\u56DE\u8986\u53EF\u64CD\u4F5C\u7684\u901A\u77E5\u3002",
   "interaction.stale": "\u6B64\u901A\u77E5\u5DF2\u4E0D\u518D\u6709\u6548\uFF0C\u8ACB\u7B49\u5F85\u65B0\u7684\u901A\u77E5\u3002",
   "interaction.terminalOnly": "\u6B64\u64CD\u4F5C\u5FC5\u9808\u5728 OpenCode \u7D42\u7AEF\u6A5F\u4E2D\u8655\u7406\u3002",
-  "test.message": "OpenCode Telegram Link \u6E2C\u8A66\u901A\u77E5"
+  "test.message": "OpenCode Telegram Link \u6E2C\u8A66\u901A\u77E5",
+  "cmd.help.title": "\uD83E\uDD16 <b>OpenCode \u884C\u52D5\u6307\u63EE\u5B98 - \u53EF\u7528\u6307\u4EE4\uFF1A</b>",
+  "cmd.help.status": "\u67E5\u770B Gateway \u8207\u7CFB\u7D71\u72C0\u614B",
+  "cmd.help.nodes": "\u5217\u51FA\u6240\u6709\u5728\u7DDA\u9023\u7DDA\u4E2D\u7684\u96FB\u8166\u4E3B\u6A5F",
+  "cmd.help.sessions": "\u5217\u51FA\u76EE\u524D\u6D3B\u8E8D\u7684\u5DE5\u4F5C\u968E\u6BB5",
+  "cmd.help.cancel": "\u4E2D\u6B62\u6B63\u5728\u57F7\u884C\u4E2D\u7684\u4EFB\u52D9",
+  "cmd.help.help": "\u986F\u793A\u6B64\u8AAA\u660E\u9078\u55AE",
+  "cmd.status.title": "\uD83D\uDCCA <b>Gateway \u7CFB\u7D71\u72C0\u614B\uFF1A</b>",
+  "cmd.nodes.title": "\uD83C\uDF10 <b>\u5DF2\u9023\u7DDA\u96FB\u8166\u4E3B\u6A5F\uFF1A</b>",
+  "cmd.nodes.empty": "\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u5728\u7DDA\u96FB\u8166\u3002",
+  "cmd.sessions.title": "\uD83D\uDCDD <b>\u6D3B\u8E8D\u5DE5\u4F5C\u968E\u6BB5\uFF1A</b>",
+  "cmd.sessions.empty": "\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u9032\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5\u3002",
+  "cmd.cancel.success": "\uD83D\uDED1 \u4EFB\u52D9\u5DF2\u6210\u529F\u4E2D\u6B62\u3002",
+  "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
+  "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
+  "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
+  "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
 };
 
 // src/i18n/index.ts
@@ -18165,6 +18229,164 @@ async function abortableDelay(milliseconds, signal) {
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
+// src/telegram/commands.ts
+import { randomUUID as randomUUID5 } from "crypto";
+function isSlashCommand(text) {
+  if (!text)
+    return false;
+  const trimmed = text.trim();
+  return trimmed.startsWith("/") && trimmed.length > 1;
+}
+function parseSlashCommand(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/"))
+    return;
+  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
+  if (parts.length === 0)
+    return;
+  const rawCommand = parts[0];
+  if (!rawCommand)
+    return;
+  const command = rawCommand.split("@")[0]?.toLowerCase() ?? "";
+  const args = parts.slice(1);
+  return { command, args };
+}
+async function executeSlashCommand(context) {
+  const parsed = parseSlashCommand(context.text);
+  const locale = context.locale ?? "zh-TW";
+  if (!parsed) {
+    return translate(locale, "cmd.unknown");
+  }
+  const { command, args } = parsed;
+  switch (command) {
+    case "start":
+    case "help": {
+      return renderHelpMenu(locale);
+    }
+    case "status": {
+      return renderGatewayStatus(context, locale);
+    }
+    case "nodes": {
+      return renderConnectedNodes(context, locale);
+    }
+    case "sessions": {
+      return renderActiveSessions(context, locale);
+    }
+    case "cancel": {
+      return await handleCancelCommand(args, context, locale);
+    }
+    default: {
+      return translate(locale, "cmd.unknown");
+    }
+  }
+}
+function renderHelpMenu(locale) {
+  const lines = [
+    translate(locale, "cmd.help.title"),
+    "",
+    `\u2022 <code>/status</code> - ${translate(locale, "cmd.help.status")}`,
+    `\u2022 <code>/nodes</code> - ${translate(locale, "cmd.help.nodes")}`,
+    `\u2022 <code>/sessions</code> - ${translate(locale, "cmd.help.sessions")}`,
+    `\u2022 <code>/cancel &lt;session_id&gt;</code> - ${translate(locale, "cmd.help.cancel")}`,
+    `\u2022 <code>/help</code> - ${translate(locale, "cmd.help.help")}`
+  ];
+  return lines.join(`
+`);
+}
+function renderGatewayStatus(context, locale) {
+  const uptimeMs = Date.now() - (context.startedAt ?? Date.now());
+  const uptimeMinutes = Math.floor(uptimeMs / 60000);
+  const uptimeHours = Math.floor(uptimeMinutes / 60);
+  const uptimeString = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
+  const memUsage = process.memoryUsage();
+  const rssMb = Math.round(memUsage.rss / 1024 / 1024 * 10) / 10;
+  const nodes = context.registry.listNodes();
+  const totalRoutes = context.registry.routeCount;
+  const lines = [
+    translate(locale, "cmd.status.title"),
+    "",
+    `\uD83C\uDFE2 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "3.0.0"}</code>`,
+    `\u23F1\uFE0F <b>Uptime:</b> <code>${uptimeString}</code>`,
+    `\uD83D\uDCBE <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
+    `\uD83C\uDF10 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,
+    `\uD83D\uDEE3\uFE0F <b>Active Routes:</b> <code>${totalRoutes}</code>`
+  ];
+  return lines.join(`
+`);
+}
+function renderConnectedNodes(context, locale) {
+  const nodes = context.registry.listNodes();
+  if (nodes.length === 0) {
+    return `${translate(locale, "cmd.nodes.title")}
+
+${translate(locale, "cmd.nodes.empty")}`;
+  }
+  const lines = [translate(locale, "cmd.nodes.title"), ""];
+  for (const node of nodes) {
+    const label = node.hostLabel || "local";
+    lines.push(`\uD83D\uDDA5\uFE0F <b>[${label}]</b> \uD83D\uDFE2 Online`);
+    lines.push(`  \u2022 Machine ID: <code>${node.machineId.slice(0, 8)}...</code>`);
+    lines.push(`  \u2022 Active Routes: <code>${node.activeRoutesCount}</code>`);
+    lines.push("");
+  }
+  return lines.join(`
+`).trimEnd();
+}
+function renderActiveSessions(context, locale) {
+  const sessions = context.registry.listActiveSessions();
+  if (sessions.length === 0) {
+    return `${translate(locale, "cmd.sessions.title")}
+
+${translate(locale, "cmd.sessions.empty")}`;
+  }
+  const lines = [translate(locale, "cmd.sessions.title"), ""];
+  for (const session of sessions) {
+    const hostTag = session.hostLabel ? `[${session.hostLabel}] ` : "";
+    lines.push(`\uD83D\uDCCC <b>${hostTag}${session.projectLabel}</b>`);
+    lines.push(`  \u2022 Session: <b>${session.sessionLabel}</b>`);
+    lines.push(`  \u2022 ID: <code>${session.route.sessionId}</code>`);
+    lines.push(`  \u2022 Cancel: <code>/cancel ${session.route.sessionId}</code>`);
+    lines.push("");
+  }
+  return lines.join(`
+`).trimEnd();
+}
+async function handleCancelCommand(args, context, locale) {
+  const sessionId = args[0]?.trim();
+  if (!sessionId) {
+    return translate(locale, "cmd.cancel.usage");
+  }
+  const activeSessions = context.registry.listActiveSessions();
+  const target = activeSessions.find((s) => s.route.sessionId === sessionId || s.route.sessionId.startsWith(sessionId));
+  let targetRoute = target?.route;
+  if (!targetRoute) {
+    const dummyRoute = {
+      machineId: "00000000-0000-0000-0000-000000000000",
+      instanceId: "00000000-0000-0000-0000-000000000000",
+      projectId: "unknown-project-placeholder",
+      sessionId,
+      routeGeneration: "00000000-0000-0000-0000-000000000000"
+    };
+    const resolved = context.registry.resolve(dummyRoute);
+    if (resolved) {
+      targetRoute = resolved.route;
+    }
+  }
+  if (!targetRoute) {
+    return translate(locale, "cmd.cancel.notFound");
+  }
+  const commandId = randomUUID5();
+  const result = await context.dispatcher.sendCommand({
+    type: "session.cancel",
+    commandId,
+    route: targetRoute,
+    reason: "canceled via Telegram /cancel command"
+  });
+  if (result.status === "accepted") {
+    return translate(locale, "cmd.cancel.success");
+  }
+  return `${translate(locale, "cmd.cancel.failed")} (${result.reason ?? result.status})`;
+}
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var DEFAULT_BIND_HOST = "0.0.0.0";
@@ -18239,7 +18461,7 @@ class BrokerServer {
     if (!registered || !socket) {
       return { commandId: command.commandId, status: "stale", reason: "route is offline" };
     }
-    const requestId = randomUUID5();
+    const requestId = randomUUID6();
     const result = new Promise((resolve2) => {
       const timeout = setTimeout(() => {
         this.#pendingCommands.delete(requestId);
@@ -18349,7 +18571,7 @@ async function startBroker(options = {}) {
           }
           const upgraded = bunServer.upgrade(request, {
             data: {
-              connectionId: randomUUID5(),
+              connectionId: randomUUID6(),
               connectedAt: Date.now(),
               lastHeartbeatAt: Date.now()
             }
@@ -18497,6 +18719,7 @@ class BrokerTelegramRuntime {
   #poller;
   #deliveryIntervalMs;
   #now;
+  #startedAt = Date.now();
   #started = false;
   #deliveryTimer;
   #delivering = false;
@@ -18512,27 +18735,67 @@ class BrokerTelegramRuntime {
       userId: input.config.userId,
       chatId: input.config.chatId
     });
+    const validatedHandler = createValidatedInteractionHandler(authorizer, {
+      database: input.database,
+      isRouteLive: (route) => input.registry.resolve(route) !== undefined,
+      now: input.now
+    }, async (interaction, update) => {
+      if (update.callback_query) {
+        input.api.answerCallbackQuery({
+          callbackQueryId: update.callback_query.id
+        }).catch(() => {});
+      }
+      const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
+      await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
+      return {
+        disposition: outcome.result.status === "accepted" ? "acknowledged" : "failed",
+        actionId: outcome.result.commandId,
+        payloadHash: createHash5("sha256").update(`${outcome.result.status}:${outcome.result.reason ?? ""}`).digest("hex")
+      };
+    });
     this.#poller = new TelegramPoller({
       api: input.api,
       database: input.database,
-      handleUpdate: createValidatedInteractionHandler(authorizer, {
-        database: input.database,
-        isRouteLive: (route) => input.registry.resolve(route) !== undefined,
-        now: input.now
-      }, async (interaction, update) => {
-        if (update.callback_query) {
-          input.api.answerCallbackQuery({
-            callbackQueryId: update.callback_query.id
-          }).catch(() => {});
+      handleUpdate: async (update) => {
+        const auth = authorizer.authorize(update);
+        if (!auth.authorized) {
+          return {
+            disposition: "ignored",
+            payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
+          };
         }
-        const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
-        await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
-        return {
-          disposition: outcome.result.status === "accepted" ? "acknowledged" : "failed",
-          actionId: outcome.result.commandId,
-          payloadHash: createHash5("sha256").update(`${outcome.result.status}:${outcome.result.reason ?? ""}`).digest("hex")
-        };
-      }),
+        const messageText = update.message?.text?.trim();
+        if (update.message && isSlashCommand(messageText)) {
+          try {
+            const replyText = await executeSlashCommand({
+              text: messageText,
+              locale: "zh-TW",
+              registry: input.registry,
+              dispatcher: input.dispatcher,
+              startedAt: this.#startedAt,
+              packageVersion: "3.0.0"
+            });
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: replyText,
+              parseMode: "HTML",
+              replyToMessageId: update.message.message_id
+            });
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID6(),
+              payloadHash: createHash5("sha256").update(messageText).digest("hex")
+            };
+          } catch (error51) {
+            logTelegramRuntimeError("slash_command", error51);
+            return {
+              disposition: "failed",
+              payloadHash: createHash5("sha256").update(messageText).digest("hex")
+            };
+          }
+        }
+        return await validatedHandler(update);
+      },
       ...input.pollLongPollSeconds !== undefined ? { longPollSeconds: input.pollLongPollSeconds } : {},
       now: input.now
     });
@@ -18700,7 +18963,7 @@ function logTelegramRuntimeError(component, error51) {
 function handleMessage(socket, message, machineId, registry2, pendingCommands, activeConfigFingerprint, ensureTelegramRuntime, currentTelegramRuntime) {
   const text = typeof message === "string" ? message : message.toString("utf8");
   if (Buffer.byteLength(text, "utf8") > MAX_FRAME_BYTES) {
-    sendError(socket, randomUUID5(), "FRAME_TOO_LARGE", "protocol frame is too large");
+    sendError(socket, randomUUID6(), "FRAME_TOO_LARGE", "protocol frame is too large");
     socket.close(1009, "frame too large");
     return;
   }
@@ -18708,7 +18971,7 @@ function handleMessage(socket, message, machineId, registry2, pendingCommands, a
   try {
     envelope = ClientEnvelopeSchema.parse(JSON.parse(text));
   } catch {
-    sendError(socket, randomUUID5(), "INVALID_FRAME", "protocol frame is invalid");
+    sendError(socket, randomUUID6(), "INVALID_FRAME", "protocol frame is invalid");
     socket.close(1008, "invalid protocol frame");
     return;
   }
@@ -19477,4 +19740,4 @@ export {
   runBroker
 };
 
-//# debugId=D75D4544D3AE47CC64756E2164756E21
+//# debugId=94BBCE19DC5B2FE364756E2164756E21

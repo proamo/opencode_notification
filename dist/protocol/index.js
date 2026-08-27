@@ -14379,6 +14379,12 @@ var BrokerCommandSchema = exports_external.discriminatedUnion("type", [
     route: RouteKeySchema,
     interactionId: exports_external.string().min(1).max(256),
     response: exports_external.enum(["once", "always", "reject"])
+  }),
+  exports_external.object({
+    type: exports_external.literal("session.cancel"),
+    commandId: exports_external.uuid(),
+    route: RouteKeySchema,
+    reason: exports_external.string().min(1).max(256).optional()
   })
 ]);
 var CommandResultSchema = exports_external.object({
@@ -14519,4 +14525,4 @@ export {
   BROKER_CAPABILITIES
 };
 
-//# debugId=49CCF773AFABDF8664756E2164756E21
+//# debugId=97CF2F4ADAD5A50164756E2164756E21
