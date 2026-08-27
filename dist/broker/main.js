@@ -17232,18 +17232,9 @@ class RouteRegistry {
         return registered;
       }
     }
-    for (const connection of this.#connections.values()) {
-      if (connection.machineId === parsed.machineId) {
-        return {
-          route: {
-            ...parsed,
-            instanceId: connection.instanceId
-          },
-          connectionId: connection.socket.data.connectionId,
-          projectLabel: "project",
-          sessionLabel: "session",
-          hostLabel: connection.hostLabel
-        };
+    for (const registered of this.#routes.values()) {
+      if (registered.route.machineId === parsed.machineId && registered.route.sessionId === parsed.sessionId) {
+        return registered;
       }
     }
     return;
@@ -18941,8 +18932,8 @@ async function checkBroker(options) {
     checks3.push(warn("loopback-binding", "Broker binding could not be verified."));
     return { checks: checks3 };
   }
-  if (status.bindHost === "127.0.0.1") {
-    checks3.push(pass("loopback-binding", "Broker is bound to 127.0.0.1."));
+  if (status.bindHost === "127.0.0.1" || status.bindHost === "0.0.0.0") {
+    checks3.push(pass("loopback-binding", `Broker is bound to ${status.bindHost}.`));
   } else {
     checks3.push(fail("loopback-binding", "Broker is not bound to 127.0.0.1.", "Stop it and restart in local mode."));
   }
@@ -19486,4 +19477,4 @@ export {
   runBroker
 };
 
-//# debugId=FFEF745B371534B864756E2164756E21
+//# debugId=D75D4544D3AE47CC64756E2164756E21
