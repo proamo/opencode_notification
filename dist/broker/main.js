@@ -17281,6 +17281,39 @@ class RouteRegistry {
     }
     return nodes;
   }
+  listMachines() {
+    const machineMap = new Map;
+    for (const conn of this.#connections.values()) {
+      const label = conn.hostLabel || "codeCenter";
+      let machine = machineMap.get(conn.machineId);
+      if (!machine) {
+        machine = {
+          machineId: conn.machineId,
+          hostLabel: label,
+          connectionsCount: 0,
+          totalRoutesCount: 0,
+          projects: []
+        };
+        machineMap.set(conn.machineId, machine);
+      }
+      machine.connectionsCount += 1;
+      machine.totalRoutesCount += conn.routeKeys.size;
+      if (conn.hostLabel) {
+        machine.hostLabel = conn.hostLabel;
+      }
+      for (const routeKey of conn.routeKeys) {
+        const reg = this.#routes.get(routeKey);
+        if (reg) {
+          machine.projects.push({
+            projectLabel: reg.projectLabel,
+            sessionLabel: reg.sessionLabel,
+            sessionId: reg.route.sessionId
+          });
+        }
+      }
+    }
+    return Array.from(machineMap.values());
+  }
   listActiveSessions() {
     const sessions = [];
     for (const registered of this.#routes.values()) {
@@ -17616,18 +17649,27 @@ function renderGatewayStatus(context, locale) {
 `);
 }
 function renderConnectedNodes(context, locale) {
-  const nodes = context.registry.listNodes();
-  if (nodes.length === 0) {
+  const machines = context.registry.listMachines();
+  if (machines.length === 0) {
     return `${translate(locale, "cmd.nodes.title")}
 
 ${translate(locale, "cmd.nodes.empty")}`;
   }
   const lines = [translate(locale, "cmd.nodes.title"), ""];
-  for (const node of nodes) {
-    const label = node.hostLabel || "local";
-    lines.push(`\uD83D\uDDA5\uFE0F <b>[${label}]</b> \uD83D\uDFE2 Online`);
-    lines.push(`  \u2022 Machine ID: <code>${node.machineId.slice(0, 8)}...</code>`);
-    lines.push(`  \u2022 Active Routes: <code>${node.activeRoutesCount}</code>`);
+  for (const m of machines) {
+    const isLocal = m.hostLabel === "local" ? "codeCenter" : m.hostLabel;
+    const projectCountText = locale === "zh-TW" ? `${m.connectionsCount} \u500B\u5C08\u6848\u9023\u7DDA` : `${m.connectionsCount} project connection(s)`;
+    lines.push(`\uD83D\uDDA5\uFE0F <b>[${isLocal}]</b> \uD83D\uDFE2 Online (${projectCountText})`);
+    lines.push(`  \u2022 Machine ID: <code>${m.machineId.slice(0, 8)}...</code>`);
+    if (m.projects.length > 0) {
+      lines.push("  \u2022 <b>\u6D3B\u8E8D\u5C08\u6848\u8207 Session\uFF1A</b>");
+      for (const p of m.projects) {
+        lines.push(`    \uD83D\uDCC1 <code>${p.projectLabel}</code> - <i>${p.sessionLabel}</i>`);
+      }
+    } else {
+      const idleText = locale === "zh-TW" ? "\u5F85\u547D\u4E2D\uFF08\u7121\u9032\u884C\u4E2D\u4EFB\u52D9\uFF09" : "Idle (no active tasks)";
+      lines.push(`  \u2022 \u72C0\u614B\uFF1A<i>${idleText}</i>`);
+    }
     lines.push("");
   }
   return lines.join(`
@@ -19738,4 +19780,4 @@ export {
   runBroker
 };
 
-//# debugId=7AFE8148649941ED64756E2164756E21
+//# debugId=99C0078627E6645A64756E2164756E21

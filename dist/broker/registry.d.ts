@@ -36,6 +36,17 @@ export declare class RouteRegistry {
         activeRoutesCount: number;
         lastHeartbeatAt?: number;
     }>;
+    listMachines(): Array<{
+        machineId: string;
+        hostLabel: string;
+        connectionsCount: number;
+        totalRoutesCount: number;
+        projects: Array<{
+            projectLabel: string;
+            sessionLabel: string;
+            sessionId: string;
+        }>;
+    }>;
     listActiveSessions(): Array<{
         route: RouteKey;
         projectLabel: string;
