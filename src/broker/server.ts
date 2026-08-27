@@ -181,7 +181,7 @@ export class BrokerServer {
 
 export async function startBroker(options: StartBrokerOptions = {}): Promise<BrokerServer> {
   const state = await loadOrCreateStateIdentity(options.stateDirectory ?? defaultStateDirectory());
-  const registry = new RouteRegistry(state.machineId);
+  const registry = new RouteRegistry();
   const database = await StateDatabase.open({
     stateDirectory: state.stateDirectory,
     machineId: state.machineId,
