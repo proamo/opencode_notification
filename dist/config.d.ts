@@ -45,6 +45,19 @@ export declare const NotifierConfigSchema: z.ZodObject<{
         sessionPromptTtlMinutes: z.ZodDefault<z.ZodNumber>;
         questionTtlMinutes: z.ZodDefault<z.ZodNumber>;
     }, z.core.$strict>>;
+    voice: z.ZodOptional<z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        provider: z.ZodDefault<z.ZodEnum<{
+            groq: "groq";
+            openai: "openai";
+            custom: "custom";
+        }>>;
+        apiKey: z.ZodOptional<z.ZodString>;
+        apiKeyFile: z.ZodOptional<z.ZodString>;
+        model: z.ZodDefault<z.ZodString>;
+        endpoint: z.ZodOptional<z.ZodString>;
+        language: z.ZodDefault<z.ZodString>;
+    }, z.core.$strict>>;
 }, z.core.$strict>;
 export type NotifierConfig = z.infer<typeof NotifierConfigSchema>;
 export type ConfigFingerprint = z.infer<typeof ConfigFingerprintSchema>;
@@ -53,6 +66,7 @@ export declare class ConfigValidationError extends Error {
     constructor(code: string, message: string);
 }
 export declare function readNotifierBotToken(config: NotifierConfig): Promise<string>;
+export declare function readVoiceApiKey(config: NotifierConfig): Promise<string | undefined>;
 export declare function assertSecureTokenFile(path: string): Promise<void>;
 export declare function computeNotifierConfigFingerprint(config: NotifierConfig): ConfigFingerprint;
 export declare function sanitizeConfigError(error: unknown): string;

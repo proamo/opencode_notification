@@ -14311,7 +14311,10 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   chatId: TelegramIdSchema,
   locale: exports_external.enum(["en", "zh-TW"]),
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
-  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60)
+  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
+  voiceApiKey: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
   machineId: exports_external.uuid(),
@@ -14555,7 +14558,16 @@ var NotifierConfigSchema = exports_external.object({
   interaction: exports_external.object({
     sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30 * 24 * 60),
     questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30)
-  }).strict().prefault({})
+  }).strict().prefault({}),
+  voice: exports_external.object({
+    enabled: exports_external.boolean().default(true),
+    provider: exports_external.enum(["groq", "openai", "custom"]).default("groq"),
+    apiKey: exports_external.string().min(1).optional(),
+    apiKeyFile: exports_external.string().min(1).optional(),
+    model: exports_external.string().default("whisper-large-v3-turbo"),
+    endpoint: exports_external.string().url().optional(),
+    language: exports_external.string().default("zh")
+  }).strict().optional()
 }).strict().superRefine(({ role, gateway, telegram }, context) => {
   if (role === "node") {
     if (!gateway) {
@@ -14616,6 +14628,17 @@ async function readNotifierBotToken(config2) {
     throw new ConfigValidationError("TOKEN_INVALID", "Telegram bot token file is invalid");
   }
   return parsed.data;
+}
+async function readVoiceApiKey(config2) {
+  if (config2.voice?.apiKey)
+    return config2.voice.apiKey;
+  if (config2.voice?.apiKeyFile) {
+    await assertSecureTokenFile(config2.voice.apiKeyFile);
+    const key = (await readFile(config2.voice.apiKeyFile, "utf8")).trim();
+    if (key)
+      return key;
+  }
+  return process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
 }
 async function assertSecureTokenFile(path) {
   const stats = await lstat(path).catch(() => {
@@ -16603,6 +16626,7 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
   if (systemLocale)
     localeInput.system = systemLocale;
   const locale = resolveLocale(localeInput);
+  const voiceApiKey = await readVoiceApiKey(configData);
   const broker = new BrokerClient({
     port: configData.broker.port,
     hostLabel: configData.hostLabel,
@@ -16619,7 +16643,10 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
         chatId: configData.telegram.chatId,
         locale,
         sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
-        questionTtlMinutes: configData.interaction.questionTtlMinutes
+        questionTtlMinutes: configData.interaction.questionTtlMinutes,
+        ...voiceApiKey ? { voiceApiKey } : {},
+        ...configData.voice?.provider ? { voiceProvider: configData.voice.provider } : {},
+        ...configData.voice?.model ? { voiceModel: configData.voice.model } : {}
       }
     } : {},
     onCommand: async (command) => runOpenCodeCommand(client, directory, command),
@@ -16742,4 +16769,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=74295BB097300FBB64756E2164756E21
+//# debugId=A67E26A508D558E764756E2164756E21

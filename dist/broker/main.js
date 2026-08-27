@@ -14312,7 +14312,10 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   chatId: TelegramIdSchema,
   locale: exports_external.enum(["en", "zh-TW"]),
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
-  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60)
+  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
+  voiceApiKey: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
   machineId: exports_external.uuid(),
@@ -14557,7 +14560,16 @@ var NotifierConfigSchema = exports_external.object({
   interaction: exports_external.object({
     sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30 * 24 * 60),
     questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60).default(30)
-  }).strict().prefault({})
+  }).strict().prefault({}),
+  voice: exports_external.object({
+    enabled: exports_external.boolean().default(true),
+    provider: exports_external.enum(["groq", "openai", "custom"]).default("groq"),
+    apiKey: exports_external.string().min(1).optional(),
+    apiKeyFile: exports_external.string().min(1).optional(),
+    model: exports_external.string().default("whisper-large-v3-turbo"),
+    endpoint: exports_external.string().url().optional(),
+    language: exports_external.string().default("zh")
+  }).strict().optional()
 }).strict().superRefine(({ role, gateway, telegram }, context) => {
   if (role === "node") {
     if (!gateway) {
@@ -14618,6 +14630,17 @@ async function readNotifierBotToken(config2) {
     throw new ConfigValidationError("TOKEN_INVALID", "Telegram bot token file is invalid");
   }
   return parsed.data;
+}
+async function readVoiceApiKey(config2) {
+  if (config2.voice?.apiKey)
+    return config2.voice.apiKey;
+  if (config2.voice?.apiKeyFile) {
+    await assertSecureTokenFile(config2.voice.apiKeyFile);
+    const key = (await readFile(config2.voice.apiKeyFile, "utf8")).trim();
+    if (key)
+      return key;
+  }
+  return process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
 }
 async function assertSecureTokenFile(path) {
   const stats = await lstat(path).catch(() => {
@@ -16280,12 +16303,29 @@ var TelegramChatSchema = exports_external.object({
   id: exports_external.number().int(),
   type: exports_external.enum(["private", "group", "supergroup", "channel"])
 });
+var TelegramVoiceSchema = exports_external.object({
+  file_id: exports_external.string(),
+  file_unique_id: exports_external.string().optional(),
+  duration: exports_external.number().optional(),
+  mime_type: exports_external.string().optional(),
+  file_size: exports_external.number().optional()
+});
+var TelegramAudioSchema = exports_external.object({
+  file_id: exports_external.string(),
+  file_unique_id: exports_external.string().optional(),
+  duration: exports_external.number().optional(),
+  mime_type: exports_external.string().optional(),
+  file_size: exports_external.number().optional(),
+  file_name: exports_external.string().optional()
+});
 var TelegramMessageSchema = exports_external.object({
   message_id: exports_external.number().int(),
   from: TelegramUserSchema.optional(),
   chat: TelegramChatSchema,
   date: exports_external.number().int(),
   text: exports_external.string().optional(),
+  voice: TelegramVoiceSchema.optional(),
+  audio: TelegramAudioSchema.optional(),
   sender_chat: TelegramChatSchema.optional(),
   forward_origin: exports_external.unknown().optional(),
   author_signature: exports_external.string().optional(),
@@ -16300,6 +16340,12 @@ var TelegramCallbackQuerySchema = exports_external.object({
   from: TelegramUserSchema,
   message: TelegramMessageSchema.optional(),
   data: exports_external.string().optional()
+});
+var TelegramFileSchema = exports_external.object({
+  file_id: exports_external.string(),
+  file_unique_id: exports_external.string().optional(),
+  file_size: exports_external.number().optional(),
+  file_path: exports_external.string().optional()
 });
 var TelegramUpdateSchema = exports_external.object({
   update_id: exports_external.number().int(),
@@ -16359,6 +16405,27 @@ class TelegramBotApi {
       ...input.replyMarkup ? { reply_markup: input.replyMarkup } : {}
     }, TelegramMessageSchema, input.signal);
     return { messageId: message.message_id, chatId: String(message.chat.id) };
+  }
+  async getFile(fileId, signal) {
+    return await this.#call("getFile", { file_id: fileId }, TelegramFileSchema, signal);
+  }
+  async downloadFile(filePath, signal) {
+    const url2 = `https://api.telegram.org/file/bot${this.#token}/${filePath}`;
+    const fetchOptions = {};
+    if (signal) {
+      fetchOptions.signal = signal;
+    }
+    const response = await this.#fetch(url2, fetchOptions);
+    if (!response.ok) {
+      throw new TelegramApiError({
+        method: "downloadFile",
+        statusCode: response.status,
+        description: `Failed to download file from Telegram: ${response.statusText}`,
+        retryable: response.status >= 500
+      });
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
   }
   async#call(method, body, resultSchema, signal) {
     let response;
@@ -18598,6 +18665,75 @@ async function abortableDelay(milliseconds, signal) {
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }
+// src/telegram/transcriber.ts
+var TranscriptionResponseSchema = exports_external.object({
+  text: exports_external.string()
+});
+
+class VoiceTranscriber {
+  #apiKey;
+  #provider;
+  #model;
+  #endpoint;
+  #language;
+  #fetch;
+  constructor(options) {
+    this.#apiKey = options.apiKey.trim();
+    this.#provider = options.provider ?? "groq";
+    this.#language = options.language ?? "zh";
+    this.#fetch = options.fetchFn ?? fetch;
+    if (this.#provider === "groq") {
+      this.#endpoint = options.endpoint ?? "https://api.groq.com/openai/v1/audio/transcriptions";
+      this.#model = options.model ?? "whisper-large-v3-turbo";
+    } else if (this.#provider === "openai") {
+      this.#endpoint = options.endpoint ?? "https://api.openai.com/v1/audio/transcriptions";
+      this.#model = options.model ?? "whisper-1";
+    } else {
+      this.#endpoint = options.endpoint ?? "https://api.groq.com/openai/v1/audio/transcriptions";
+      this.#model = options.model ?? "whisper-large-v3-turbo";
+    }
+  }
+  async transcribe(audioBuffer, options) {
+    const fileName = options?.fileName ?? "voice.ogg";
+    const mimeType = options?.mimeType ?? "audio/ogg";
+    const promptHint = options?.promptHint ?? "OpenCode, /run, /status, /nodes, /sessions, /cancel, adspower-farm, FispERP, codeCenter, \u722C\u87F2, \u4FEE\u5FA9, \u90E8\u7F72";
+    const formData = new FormData;
+    const blob = new Blob([audioBuffer], { type: mimeType });
+    formData.append("file", blob, fileName);
+    formData.append("model", this.#model);
+    formData.append("language", this.#language);
+    formData.append("response_format", "json");
+    if (promptHint) {
+      formData.append("prompt", promptHint);
+    }
+    const fetchOptions = {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.#apiKey}`
+      },
+      body: formData
+    };
+    if (options?.signal) {
+      fetchOptions.signal = options.signal;
+    }
+    const response = await this.#fetch(this.#endpoint, fetchOptions);
+    if (!response.ok) {
+      let errorBody = "";
+      try {
+        errorBody = await response.text();
+      } catch {
+        errorBody = response.statusText;
+      }
+      throw new Error(`Voice transcription failed (${response.status}): ${errorBody}`);
+    }
+    const json2 = await response.json();
+    const parsed = TranscriptionResponseSchema.safeParse(json2);
+    if (!parsed.success) {
+      throw new Error("Invalid transcription response from speech provider");
+    }
+    return parsed.data.text.trim();
+  }
+}
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var DEFAULT_BIND_HOST = "0.0.0.0";
@@ -18962,6 +19098,12 @@ class BrokerTelegramRuntime {
       userId: input.config.userId,
       chatId: input.config.chatId
     });
+    const voiceApiKey = input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
+    const transcriber = voiceApiKey ? new VoiceTranscriber({
+      apiKey: voiceApiKey,
+      provider: input.config.voiceProvider ?? "groq",
+      model: input.config.voiceModel
+    }) : undefined;
     const validatedHandler = createValidatedInteractionHandler(authorizer, {
       database: input.database,
       isRouteLive: (route) => input.registry.resolve(route) !== undefined,
@@ -18990,6 +19132,106 @@ class BrokerTelegramRuntime {
             disposition: "rejected",
             payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
           };
+        }
+        const voiceOrAudio = update.message?.voice ?? update.message?.audio;
+        if (voiceOrAudio) {
+          if (!transcriber) {
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: "\u26A0\uFE0F \u5C1A\u672A\u8A2D\u5B9A Groq / OpenAI \u8A9E\u97F3\u8FA8\u8B58 API Key\uFF0C\u7121\u6CD5\u8655\u7406\u8A9E\u97F3\u8A0A\u606F\u3002\u8ACB\u5728 opencode.json \u4E2D\u52A0\u5165 voice.apiKey\u3002",
+              parseMode: "HTML"
+            });
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID6(),
+              payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
+            };
+          }
+          try {
+            const fileInfo = await input.api.getFile(voiceOrAudio.file_id);
+            if (!fileInfo.file_path) {
+              throw new Error("Telegram did not return file path");
+            }
+            const audioBytes = await input.api.downloadFile(fileInfo.file_path);
+            const transcribedText = await transcriber.transcribe(audioBytes, {
+              mimeType: voiceOrAudio.mime_type ?? "audio/ogg",
+              fileName: "voice.ogg"
+            });
+            if (!transcribedText) {
+              await input.api.sendMessage({
+                chatId: input.config.chatId,
+                text: "\uD83C\uDF99\uFE0F <i>\u7121\u6CD5\u8FA8\u8B58\u8A9E\u97F3\u5167\u5BB9\uFF0C\u8ACB\u518D\u8A66\u4E00\u6B21\u3002</i>",
+                parseMode: "HTML"
+              });
+              return {
+                disposition: "acknowledged",
+                actionId: randomUUID6(),
+                payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
+              };
+            }
+            if (update.message?.reply_to_message) {
+              const syntheticUpdate = {
+                ...update,
+                message: {
+                  ...update.message,
+                  text: transcribedText
+                }
+              };
+              await input.api.sendMessage({
+                chatId: input.config.chatId,
+                text: `\uD83C\uDF99\uFE0F <b>\u8A9E\u97F3\u8F49\u6587\u5B57\uFF1A</b> <i>\u300C${transcribedText}\u300D</i>`,
+                parseMode: "HTML"
+              });
+              return await validatedHandler(syntheticUpdate);
+            }
+            let commandText = transcribedText;
+            const lower = transcribedText.toLowerCase();
+            if (lower.startsWith("run ") || lower.startsWith("\u57F7\u884C ") || lower.startsWith("\u6D3E\u5DE5 ")) {
+              commandText = `/run ${transcribedText.replace(/^(run|\u57F7\u884C|\u6D3E\u5DE5)\s+/i, "")}`;
+            } else if (lower === "status" || lower === "\u72C0\u614B" || lower === "\u7CFB\u7D71\u72C0\u614B") {
+              commandText = "/status";
+            } else if (lower === "nodes" || lower === "\u4E3B\u6A5F" || lower === "\u4E3B\u6A5F\u5217\u8868" || lower === "\u96FB\u8166") {
+              commandText = "/nodes";
+            } else if (lower === "sessions" || lower === "\u4EFB\u52D9\u5217\u8868" || lower === "\u5DE5\u4F5C\u968E\u6BB5") {
+              commandText = "/sessions";
+            } else if (lower === "help" || lower === "\u8AAA\u660E" || lower === "\u5E6B\u52A9") {
+              commandText = "/help";
+            } else if (!isSlashCommand(commandText)) {
+              commandText = `/run ${transcribedText}`;
+            }
+            const replyText = await executeSlashCommand({
+              text: commandText,
+              locale: "zh-TW",
+              registry: input.registry,
+              dispatcher: input.dispatcher,
+              startedAt: this.#startedAt,
+              packageVersion: "3.0.0"
+            });
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: `\uD83C\uDF99\uFE0F <b>\u8A9E\u97F3\u6307\u4EE4\uFF1A</b> <i>\u300C${transcribedText}\u300D</i>
+
+${replyText}`,
+              parseMode: "HTML"
+            });
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID6(),
+              payloadHash: createHash5("sha256").update(transcribedText).digest("hex")
+            };
+          } catch (error51) {
+            logTelegramRuntimeError("voice_transcription", error51);
+            const errDesc = error51 instanceof Error ? error51.message : "\u8A9E\u97F3\u8655\u7406\u5931\u6557";
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: `\u274C \u8A9E\u97F3\u8FA8\u8B58\u932F\u8AA4\uFF1A${errDesc}`,
+              parseMode: "HTML"
+            });
+            return {
+              disposition: "failed",
+              payloadHash: createHash5("sha256").update(JSON.stringify(update)).digest("hex")
+            };
+          }
         }
         const messageText = update.message?.text?.trim();
         if (messageText && isSlashCommand(messageText)) {
@@ -19966,4 +20208,4 @@ export {
   runBroker
 };
 
-//# debugId=F35EFC3698F8346064756E2164756E21
+//# debugId=D75528340DECA33464756E2164756E21

@@ -20,6 +20,13 @@ export declare const TelegramRuntimeConfigSchema: z.ZodObject<{
     }>;
     sessionPromptTtlMinutes: z.ZodNumber;
     questionTtlMinutes: z.ZodNumber;
+    voiceApiKey: z.ZodOptional<z.ZodString>;
+    voiceProvider: z.ZodOptional<z.ZodEnum<{
+        groq: "groq";
+        openai: "openai";
+        custom: "custom";
+    }>>;
+    voiceModel: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type TelegramRuntimeConfig = z.infer<typeof TelegramRuntimeConfigSchema>;
 export declare const RouteKeySchema: z.ZodObject<{
@@ -51,6 +58,13 @@ export declare const RegisterEnvelopeSchema: z.ZodObject<{
             }>;
             sessionPromptTtlMinutes: z.ZodNumber;
             questionTtlMinutes: z.ZodNumber;
+            voiceApiKey: z.ZodOptional<z.ZodString>;
+            voiceProvider: z.ZodOptional<z.ZodEnum<{
+                groq: "groq";
+                openai: "openai";
+                custom: "custom";
+            }>>;
+            voiceModel: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>>;
     }, z.core.$strip>;
     protocol: z.ZodObject<{
@@ -574,6 +588,13 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
             }>;
             sessionPromptTtlMinutes: z.ZodNumber;
             questionTtlMinutes: z.ZodNumber;
+            voiceApiKey: z.ZodOptional<z.ZodString>;
+            voiceProvider: z.ZodOptional<z.ZodEnum<{
+                groq: "groq";
+                openai: "openai";
+                custom: "custom";
+            }>>;
+            voiceModel: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>>;
     }, z.core.$strip>;
     protocol: z.ZodObject<{

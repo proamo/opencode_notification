@@ -1,4 +1,11 @@
 import { z } from "zod";
+export declare const TelegramFileSchema: z.ZodObject<{
+    file_id: z.ZodString;
+    file_unique_id: z.ZodOptional<z.ZodString>;
+    file_size: z.ZodOptional<z.ZodNumber>;
+    file_path: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type TelegramFile = z.infer<typeof TelegramFileSchema>;
 export declare const TelegramUpdateSchema: z.ZodObject<{
     update_id: z.ZodNumber;
     message: z.ZodOptional<z.ZodObject<{
@@ -20,6 +27,21 @@ export declare const TelegramUpdateSchema: z.ZodObject<{
         }, z.core.$strip>;
         date: z.ZodNumber;
         text: z.ZodOptional<z.ZodString>;
+        voice: z.ZodOptional<z.ZodObject<{
+            file_id: z.ZodString;
+            file_unique_id: z.ZodOptional<z.ZodString>;
+            duration: z.ZodOptional<z.ZodNumber>;
+            mime_type: z.ZodOptional<z.ZodString>;
+            file_size: z.ZodOptional<z.ZodNumber>;
+        }, z.core.$strip>>;
+        audio: z.ZodOptional<z.ZodObject<{
+            file_id: z.ZodString;
+            file_unique_id: z.ZodOptional<z.ZodString>;
+            duration: z.ZodOptional<z.ZodNumber>;
+            mime_type: z.ZodOptional<z.ZodString>;
+            file_size: z.ZodOptional<z.ZodNumber>;
+            file_name: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>>;
         sender_chat: z.ZodOptional<z.ZodObject<{
             id: z.ZodNumber;
             type: z.ZodEnum<{
@@ -72,6 +94,21 @@ export declare const TelegramUpdateSchema: z.ZodObject<{
             }, z.core.$strip>;
             date: z.ZodNumber;
             text: z.ZodOptional<z.ZodString>;
+            voice: z.ZodOptional<z.ZodObject<{
+                file_id: z.ZodString;
+                file_unique_id: z.ZodOptional<z.ZodString>;
+                duration: z.ZodOptional<z.ZodNumber>;
+                mime_type: z.ZodOptional<z.ZodString>;
+                file_size: z.ZodOptional<z.ZodNumber>;
+            }, z.core.$strip>>;
+            audio: z.ZodOptional<z.ZodObject<{
+                file_id: z.ZodString;
+                file_unique_id: z.ZodOptional<z.ZodString>;
+                duration: z.ZodOptional<z.ZodNumber>;
+                mime_type: z.ZodOptional<z.ZodString>;
+                file_size: z.ZodOptional<z.ZodNumber>;
+                file_name: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>>;
             sender_chat: z.ZodOptional<z.ZodObject<{
                 id: z.ZodNumber;
                 type: z.ZodEnum<{
@@ -152,6 +189,8 @@ export declare class TelegramBotApi {
         messageId: number;
         chatId: string;
     }>;
+    getFile(fileId: string, signal?: AbortSignal | undefined): Promise<TelegramFile>;
+    downloadFile(filePath: string, signal?: AbortSignal | undefined): Promise<Uint8Array>;
 }
 export declare class TelegramApiError extends Error {
     readonly method: string;

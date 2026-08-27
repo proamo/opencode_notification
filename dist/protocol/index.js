@@ -14311,7 +14311,10 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   chatId: TelegramIdSchema,
   locale: exports_external.enum(["en", "zh-TW"]),
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
-  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60)
+  questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
+  voiceApiKey: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
   machineId: exports_external.uuid(),
@@ -14533,4 +14536,4 @@ export {
   BROKER_CAPABILITIES
 };
 
-//# debugId=3A7B888271109E9864756E2164756E21
+//# debugId=DA2E56797C71FB6764756E2164756E21

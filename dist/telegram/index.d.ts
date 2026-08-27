@@ -5,4 +5,5 @@ export { type BrokerCommandDispatcher, createValidatedInteractionHandler, type I
 export { type TelegramOutboxPayload, TelegramOutboxPayloadSchema, TelegramOutboxWorker, type TelegramOutboxWorkerOptions, } from "./outbox";
 export { TelegramPoller, type TelegramPollerOptions, type UpdateDisposition, } from "./poller";
 export { type RenderedTelegramPayload, redactText, renderTelegramNotification, sanitizeTelegramText, TelegramRenderError, type TelegramRenderOptions, } from "./render";
+export { VoiceTranscriber, type VoiceTranscriberOptions, } from "./transcriber";
 //# sourceMappingURL=index.d.ts.map
