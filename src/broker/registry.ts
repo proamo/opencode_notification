@@ -160,6 +160,15 @@ export class RouteRegistry {
     return undefined;
   }
 
+  resolveBySessionId(sessionId: string): RouteKey | undefined {
+    for (const registered of this.#routes.values()) {
+      if (registered.route.sessionId === sessionId) {
+        return registered.route;
+      }
+    }
+    return undefined;
+  }
+
   owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined {
     const registered = this.resolve(route);
     if (!registered) return undefined;

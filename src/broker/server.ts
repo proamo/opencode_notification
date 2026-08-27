@@ -323,9 +323,8 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                   const result = await dispatcher.sendCommand({
                     commandId: randomUUID(),
                     type: "session.prompt",
-                    machineId: route.machineId,
                     route,
-                    prompt,
+                    text: prompt,
                   });
                   return Response.json({ success: result.status === "accepted", result });
                 }
@@ -334,16 +333,16 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const allProjects: {
                   machineId: string;
                   projectLabel: string;
-                  hostLabel?: string;
-                  sessionId?: string;
+                  hostLabel?: string | undefined;
+                  sessionId?: string | undefined;
                 }[] = [];
                 for (const m of machines) {
                   for (const p of m.projects) {
                     allProjects.push({
                       machineId: m.machineId,
                       projectLabel: p.projectLabel,
-                      hostLabel: m.hostLabel,
-                      sessionId: p.sessionId,
+                      ...(m.hostLabel ? { hostLabel: m.hostLabel } : {}),
+                      ...(p.sessionId ? { sessionId: p.sessionId } : {}),
                     });
                   }
                 }
@@ -373,7 +372,6 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const result = await dispatcher.sendCommand({
                   commandId: randomUUID(),
                   type: "session.spawn",
-                  machineId: selected.machineId,
                   title: prompt.slice(0, 30),
                   prompt,
                 });
@@ -411,7 +409,6 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const result = await dispatcher.sendCommand({
                   commandId: randomUUID(),
                   type: "session.cancel",
-                  machineId: route.machineId,
                   route,
                 });
                 return Response.json({ success: result.status === "accepted", result });
