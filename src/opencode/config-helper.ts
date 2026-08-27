@@ -204,7 +204,7 @@ export async function loadResolvedNotifierConfig(
     const content = await readFile(identityPath, "utf8");
     const idJson = JSON.parse(content);
     if (idJson.userId && idJson.chatId) {
-      return {
+      return NotifierConfigSchema.parse({
         mode: "local",
         role: "gateway",
         locale: idJson.locale || "auto",
@@ -219,7 +219,7 @@ export async function loadResolvedNotifierConfig(
           question: true,
           permission: true,
         },
-      };
+      });
     }
   } catch {}
 
