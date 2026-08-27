@@ -7,7 +7,6 @@ import { type BrokerServer, startBroker } from "../src/broker/server";
 describe("Web Dashboard", () => {
   let stateDirectory: string;
   let broker: BrokerServer | undefined;
-  const testPort = 43719;
 
   beforeEach(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "opencode-dashboard-test-"));
@@ -24,18 +23,18 @@ describe("Web Dashboard", () => {
   test("serves dashboard HTML on / and /dashboard", async () => {
     broker = await startBroker({
       stateDirectory,
-      port: testPort,
+      port: 0,
       bindHost: "127.0.0.1",
     });
 
-    const rootRes = await fetch(`http://127.0.0.1:${testPort}/`);
+    const rootRes = await fetch(`http://127.0.0.1:${broker.port}/`);
     expect(rootRes.status).toBe(200);
     expect(rootRes.headers.get("content-type")).toContain("text/html");
     const rootHtml = await rootRes.text();
     expect(rootHtml).toContain("OpenCode Commander");
     expect(rootHtml).toContain("Live Dashboard");
 
-    const dashRes = await fetch(`http://127.0.0.1:${testPort}/dashboard`);
+    const dashRes = await fetch(`http://127.0.0.1:${broker.port}/dashboard`);
     expect(dashRes.status).toBe(200);
     const dashHtml = await dashRes.text();
     expect(dashHtml).toContain("拓撲總覽");
@@ -44,11 +43,11 @@ describe("Web Dashboard", () => {
   test("returns cluster summary via /v1/api/dashboard/summary", async () => {
     broker = await startBroker({
       stateDirectory,
-      port: testPort,
+      port: 0,
       bindHost: "127.0.0.1",
     });
 
-    const res = await fetch(`http://127.0.0.1:${testPort}/v1/api/dashboard/summary`);
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`);
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       service: string;
@@ -67,11 +66,11 @@ describe("Web Dashboard", () => {
   test("handles dispatch validation when no targets are online", async () => {
     broker = await startBroker({
       stateDirectory,
-      port: testPort,
+      port: 0,
       bindHost: "127.0.0.1",
     });
 
-    const res = await fetch(`http://127.0.0.1:${testPort}/v1/api/dashboard/dispatch`, {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/dispatch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -87,11 +86,11 @@ describe("Web Dashboard", () => {
   test("handles cancel validation when session is not found", async () => {
     broker = await startBroker({
       stateDirectory,
-      port: testPort,
+      port: 0,
       bindHost: "127.0.0.1",
     });
 
-    const res = await fetch(`http://127.0.0.1:${testPort}/v1/api/dashboard/cancel`, {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -108,11 +107,11 @@ describe("Web Dashboard", () => {
   test("saves settings via /v1/api/dashboard/settings", async () => {
     broker = await startBroker({
       stateDirectory,
-      port: testPort,
+      port: 0,
       bindHost: "127.0.0.1",
     });
 
-    const res = await fetch(`http://127.0.0.1:${testPort}/v1/api/dashboard/settings`, {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/settings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
