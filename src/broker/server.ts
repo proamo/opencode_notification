@@ -733,16 +733,6 @@ function handleMessage(
             `required capability is missing: ${missingCapability}`,
           );
         }
-        if (
-          envelope.payload.machineId === machineId &&
-          activeConfigFingerprint.value &&
-          activeConfigFingerprint.value !== envelope.payload.configFingerprint
-        ) {
-          throw new RouteRegistrationError(
-            "CONFIG_FINGERPRINT_MISMATCH",
-            "connection configuration does not match the active local broker configuration",
-          );
-        }
         registry.registerConnection(
           socket,
           envelope.payload.instanceId,
