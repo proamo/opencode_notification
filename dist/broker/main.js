@@ -17320,6 +17320,14 @@ class RouteRegistry {
     }
     return;
   }
+  resolveBySessionId(sessionId) {
+    for (const registered of this.#routes.values()) {
+      if (registered.route.sessionId === sessionId) {
+        return registered.route;
+      }
+    }
+    return;
+  }
   owner(route) {
     const registered = this.resolve(route);
     if (!registered)
@@ -18734,6 +18742,535 @@ class VoiceTranscriber {
     return parsed.data.text.trim();
   }
 }
+// src/broker/dashboard-html.ts
+function renderDashboardHtml() {
+  return `<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCode Commander | Live Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22><text y=%2226%22 font-size=%2226%22>\uD83E\uDD16</text></svg>">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: rgba(18, 24, 39, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-glow: rgba(99, 102, 241, 0.3);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.25);
+      --red: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.25);
+      --yellow: #f59e0b;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font); }
+    body { background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    
+    /* Header */
+    header {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-logo { font-size: 26px; }
+    .brand-title { font-size: 20px; font-weight: 700; background: linear-gradient(135deg, #a5b4fc, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .brand-badge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 9999px; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
+
+    .header-status { display: flex; align-items: center; gap: 20px; font-size: 13px; color: var(--text-muted); }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.1); } }
+
+    /* Navigation Tabs */
+    .tabs { display: flex; gap: 8px; padding: 16px 28px 0; border-bottom: 1px solid var(--card-border); background: rgba(15, 23, 42, 0.4); }
+    .tab-btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: #818cf8; border-bottom-color: #818cf8; }
+
+    /* Main Container */
+    main { flex: 1; padding: 28px; max-width: 1400px; margin: 0 auto; width: 100%; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Stats Grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-bottom: 24px; }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    .stat-label { font-size: 13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+    .stat-value { font-size: 28px; font-weight: 700; color: #fff; }
+    .stat-sub { font-size: 12px; color: #6ee7b7; margin-top: 4px; }
+
+    /* Machines & Projects Cards */
+    .machine-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+    }
+    .machine-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--card-border); }
+    .machine-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; color: #fff; }
+    .machine-badge { font-size: 12px; padding: 4px 10px; border-radius: 8px; background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600; border: 1px solid rgba(16, 185, 129, 0.2); }
+    
+    .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .project-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 16px;
+      transition: all 0.2s;
+    }
+    .project-card:hover { border-color: rgba(99, 102, 241, 0.4); transform: translateY(-2px); }
+    .project-name { font-size: 15px; font-weight: 700; color: #e0e7ff; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .project-session { font-size: 12px; color: var(--text-muted); }
+    .project-actions { margin-top: 12px; display: flex; gap: 8px; }
+
+    /* Tables */
+    .table-container { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+    th { background: rgba(30, 41, 59, 0.8); padding: 14px 18px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--card-border); }
+    td { padding: 14px 18px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); color: var(--text); }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+    /* Buttons & Forms */
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 12px var(--accent-glow); }
+    .btn-danger { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .btn-danger:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+
+    .form-group { margin-bottom: 18px; }
+    .form-label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
+    .form-control {
+      width: 100%;
+      padding: 12px 16px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-control:focus { border-color: var(--accent); }
+    textarea.form-control { resize: vertical; min-height: 100px; }
+
+    /* Alert / Notification Toast */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 14px 22px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      background: #1f2937;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+      opacity: 0;
+      transform: translateY(12px);
+      transition: all 0.3s;
+      z-index: 100;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    #toast.success { background: #065f46; border-color: #10b981; }
+    #toast.error { background: #7f1d1d; border-color: #ef4444; }
+
+    footer { padding: 20px 28px; text-align: center; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--card-border); }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <span class="brand-logo">\uD83E\uDD16</span>
+      <span class="brand-title">OpenCode Commander</span>
+      <span class="brand-badge">V3.0 Gateway</span>
+    </div>
+    <div class="header-status">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="live-dot"></span>
+        <span id="gateway-status-text">Gateway Online</span>
+      </div>
+      <span id="uptime-text">Uptime: 0m</span>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('nodes')">\uD83D\uDDA5\uFE0F \u62D3\u64B2\u7E3D\u89BD (Nodes)</button>
+    <button class="tab-btn" onclick="switchTab('sessions')">\uD83D\uDCDD \u6D3B\u8E8D\u5DE5\u4F5C (Sessions)</button>
+    <button class="tab-btn" onclick="switchTab('dispatch')">\uD83D\uDE80 \u9060\u7AEF\u6D3E\u5DE5 (Dispatch)</button>
+    <button class="tab-btn" onclick="switchTab('settings')">\u2699\uFE0F \u7CFB\u7D71\u8A2D\u5B9A (Settings)</button>
+  </div>
+
+  <main>
+    <!-- Stats Row -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">\u9023\u7DDA\u4E3B\u6A5F\u6578 / Machines</div>
+        <div class="stat-value" id="stat-machines">0</div>
+        <div class="stat-sub">\uD83D\uDFE2 \u5168\u90E8\u4E3B\u6A5F\u5065\u5EB7\u9023\u7DDA\u4E2D</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">\u5728\u7DDA\u5C08\u6848\u8996\u7A97 / Connections</div>
+        <div class="stat-value" id="stat-connections">0</div>
+        <div class="stat-sub">OpenCode \u5DE5\u4F5C\u7A7A\u9593\u5DF2\u5C31\u7DD2</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">\u9032\u884C\u4E2D\u4EFB\u52D9 / Active Sessions</div>
+        <div class="stat-value" id="stat-sessions">0</div>
+        <div class="stat-sub">\u5373\u6642\u96D9\u5411\u4E8B\u4EF6\u4E32\u6D41\u4E2D</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">\u8A9E\u97F3\u8FA8\u8B58 / Voice STT</div>
+        <div class="stat-value" id="stat-voice" style="font-size: 20px; color: #a5b4fc;">Groq Whisper</div>
+        <div class="stat-sub">\u7E41\u9AD4\u4E2D\u6587\u9AD8\u7CBE\u5EA6\u6975\u901F\u8F49\u8B6F</div>
+      </div>
+    </div>
+
+    <!-- TAB 1: NODES TOPOLOGY -->
+    <div id="tab-nodes" class="tab-content active">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: #fff;">\uD83C\uDF10 \u5DF2\u9023\u7DDA\u96FB\u8166\u8207\u5C08\u6848\u6E05\u55AE (Cluster Topology)</h2>
+      <div id="machines-container">
+        <!-- Dynamic machine cards inserted here -->
+      </div>
+    </div>
+
+    <!-- TAB 2: ACTIVE SESSIONS -->
+    <div id="tab-sessions" class="tab-content">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: #fff;">\uD83D\uDCDD \u9032\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5 (Active Sessions)</h2>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>\u4E3B\u6A5F (Host)</th>
+              <th>\u5C08\u6848 (Project)</th>
+              <th>\u4EFB\u52D9\u6A19\u984C (Session Title)</th>
+              <th>Session ID</th>
+              <th>\u64CD\u4F5C (Action)</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u57F7\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5\u3002</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 3: REMOTE DISPATCH CONSOLE -->
+    <div id="tab-dispatch" class="tab-content">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: #fff;">\uD83D\uDE80 \u9060\u7AEF\u6D3E\u5DE5\u63A7\u5236\u53F0 (Proactive Remote Dispatch)</h2>
+      <div class="stat-card" style="max-width: 800px;">
+        <div class="form-group">
+          <label class="form-label">\uD83C\uDFAF \u76EE\u6A19\u4E3B\u6A5F\u8207\u5C08\u6848 (Target)</label>
+          <select id="dispatch-target" class="form-control">
+            <option value="">-- \u81EA\u52D5\u5075\u6E2C / \u552F\u4E00\u5728\u7DDA\u5C08\u6848 --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">\uD83D\uDCDD \u4EFB\u52D9\u63D0\u793A\u8A5E / \u6307\u4EE4 (Prompt)</label>
+          <textarea id="dispatch-prompt" class="form-control" placeholder="\u8ACB\u8F38\u5165\u6B32\u6307\u6D3E\u7D66 OpenCode \u57F7\u884C\u7684\u4EFB\u52D9\uFF0C\u4F8B\u5982\uFF1A\u8ACB\u6AA2\u67E5\u722C\u87F2\u65E5\u8A8C\u662F\u5426\u6709\u932F\u8AA4\u4E26\u4FEE\u5FA9..."></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="submitDispatch()" style="padding: 12px 24px; font-size: 15px;">
+          \uD83D\uDE80 \u7ACB\u5373\u767C\u9001\u6D3E\u5DE5 (Dispatch Task)
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB 4: SETTINGS -->
+    <div id="tab-settings" class="tab-content">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: #fff;">\u2699\uFE0F \u7CFB\u7D71\u8207\u8A9E\u97F3\u8FA8\u8B58\u8A2D\u5B9A (Settings)</h2>
+      <div class="stat-card" style="max-width: 800px;">
+        <div class="form-group">
+          <label class="form-label">\uD83C\uDF99\uFE0F \u8A9E\u97F3\u8FA8\u8B58\u5F15\u64CE (STT Provider)</label>
+          <select id="setting-provider" class="form-control">
+            <option value="groq">Groq Whisper (\u514D\u8CBB\u3001\u6975\u901F\u63A8\u85A6)</option>
+            <option value="openai">OpenAI Whisper (\u5B98\u65B9 API)</option>
+            <option value="custom">\u81EA\u8A02 / \u672C\u5730\u76F8\u5BB9\u7AEF\u9EDE (Custom / Local)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">\uD83D\uDD11 \u8A9E\u97F3 API \u91D1\u9470 (Voice API Key)</label>
+          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... \u6216 sk-...">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+            \u91D1\u9470\u4FDD\u5B58\u5728 Gateway \u672C\u5730\u74B0\u5883\uFF0C\u96A8\u6642\u53EF\u81EA\u7531\u5207\u63DB\u3002
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">\u23F1\uFE0F Session \u6B77\u53F2\u56DE\u8986\u4FDD\u5B58\u5929\u6578 (TTL)</label>
+          <input type="number" id="setting-ttl" class="form-control" value="30" min="1" max="365">
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+            \u9810\u8A2D 30 \u5929\u5167\uFF0C\u96A8\u6642\u5728 Telegram \u56DE\u8986\u820A\u901A\u77E5\u7686\u80FD\u76F4\u63A5\u63A5\u7E8C\u4EA4\u8AC7\u3002
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveSettings()" style="padding: 10px 20px;">
+          \uD83D\uDCBE \u5132\u5B58\u8A2D\u5B9A (Save Settings)
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast Notification -->
+  <div id="toast"></div>
+
+  <footer>
+    OpenCode Telegram Link V3.0 \u2022 Privacy-first remote development and monitoring
+  </footer>
+
+  <script>
+    let summaryData = null;
+
+    function showToast(msg, type = 'info') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'show ' + type;
+      setTimeout(() => { t.className = ''; }, 3500);
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+      if (activeBtn) activeBtn.classList.add('active');
+      const targetContent = document.getElementById('tab-' + tabId);
+      if (targetContent) targetContent.classList.add('active');
+    }
+
+    async function fetchSummary() {
+      try {
+        const res = await fetch('/v1/api/dashboard/summary');
+        if (!res.ok) return;
+        const data = await res.json();
+        summaryData = data;
+        renderDashboard(data);
+      } catch (err) {
+        console.error('Fetch summary error:', err);
+      }
+    }
+
+    function renderDashboard(data) {
+      document.getElementById('stat-machines').textContent = data.machines ? data.machines.length : 0;
+      document.getElementById('stat-connections').textContent = data.connectionsCount || 0;
+      document.getElementById('stat-sessions').textContent = data.activeSessions ? data.activeSessions.length : 0;
+      document.getElementById('uptime-text').textContent = 'Uptime: ' + (data.uptimeFormatted || '0m');
+
+      // Render Machines & Projects
+      const container = document.getElementById('machines-container');
+      const targetSelect = document.getElementById('dispatch-target');
+      
+      if (data.machines && data.machines.length > 0) {
+        container.innerHTML = data.machines.map(m => {
+          const projectCards = (m.projects || []).map(p => {
+            const hasSession = p.sessionId;
+            return \`
+              <div class="project-card">
+                <div class="project-name">
+                  <span>\uD83D\uDCC2</span> \${p.projectLabel}
+                </div>
+                <div class="project-session">
+                  \${hasSession ? '\u26A1 \u6B63\u5728\u57F7\u884C\uFF1A<b>' + (p.sessionLabel || p.sessionId) + '</b>' : '\uD83D\uDFE2 \u5F85\u547D\u4E2D (0 \u6D3B\u8E8D Session)'}
+                </div>
+                <div class="project-actions">
+                  <button class="btn btn-primary" onclick="quickDispatch('\${p.projectLabel}')" style="padding: 4px 10px; font-size: 12px;">
+                    \uD83D\uDE80 \u6D3E\u5DE5
+                  </button>
+                  \${hasSession ? \`<button class="btn btn-danger" onclick="cancelSession('\${p.sessionId}')" style="padding: 4px 10px; font-size: 12px;">\uD83D\uDED1 \u4E2D\u6B62</button>\` : ''}
+                </div>
+              </div>
+            \`;
+          }).join('');
+
+          return \`
+            <div class="machine-card">
+              <div class="machine-header">
+                <div class="machine-title">
+                  <span>\uD83D\uDCBB</span> \${m.hostLabel || 'codeCenter'}
+                  <span style="font-size: 12px; font-weight: normal; color: var(--text-muted);">(\${m.machineId.slice(0, 8)}...)</span>
+                </div>
+                <span class="machine-badge">\${m.connectionsCount} \u500B\u5C08\u6848\u9023\u7DDA\u4E2D</span>
+              </div>
+              <div class="project-grid">
+                \${projectCards || '<div style="color: var(--text-muted); font-size: 13px;">\u7121\u5C08\u6848</div>'}
+              </div>
+            </div>
+          \`;
+        }).join('');
+
+        // Populate dispatch target dropdown
+        const currentTarget = targetSelect.value;
+        let options = '<option value="">-- \u81EA\u52D5\u5075\u6E2C / \u552F\u4E00\u5728\u7DDA\u5C08\u6848 --</option>';
+        data.machines.forEach(m => {
+          (m.projects || []).forEach(p => {
+            options += \`<option value="\${p.projectLabel}">[\${m.hostLabel || 'Host'}] \${p.projectLabel}</option>\`;
+          });
+        });
+        targetSelect.innerHTML = options;
+        if (currentTarget) targetSelect.value = currentTarget;
+      } else {
+        container.innerHTML = '<div style="color: var(--text-muted); padding: 24px; text-align: center;">\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u5728\u7DDA\u4E3B\u6A5F\u3002</div>';
+      }
+
+      // Render Active Sessions Table
+      const tbody = document.getElementById('sessions-tbody');
+      if (data.activeSessions && data.activeSessions.length > 0) {
+        tbody.innerHTML = data.activeSessions.map(s => \`
+          <tr>
+            <td><b>\${s.hostLabel || 'codeCenter'}</b></td>
+            <td>\uD83D\uDCC2 \${s.projectLabel}</td>
+            <td>\${s.sessionLabel || '\u4EFB\u52D9\u57F7\u884C\u4E2D'}</td>
+            <td><code>\${s.route.sessionId}</code></td>
+            <td>
+              <button class="btn btn-danger" onclick="cancelSession('\${s.route.sessionId}')">
+                \uD83D\uDED1 \u4E2D\u6B62 (Cancel)
+              </button>
+            </td>
+          </tr>
+        \`).join('');
+      } else {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u57F7\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5\u3002</td></tr>';
+      }
+    }
+
+    function quickDispatch(projectName) {
+      switchTab('dispatch');
+      document.getElementById('dispatch-target').value = projectName;
+      document.getElementById('dispatch-prompt').focus();
+    }
+
+    async function submitDispatch() {
+      const target = document.getElementById('dispatch-target').value.trim();
+      const prompt = document.getElementById('dispatch-prompt').value.trim();
+
+      if (!prompt) {
+        showToast('\u8ACB\u8F38\u5165\u4EFB\u52D9\u63D0\u793A\u8A5E\uFF01', 'error');
+        return;
+      }
+
+      try {
+        const res = await fetch('/v1/api/dashboard/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target, prompt })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('\uD83D\uDE80 \u4EFB\u52D9\u5DF2\u6210\u529F\u6D3E\u767C\u958B\u5DE5\uFF01', 'success');
+          document.getElementById('dispatch-prompt').value = '';
+          fetchSummary();
+        } else {
+          showToast('\u274C \u6D3E\u767C\u5931\u6557\uFF1A' + (data.reason || data.message || '\u672A\u77E5\u932F\u8AA4'), 'error');
+        }
+      } catch (err) {
+        showToast('\u6D3E\u767C\u8ACB\u6C42\u5931\u6557\uFF1A' + err.message, 'error');
+      }
+    }
+
+    async function cancelSession(sessionId) {
+      if (!confirm('\u78BA\u5B9A\u8981\u4E2D\u6B62\u6B64\u4EFB\u52D9\u5DE5\u4F5C\u968E\u6BB5\u55CE (' + sessionId + ')\uFF1F')) return;
+      try {
+        const res = await fetch('/v1/api/dashboard/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('\uD83D\uDED1 \u4EFB\u52D9\u5DF2\u6210\u529F\u4E2D\u6B62\uFF01', 'success');
+          fetchSummary();
+        } else {
+          showToast('\u274C \u4E2D\u6B62\u5931\u6557\uFF1A' + (data.reason || '\u672A\u77E5\u932F\u8AA4'), 'error');
+        }
+      } catch (err) {
+        showToast('\u4E2D\u6B62\u8ACB\u6C42\u5931\u6557\uFF1A' + err.message, 'error');
+      }
+    }
+
+    async function saveSettings() {
+      const provider = document.getElementById('setting-provider').value;
+      const apiKey = document.getElementById('setting-apikey').value.trim();
+      const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
+
+      try {
+        const res = await fetch('/v1/api/dashboard/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            voiceProvider: provider,
+            voiceApiKey: apiKey || undefined,
+            sessionPromptTtlMinutes: ttlDays * 24 * 60
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('\uD83D\uDCBE \u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\uFF01', 'success');
+        } else {
+          showToast('\u5132\u5B58\u5931\u6557\uFF1A' + data.message, 'error');
+        }
+      } catch (err) {
+        showToast('\u5132\u5B58\u5931\u6557\uFF1A' + err.message, 'error');
+      }
+    }
+
+    // Auto-refresh summary every 3 seconds
+    fetchSummary();
+    setInterval(fetchSummary, 3000);
+  </script>
+</body>
+</html>`;
+}
+
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
 var DEFAULT_BIND_HOST = "0.0.0.0";
@@ -18872,22 +19409,24 @@ async function startBroker(options = {}) {
   const deliveryIntervalMs = options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
   const now = options.now ?? Date.now;
   let lastNonIdleAt = Date.now();
+  const startedAt = Date.now();
   let broker;
   const telegramRuntimeRef = { value: undefined };
   const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
+  const dispatcher = {
+    sendCommand: async (command) => {
+      if (!broker) {
+        return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
+      }
+      return await broker.sendCommand(command);
+    }
+  };
   const ensureTelegramRuntime = (config2) => {
     telegramRuntimeRef.value ??= new BrokerTelegramRuntime({
       config: config2,
       database,
       registry: registry2,
-      dispatcher: {
-        sendCommand: async (command) => {
-          if (!broker) {
-            return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
-          }
-          return await broker.sendCommand(command);
-        }
-      },
+      dispatcher,
       api: (options.telegramApiFactory ?? ((botToken) => new TelegramBotApi({ token: botToken })))(config2.botToken),
       deliveryIntervalMs,
       ...options.telegramPollLongPollSeconds !== undefined ? { pollLongPollSeconds: options.telegramPollLongPollSeconds } : {},
@@ -18903,6 +19442,119 @@ async function startBroker(options = {}) {
         port: options.port ?? DEFAULT_PORT,
         fetch(request, bunServer) {
           const url2 = new URL(request.url);
+          if (url2.pathname === "/" || url2.pathname === "/dashboard") {
+            return new Response(renderDashboardHtml(), {
+              headers: { "Content-Type": "text/html; charset=utf-8" }
+            });
+          }
+          if (url2.pathname === "/v1/api/dashboard/summary") {
+            const machines = registry2.listMachines();
+            const activeSessions = registry2.listActiveSessions();
+            const uptimeMs = Date.now() - startedAt;
+            const uptimeMinutes = Math.floor(uptimeMs / 60000);
+            const uptimeHours = Math.floor(uptimeMinutes / 60);
+            const uptimeFormatted = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
+            return Response.json({
+              service: "opencode-telegram-link",
+              version: "3.0.0",
+              machineId: state.machineId,
+              protocol: PROTOCOL_VERSION,
+              uptimeMs,
+              uptimeFormatted,
+              connectionsCount: registry2.connectionCount,
+              routeCount: registry2.routeCount,
+              machines,
+              activeSessions
+            });
+          }
+          if (url2.pathname === "/v1/api/dashboard/dispatch") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = await request.json();
+                if (!body.prompt?.trim()) {
+                  return Response.json({ success: false, reason: "Prompt is required" }, { status: 400 });
+                }
+                const prompt = body.prompt.trim();
+                const target = body.target?.trim();
+                const sessionId = body.sessionId?.trim();
+                if (sessionId) {
+                  const route = registry2.resolveBySessionId(sessionId);
+                  if (!route) {
+                    return Response.json({ success: false, reason: `Session ${sessionId} not found or offline` }, { status: 404 });
+                  }
+                  const result2 = await dispatcher.sendCommand({
+                    commandId: randomUUID6(),
+                    type: "session.prompt",
+                    route,
+                    text: prompt
+                  });
+                  return Response.json({ success: result2.status === "accepted", result: result2 });
+                }
+                const machines = registry2.listMachines();
+                const allProjects = [];
+                for (const m of machines) {
+                  for (const p of m.projects) {
+                    allProjects.push({
+                      machineId: m.machineId,
+                      projectLabel: p.projectLabel,
+                      ...m.hostLabel ? { hostLabel: m.hostLabel } : {},
+                      ...p.sessionId ? { sessionId: p.sessionId } : {}
+                    });
+                  }
+                }
+                const selected = target ? allProjects.find((p) => p.projectLabel.toLowerCase() === target.toLowerCase() || p.hostLabel?.toLowerCase() === target.toLowerCase()) : allProjects.length === 1 ? allProjects[0] : undefined;
+                if (!selected) {
+                  return Response.json({
+                    success: false,
+                    reason: target ? `Target project "${target}" not found` : "Multiple projects online, please specify target project"
+                  }, { status: 400 });
+                }
+                const result = await dispatcher.sendCommand({
+                  commandId: randomUUID6(),
+                  type: "session.spawn",
+                  title: prompt.slice(0, 30),
+                  prompt
+                });
+                return Response.json({ success: result.status === "accepted", result });
+              } catch (err) {
+                return Response.json({ success: false, reason: err.message }, { status: 500 });
+              }
+            })();
+          }
+          if (url2.pathname === "/v1/api/dashboard/cancel") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = await request.json();
+                if (!body.sessionId?.trim()) {
+                  return Response.json({ success: false, reason: "Session ID is required" }, { status: 400 });
+                }
+                const route = registry2.resolveBySessionId(body.sessionId.trim());
+                if (!route) {
+                  return Response.json({ success: false, reason: "Session not found or offline" }, { status: 404 });
+                }
+                const result = await dispatcher.sendCommand({
+                  commandId: randomUUID6(),
+                  type: "session.cancel",
+                  route
+                });
+                return Response.json({ success: result.status === "accepted", result });
+              } catch (err) {
+                return Response.json({ success: false, reason: err.message }, { status: 500 });
+              }
+            })();
+          }
+          if (url2.pathname === "/v1/api/dashboard/settings") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return Response.json({ success: true, message: "Settings saved" });
+          }
           if (url2.pathname !== "/v1/health" && url2.pathname !== "/v1/status" && url2.pathname !== "/v1/connect" && url2.pathname !== "/v1/control/stop") {
             return new Response("Not found", { status: 404 });
           }
@@ -20208,4 +20860,4 @@ export {
   runBroker
 };
 
-//# debugId=D75528340DECA33464756E2164756E21
+//# debugId=EBD32A398923510B64756E2164756E21

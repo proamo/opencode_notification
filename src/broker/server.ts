@@ -272,9 +272,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             const uptimeMinutes = Math.floor(uptimeMs / 60000);
             const uptimeHours = Math.floor(uptimeMinutes / 60);
             const uptimeFormatted =
-              uptimeHours > 0
-                ? `${uptimeHours}h ${uptimeMinutes % 60}m`
-                : `${uptimeMinutes}m`;
+              uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
 
             return Response.json({
               service: "opencode-telegram-link",
