@@ -205,13 +205,7 @@ describe("Slash Commands System", () => {
       data: { connectionId: "conn-1" },
       close: () => {},
     } as unknown as ServerWebSocket<BrokerConnectionData>;
-    registry.registerConnection(
-      fakeSocket,
-      instanceId,
-      machineId,
-      "d009-win10",
-      "openclaw",
-    );
+    registry.registerConnection(fakeSocket, instanceId, machineId, "d009-win10", "openclaw");
 
     // Test /run openclaw
     const runResult = await executeSlashCommand({

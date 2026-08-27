@@ -53,8 +53,10 @@ export const en = {
   "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "🚀 Task dispatched successfully to",
   "cmd.run.failed": "❌ Failed to dispatch task",
-  "cmd.run.notFound": "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.",
-  "cmd.run.usage": "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>",
+  "cmd.run.notFound":
+    "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.usage":
+    "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>",
   "cmd.unknown": "❓ Unknown command. Type /help to view available commands.",
 } as const;
 
@@ -114,6 +116,7 @@ export const zhTW = {
   "cmd.run.spawned": "🚀 任務已成功指派至",
   "cmd.run.failed": "❌ 任務指派失敗",
   "cmd.run.notFound": "⚠️ 找不到指定的目標主機或專案。請先輸入 /nodes 確認。",
-  "cmd.run.usage": "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>",
+  "cmd.run.usage":
+    "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>",
   "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。",
 } as const satisfies Record<MessageKey, string>;

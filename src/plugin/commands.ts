@@ -229,10 +229,7 @@ async function runSessionSpawnCommand(
   command: Extract<BrokerCommand, { type: "session.spawn" }>,
 ): Promise<CommandResult> {
   const maybeSession = client.session as unknown as {
-    create?: (params: {
-      query?: { directory?: string };
-      body?: { title?: string };
-    }) => Promise<{
+    create?: (params: { query?: { directory?: string }; body?: { title?: string } }) => Promise<{
       data?: { id?: string; sessionID?: string };
       error?: unknown;
     }>;

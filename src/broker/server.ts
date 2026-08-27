@@ -149,7 +149,11 @@ export class BrokerServer {
         socket = this.registry.ownerByInstance(command.instanceId);
       }
       if (!socket) {
-        return { commandId: command.commandId, status: "stale", reason: "target instance is offline" };
+        return {
+          commandId: command.commandId,
+          status: "stale",
+          reason: "target instance is offline",
+        };
       }
     } else {
       const registered = this.registry.resolve(command.route);

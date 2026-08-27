@@ -234,8 +234,7 @@ async function handleRunCommand(
   // 2. If not found with 1st arg, maybe target was 2 words (e.g. /run d009-win10 openclaw check logs)
   if (!targetConn && args.length >= 3) {
     const conn2 =
-      context.registry.findConnection(args[1]) ??
-      context.registry.findConnection(args[0]);
+      context.registry.findConnection(args[1]) ?? context.registry.findConnection(args[0]);
     if (conn2) {
       targetConn = conn2;
       prompt = args.slice(2).join(" ").trim();
