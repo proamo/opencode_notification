@@ -133,3 +133,51 @@ Telegram response text SHALL be treated as untrusted user input and submitted on
 - **WHEN** authorized reply text contains shell syntax, route identifiers, or configuration-like content
 - **THEN** the broker SHALL treat it solely as prompt text or a constrained question answer according to the stored action type
 
+### Requirement: Global Slash Commands System
+The Central Gateway SHALL intercept authorized top-level slash commands (`/help`, `/status`, `/nodes`, `/sessions`, `/cancel`) and execute them directly without requiring a reply-to-message thread binding.
+
+#### Scenario: User requests Gateway status
+- **WHEN** an authorized user sends `/status`
+- **THEN** the Gateway SHALL reply with uptime, connected machines count, and active route count
+
+#### Scenario: User lists connected node machines
+- **WHEN** an authorized user sends `/nodes`
+- **THEN** the Gateway SHALL reply with all connected machines grouped by machine identity with project labels and online status
+
+#### Scenario: User cancels an active session
+- **WHEN** an authorized user sends `/cancel <session_id>`
+- **THEN** the Gateway SHALL resolve the active route and dispatch a `session.cancel` command to abort the running session
+
+### Requirement: Proactive Remote Dispatch (/run)
+The system SHALL support proactive task dispatching via `/run <target> <prompt>`. The Gateway SHALL resolve the target machine or project connection and dispatch a `session.spawn` command to create a new session and execute the initial prompt.
+
+#### Scenario: User dispatches task to a specific project
+- **WHEN** an authorized user sends `/run adspower-farm check crawler logs`
+- **THEN** the Gateway SHALL locate the matching project connection, issue `session.spawn`, and reply with an immediate execution receipt
+
+#### Scenario: User targets single online node without specifying project
+- **WHEN** an authorized user sends `/run run integration tests` and only one node connection is online
+- **THEN** the Gateway SHALL automatically dispatch the task to that online connection
+
+### Requirement: Extended 30-Day Session Retention and Session ID Resumption
+The system SHALL maintain a default session prompt replay retention of 30 days (43,200 minutes). The `/run` command SHALL support passing an existing `sessionId` to resume conversation on historical sessions without spawning a new session.
+
+#### Scenario: User resumes session with /run <session_id>
+- **WHEN** an authorized user sends `/run ses_4a8b... fix reported bug`
+- **THEN** the Gateway SHALL dispatch a `session.prompt` command to the matching session route to continue execution within the existing session context
+
+#### Scenario: User replies to a notification within 30 days
+- **WHEN** an authorized user replies to a notification message up to 30 days old
+- **THEN** the message binding SHALL remain valid and the reply SHALL be accepted and forwarded to the target session
+
+### Requirement: Voice-to-Command (Speech-to-Text Transcription)
+The Central Gateway SHALL support processing Telegram voice and audio messages. Using configured speech-to-text providers (such as Groq Whisper or OpenAI Whisper), audio SHALL be transcribed to text and processed as either a threaded session reply or a direct slash command.
+
+#### Scenario: User sends voice message as a reply
+- **WHEN** an authorized user sends a voice message replying to an actionable notification
+- **THEN** the Gateway SHALL download the audio file, transcribe it to text, provide transcription feedback, and submit it as a session prompt or question reply
+
+#### Scenario: User sends direct voice command
+- **WHEN** an authorized user sends a direct voice message without thread binding
+- **THEN** the Gateway SHALL transcribe the audio, interpret spoken commands (such as "run adspower-farm 檢查日誌" or "系統狀態"), and execute the corresponding command
+

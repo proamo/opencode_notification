@@ -110,3 +110,15 @@ Loss or restart of the broker MUST NOT interrupt the underlying OpenCode session
 - **WHEN** the broker becomes available after a restart
 - **THEN** live plugins SHALL re-register their current routes before those routes accept commands
 
+### Requirement: Remote Command Dispatch (session.spawn and session.cancel)
+The broker protocol SHALL support `session.spawn` and `session.cancel` command types alongside `session.prompt`, `question.reply`, and `permission.reply`. The target plugin SHALL handle session creation via OpenCode SDK APIs and session abort/cancel operations.
+
+#### Scenario: session.spawn command received
+- **WHEN** a connected OpenCode plugin receives a valid `session.spawn` command with title and initial prompt
+- **THEN** the plugin SHALL invoke OpenCode session creation, submit the initial prompt, and return the new session ID
+
+#### Scenario: session.cancel command received
+- **WHEN** a connected OpenCode plugin receives a valid `session.cancel` command for an active session
+- **THEN** the plugin SHALL invoke OpenCode session abort/stop APIs and return accepted status
+
+

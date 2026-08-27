@@ -155,4 +155,16 @@ The product SHALL provide a 1-command interactive uninstaller (`uninstall`) that
 - **WHEN** the user invokes the uninstaller wizard and confirms the cleanup steps
 - **THEN** any active native broker or Docker Broker container SHALL be terminated, `opencode-telegram-link` configuration SHALL be removed from `opencode.json`, operational SQLite databases SHALL be purged, and the private token file and state directory SHALL be removed
 
+### Requirement: Multi-Engine Voice Configuration and Extended Retention
+Configuration validation SHALL support optional `voice` configuration properties (`enabled`, `provider`, `apiKey`, `apiKeyFile`, `model`, `endpoint`, `language`) supporting providers including Groq, OpenAI, and custom OpenAI-compatible endpoints. The system SHALL support session prompt replay TTL configurations up to 365 days with a 30-day default.
+
+#### Scenario: User configures Groq Whisper speech provider
+- **WHEN** the user specifies `voice: { provider: "groq", apiKey: "gsk_..." }`
+- **THEN** the configuration SHALL validate successfully and the broker SHALL initialize Groq Whisper STT processing
+
+#### Scenario: User configures extended retention
+- **WHEN** the user configures `interaction: { sessionPromptTtlMinutes: 43200 }`
+- **THEN** validation SHALL accept the 30-day window without exceeding maximum bounds
+
+
 
