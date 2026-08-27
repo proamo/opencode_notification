@@ -178,7 +178,7 @@ describe("local broker", () => {
     expect(broker.registry.connectionCount).toBe(0);
   });
 
-  test("rejects connections whose configuration fingerprint differs from the active broker", async () => {
+  test("accepts concurrent connections with distinct project configuration fingerprints", async () => {
     const { broker, secret } = await createBroker();
     const first = await connectClient(broker.port, secret);
     const second = await connectClient(broker.port, secret);
@@ -200,10 +200,10 @@ describe("local broker", () => {
     );
 
     expect(await response).toMatchObject({
-      type: "error",
-      payload: { code: "CONFIG_FINGERPRINT_MISMATCH" },
+      type: "registered",
+      payload: { machineId: broker.machineId },
     });
-    expect(broker.registry.connectionCount).toBe(1);
+    expect(broker.registry.connectionCount).toBe(2);
   });
 
   test("removes every route when its owning connection closes", async () => {

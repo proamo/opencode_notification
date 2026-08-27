@@ -146,19 +146,13 @@ export class RouteRegistry {
       }
     }
 
-    // Hot fallback 2: match by machineId across active live connections (resilient across OpenCode restarts)
-    for (const connection of this.#connections.values()) {
-      if (connection.machineId === parsed.machineId) {
-        return {
-          route: {
-            ...parsed,
-            instanceId: connection.instanceId,
-          },
-          connectionId: connection.socket.data.connectionId,
-          projectLabel: "project",
-          sessionLabel: "session",
-          hostLabel: connection.hostLabel,
-        };
+    // Hot fallback 2: match by (machineId, sessionId) across active registered routes
+    for (const registered of this.#routes.values()) {
+      if (
+        registered.route.machineId === parsed.machineId &&
+        registered.route.sessionId === parsed.sessionId
+      ) {
+        return registered;
       }
     }
 

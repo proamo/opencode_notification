@@ -157,8 +157,8 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
     checks.push(warn("loopback-binding", "Broker binding could not be verified."));
     return { checks };
   }
-  if (status.bindHost === "127.0.0.1") {
-    checks.push(pass("loopback-binding", "Broker is bound to 127.0.0.1."));
+  if (status.bindHost === "127.0.0.1" || status.bindHost === "0.0.0.0") {
+    checks.push(pass("loopback-binding", `Broker is bound to ${status.bindHost}.`));
   } else {
     checks.push(
       fail(
