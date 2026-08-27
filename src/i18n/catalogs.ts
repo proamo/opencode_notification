@@ -40,6 +40,7 @@ export const en = {
   "cmd.help.nodes": "List connected node machines",
   "cmd.help.sessions": "List active working sessions",
   "cmd.help.cancel": "Cancel an active session",
+  "cmd.help.run": "Dispatch new task to a machine or project",
   "cmd.help.help": "Show this help menu",
   "cmd.status.title": "📊 <b>Gateway System Status:</b>",
   "cmd.nodes.title": "🌐 <b>Connected Machines:</b>",
@@ -50,6 +51,10 @@ export const en = {
   "cmd.cancel.failed": "❌ Failed to cancel task.",
   "cmd.cancel.notFound": "⚠️ Session not found or target host is offline.",
   "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "🚀 Task dispatched successfully to",
+  "cmd.run.failed": "❌ Failed to dispatch task",
+  "cmd.run.notFound": "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.usage": "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>",
   "cmd.unknown": "❓ Unknown command. Type /help to view available commands.",
 } as const;
 
@@ -95,6 +100,7 @@ export const zhTW = {
   "cmd.help.nodes": "列出所有在線連線中的電腦主機",
   "cmd.help.sessions": "列出目前活躍的工作階段",
   "cmd.help.cancel": "中止正在執行中的任務",
+  "cmd.help.run": "向指定主機或專案派發新任務",
   "cmd.help.help": "顯示此說明選單",
   "cmd.status.title": "📊 <b>Gateway 系統狀態：</b>",
   "cmd.nodes.title": "🌐 <b>已連線電腦主機：</b>",
@@ -105,5 +111,9 @@ export const zhTW = {
   "cmd.cancel.failed": "❌ 任務中止失敗。",
   "cmd.cancel.notFound": "⚠️ 找不到指定 Session 或目標主機已離線。",
   "cmd.cancel.usage": "ℹ️ 使用方式：<code>/cancel &lt;session_id&gt;</code>",
+  "cmd.run.spawned": "🚀 任務已成功指派至",
+  "cmd.run.failed": "❌ 任務指派失敗",
+  "cmd.run.notFound": "⚠️ 找不到指定的目標主機或專案。請先輸入 /nodes 確認。",
+  "cmd.run.usage": "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>",
   "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。",
 } as const satisfies Record<MessageKey, string>;

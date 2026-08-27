@@ -71,6 +71,7 @@ export type BrokerClientOptions = {
   stateDirectory?: string;
   port?: number;
   hostLabel?: string | undefined;
+  projectLabel?: string | undefined;
   gatewayUrl?: string | undefined;
   gatewaySecret?: string | undefined;
   packageVersion: string;
@@ -325,6 +326,7 @@ export class BrokerClient {
           machineId: identity.machineId,
           instanceId: this.instanceId,
           ...(this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {}),
+          ...(this.#options.projectLabel ? { projectLabel: this.#options.projectLabel } : {}),
           configFingerprint: this.#options.configFingerprint,
           capabilities: [...BROKER_CAPABILITIES],
           ...(this.#options.telegram ? { telegram: this.#options.telegram } : {}),

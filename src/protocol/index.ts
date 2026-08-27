@@ -60,6 +60,7 @@ export const RegisterEnvelopeSchema = z.object({
     machineId: z.uuid(),
     instanceId: z.uuid(),
     hostLabel: z.string().min(1).max(128).optional(),
+    projectLabel: z.string().min(1).max(128).optional(),
     configFingerprint: ConfigFingerprintSchema,
     capabilities: z.array(z.string().min(1).max(64)).max(64),
     telegram: TelegramRuntimeConfigSchema.optional(),
@@ -118,6 +119,13 @@ export const BrokerCommandSchema = z.discriminatedUnion("type", [
     commandId: z.uuid(),
     route: RouteKeySchema,
     reason: z.string().min(1).max(256).optional(),
+  }),
+  z.object({
+    type: z.literal("session.spawn"),
+    commandId: z.uuid(),
+    instanceId: z.uuid().optional(),
+    title: z.string().min(1).max(256).optional(),
+    prompt: z.string().min(1).max(16_384),
   }),
 ]);
 export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;

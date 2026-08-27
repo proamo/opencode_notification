@@ -64,6 +64,9 @@ export async function executeSlashCommand(context: SlashCommandContext): Promise
     case "cancel": {
       return await handleCancelCommand(args, context, locale);
     }
+    case "run": {
+      return await handleRunCommand(args, context, locale);
+    }
     default: {
       return translate(locale, "cmd.unknown");
     }
@@ -74,6 +77,7 @@ function renderHelpMenu(locale: SupportedLocale): string {
   const lines = [
     translate(locale, "cmd.help.title"),
     "",
+    `• <code>/run &lt;project&gt; &lt;prompt&gt;</code> - ${translate(locale, "cmd.help.run")}`,
     `• <code>/status</code> - ${translate(locale, "cmd.help.status")}`,
     `• <code>/nodes</code> - ${translate(locale, "cmd.help.nodes")}`,
     `• <code>/sessions</code> - ${translate(locale, "cmd.help.sessions")}`,
@@ -211,4 +215,73 @@ async function handleCancelCommand(
   }
 
   return `${translate(locale, "cmd.cancel.failed")} (${result.reason ?? result.status})`;
+}
+
+async function handleRunCommand(
+  args: string[],
+  context: SlashCommandContext,
+  locale: SupportedLocale,
+): Promise<string> {
+  if (args.length === 0) {
+    return translate(locale, "cmd.run.usage");
+  }
+
+  // 1. Try matching the first argument as target (e.g. /run adspower-farm check logs)
+  const targetArg = args[0] ?? "";
+  let prompt = args.slice(1).join(" ").trim();
+  let targetConn = context.registry.findConnection(targetArg);
+
+  // 2. If not found with 1st arg, maybe target was 2 words (e.g. /run d009-win10 openclaw check logs)
+  if (!targetConn && args.length >= 3) {
+    const conn2 =
+      context.registry.findConnection(args[1]) ??
+      context.registry.findConnection(args[0]);
+    if (conn2) {
+      targetConn = conn2;
+      prompt = args.slice(2).join(" ").trim();
+    }
+  }
+
+  // 3. If still not found and only 1 connection is online, treat entire args as prompt
+  if (!targetConn) {
+    const defaultConn = context.registry.findConnection(undefined);
+    if (defaultConn) {
+      targetConn = defaultConn;
+      prompt = args.join(" ").trim();
+    }
+  }
+
+  if (!targetConn || !prompt) {
+    return `${translate(locale, "cmd.run.notFound")}\n\n${translate(locale, "cmd.run.usage")}`;
+  }
+
+  const commandId = randomUUID();
+  const hostName = targetConn.hostLabel || "codeCenter";
+  const projectName = targetConn.projectLabel || "project";
+
+  const result = await context.dispatcher.sendCommand({
+    type: "session.spawn",
+    commandId,
+    instanceId: targetConn.instanceId,
+    title: prompt.slice(0, 50),
+    prompt,
+  });
+
+  if (result.status === "accepted") {
+    const sessionId = result.reason ? `<code>${result.reason}</code>` : "";
+    const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+    const lines = [
+      `${translate(locale, "cmd.run.spawned")} <b>[${hostName}] ${projectName}</b> 🚀`,
+      "",
+      `📝 <b>指令：</b> <i>${promptDisplay}</i>`,
+      ...(sessionId ? [`🆔 <b>Session:</b> ${sessionId}`] : []),
+      "",
+      locale === "zh-TW"
+        ? "⏳ 任務已啟動，執行完成後將自動推播結論至此！"
+        : "⏳ Task started! A notification with the summary will arrive upon completion.",
+    ];
+    return lines.join("\n");
+  }
+
+  return `${translate(locale, "cmd.run.failed")}: ${result.reason ?? result.status}`;
 }

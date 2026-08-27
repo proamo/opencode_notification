@@ -184,4 +184,58 @@ describe("Slash Commands System", () => {
     });
     expect(notFoundResult).toContain("找不到指定 Session");
   });
+
+  test("dispatches /run command to target machine and project", async () => {
+    const registry = new RouteRegistry();
+    let dispatchedCommand: BrokerCommand | undefined;
+    const dispatcher = {
+      sendCommand: async (cmd: BrokerCommand): Promise<CommandResult> => {
+        dispatchedCommand = cmd;
+        return {
+          commandId: cmd.commandId,
+          status: "accepted",
+          reason: "ses_new_12345678",
+        };
+      },
+    };
+
+    const machineId = crypto.randomUUID();
+    const instanceId = crypto.randomUUID();
+    const fakeSocket = {
+      data: { connectionId: "conn-1" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
+    registry.registerConnection(
+      fakeSocket,
+      instanceId,
+      machineId,
+      "d009-win10",
+      "openclaw",
+    );
+
+    // Test /run openclaw
+    const runResult = await executeSlashCommand({
+      text: "/run openclaw run integration tests",
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+    expect(runResult).toContain("任務已成功指派至");
+    expect(runResult).toContain("[d009-win10] openclaw");
+    expect(runResult).toContain("ses_new_12345678");
+    expect(dispatchedCommand).toMatchObject({
+      type: "session.spawn",
+      instanceId,
+      prompt: "run integration tests",
+    });
+
+    // Test /run usage
+    const usageResult = await executeSlashCommand({
+      text: "/run",
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+    expect(usageResult).toContain("使用方式");
+  });
 });

@@ -18,6 +18,9 @@ export async function runOpenCodeCommand(
   if (command.type === "session.cancel") {
     return await runSessionCancelCommand(client, directory, command);
   }
+  if (command.type === "session.spawn") {
+    return await runSessionSpawnCommand(client, directory, command);
+  }
   const exhaustive: never = command;
   return exhaustive;
 }
@@ -216,6 +219,70 @@ async function runSessionCancelCommand(
       commandId: command.commandId,
       status: "indeterminate",
       reason: "cancel execution error",
+    };
+  }
+}
+
+async function runSessionSpawnCommand(
+  client: PluginInput["client"],
+  directory: string,
+  command: Extract<BrokerCommand, { type: "session.spawn" }>,
+): Promise<CommandResult> {
+  const maybeSession = client.session as unknown as {
+    create?: (params: {
+      query?: { directory?: string };
+      body?: { title?: string };
+    }) => Promise<{
+      data?: { id?: string; sessionID?: string };
+      error?: unknown;
+    }>;
+  };
+
+  try {
+    let sessionId: string | undefined;
+    if (typeof maybeSession?.create === "function") {
+      const createRes = await maybeSession.create({
+        query: { directory },
+        body: { title: command.title ?? "Telegram Remote Task" },
+      });
+      if (createRes && typeof createRes === "object" && "data" in createRes && createRes.data) {
+        sessionId = createRes.data.id ?? createRes.data.sessionID;
+      }
+    }
+
+    if (!sessionId) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: "failed to create new OpenCode session",
+      };
+    }
+
+    const promptRes = await client.session.prompt({
+      path: { id: sessionId },
+      query: { directory },
+      body: { parts: [{ type: "text", text: command.prompt }] },
+    });
+
+    if (promptRes.error) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: "failed to submit initial prompt",
+      };
+    }
+
+    return {
+      commandId: command.commandId,
+      status: "accepted",
+      reason: sessionId,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "session spawn failed";
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: msg,
     };
   }
 }

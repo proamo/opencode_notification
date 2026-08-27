@@ -141,10 +141,26 @@ export class BrokerServer {
     command: BrokerCommand,
     timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
   ): Promise<CommandResult> {
-    const registered = this.registry.resolve(command.route);
-    const socket = registered ? this.registry.owner(registered.route) : undefined;
-    if (!registered || !socket) {
-      return { commandId: command.commandId, status: "stale", reason: "route is offline" };
+    let socket: Bun.ServerWebSocket<BrokerConnectionData> | undefined;
+    let payloadCommand = { ...command };
+
+    if (command.type === "session.spawn") {
+      if (command.instanceId) {
+        socket = this.registry.ownerByInstance(command.instanceId);
+      }
+      if (!socket) {
+        return { commandId: command.commandId, status: "stale", reason: "target instance is offline" };
+      }
+    } else {
+      const registered = this.registry.resolve(command.route);
+      socket = registered ? this.registry.owner(registered.route) : undefined;
+      if (!registered || !socket) {
+        return { commandId: command.commandId, status: "stale", reason: "route is offline" };
+      }
+      payloadCommand = {
+        ...command,
+        route: registered.route,
+      };
     }
 
     const requestId = randomUUID();
@@ -170,10 +186,7 @@ export class BrokerServer {
       type: "command",
       requestId,
       sentAt: new Date().toISOString(),
-      payload: {
-        ...command,
-        route: registered.route,
-      },
+      payload: payloadCommand,
     });
     return await result;
   }
@@ -783,6 +796,7 @@ function handleMessage(
           envelope.payload.instanceId,
           envelope.payload.machineId,
           envelope.payload.hostLabel,
+          envelope.payload.projectLabel,
         );
         if (envelope.payload.telegram) ensureTelegramRuntime(envelope.payload.telegram);
         activeConfigFingerprint.value ??= envelope.payload.configFingerprint;

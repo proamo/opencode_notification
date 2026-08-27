@@ -21,6 +21,7 @@ type OwnedConnection = {
   instanceId: string;
   machineId: string;
   hostLabel?: string | undefined;
+  projectLabel?: string | undefined;
   routeKeys: Set<string>;
 };
 
@@ -34,6 +35,7 @@ export class RouteRegistry {
     instanceId: string,
     machineId: string,
     hostLabel?: string,
+    projectLabel?: string,
   ): void {
     const currentOwner = this.#instances.get(instanceId);
     if (currentOwner && currentOwner !== socket.data.connectionId) {
@@ -56,6 +58,7 @@ export class RouteRegistry {
       instanceId,
       machineId,
       hostLabel,
+      projectLabel,
       routeKeys: existing?.routeKeys ?? new Set(),
     });
     this.#instances.set(instanceId, socket.data.connectionId);
@@ -163,6 +166,12 @@ export class RouteRegistry {
     return this.#connections.get(registered.connectionId)?.socket;
   }
 
+  ownerByInstance(instanceId: string): ServerWebSocket<BrokerConnectionData> | undefined {
+    const connectionId = this.#instances.get(instanceId);
+    if (!connectionId) return undefined;
+    return this.#connections.get(connectionId)?.socket;
+  }
+
   removeConnection(connectionId: string): void {
     const connection = this.#connections.get(connectionId);
     if (!connection) return;
@@ -213,8 +222,8 @@ export class RouteRegistry {
     totalRoutesCount: number;
     projects: Array<{
       projectLabel: string;
-      sessionLabel: string;
-      sessionId: string;
+      sessionLabel?: string;
+      sessionId?: string;
     }>;
   }> {
     const machineMap = new Map<
@@ -226,8 +235,8 @@ export class RouteRegistry {
         totalRoutesCount: number;
         projects: Array<{
           projectLabel: string;
-          sessionLabel: string;
-          sessionId: string;
+          sessionLabel?: string;
+          sessionId?: string;
         }>;
       }
     >();
@@ -251,19 +260,76 @@ export class RouteRegistry {
         machine.hostLabel = conn.hostLabel;
       }
 
-      for (const routeKey of conn.routeKeys) {
-        const reg = this.#routes.get(routeKey);
-        if (reg) {
-          machine.projects.push({
-            projectLabel: reg.projectLabel,
-            sessionLabel: reg.sessionLabel,
-            sessionId: reg.route.sessionId,
-          });
+      if (conn.routeKeys.size > 0) {
+        for (const routeKey of conn.routeKeys) {
+          const reg = this.#routes.get(routeKey);
+          if (reg) {
+            machine.projects.push({
+              projectLabel: reg.projectLabel,
+              sessionLabel: reg.sessionLabel,
+              sessionId: reg.route.sessionId,
+            });
+          }
         }
+      } else if (conn.projectLabel) {
+        machine.projects.push({
+          projectLabel: conn.projectLabel,
+        });
       }
     }
 
     return Array.from(machineMap.values());
+  }
+
+  findConnection(target?: string): OwnedConnection | undefined {
+    if (!target) {
+      if (this.#connections.size === 1) {
+        return this.#connections.values().next().value;
+      }
+      return undefined;
+    }
+
+    const lower = target.toLowerCase().trim();
+
+    // 1. Exact or prefix match on instanceId / machineId
+    for (const conn of this.#connections.values()) {
+      if (
+        conn.instanceId.toLowerCase().startsWith(lower) ||
+        conn.machineId.toLowerCase().startsWith(lower)
+      ) {
+        return conn;
+      }
+    }
+
+    // 2. Exact match on projectLabel
+    for (const conn of this.#connections.values()) {
+      if (conn.projectLabel && conn.projectLabel.toLowerCase() === lower) {
+        return conn;
+      }
+    }
+
+    // 3. Substring match on projectLabel
+    for (const conn of this.#connections.values()) {
+      if (conn.projectLabel && conn.projectLabel.toLowerCase().includes(lower)) {
+        return conn;
+      }
+    }
+
+    // 4. Match on hostLabel
+    for (const conn of this.#connections.values()) {
+      if (conn.hostLabel && conn.hostLabel.toLowerCase().includes(lower)) {
+        return conn;
+      }
+    }
+
+    // 5. Match on active routes' projectLabel
+    for (const reg of this.#routes.values()) {
+      if (reg.projectLabel.toLowerCase().includes(lower)) {
+        return this.#connections.get(reg.connectionId);
+      }
+    }
+
+    return undefined;
   }
 
   listActiveSessions(): Array<{

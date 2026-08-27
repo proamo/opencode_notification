@@ -57,6 +57,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   const broker = new BrokerClient({
     port: configData.broker.port,
     hostLabel: configData.hostLabel,
+    projectLabel: basename(directory),
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
