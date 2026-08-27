@@ -36,6 +36,7 @@ import {
   type UpdateDisposition,
   VoiceTranscriber,
 } from "../telegram";
+import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -216,22 +217,26 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
     options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
   const now = options.now ?? Date.now;
   let lastNonIdleAt = Date.now();
+  const startedAt = Date.now();
   let broker: BrokerServer | undefined;
   const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
   const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
+
+  const dispatcher = {
+    sendCommand: async (command: BrokerCommand): Promise<CommandResult> => {
+      if (!broker) {
+        return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
+      }
+      return await broker.sendCommand(command);
+    },
+  };
+
   const ensureTelegramRuntime = (config: TelegramRuntimeConfig): BrokerTelegramRuntime => {
     telegramRuntimeRef.value ??= new BrokerTelegramRuntime({
       config,
       database,
       registry,
-      dispatcher: {
-        sendCommand: async (command) => {
-          if (!broker) {
-            return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
-          }
-          return await broker.sendCommand(command);
-        },
-      },
+      dispatcher,
       api: (options.telegramApiFactory ?? ((botToken) => new TelegramBotApi({ token: botToken })))(
         config.botToken,
       ),
@@ -252,6 +257,180 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
         port: options.port ?? DEFAULT_PORT,
         fetch(request, bunServer) {
           const url = new URL(request.url);
+
+          // Web Dashboard endpoints
+          if (url.pathname === "/" || url.pathname === "/dashboard") {
+            return new Response(renderDashboardHtml(), {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+
+          if (url.pathname === "/v1/api/dashboard/summary") {
+            const machines = registry.listMachines();
+            const activeSessions = registry.listActiveSessions();
+            const uptimeMs = Date.now() - startedAt;
+            const uptimeMinutes = Math.floor(uptimeMs / 60000);
+            const uptimeHours = Math.floor(uptimeMinutes / 60);
+            const uptimeFormatted =
+              uptimeHours > 0
+                ? `${uptimeHours}h ${uptimeMinutes % 60}m`
+                : `${uptimeMinutes}m`;
+
+            return Response.json({
+              service: "opencode-telegram-link",
+              version: "3.0.0",
+              machineId: state.machineId,
+              protocol: PROTOCOL_VERSION,
+              uptimeMs,
+              uptimeFormatted,
+              connectionsCount: registry.connectionCount,
+              routeCount: registry.routeCount,
+              machines,
+              activeSessions,
+            });
+          }
+
+          if (url.pathname === "/v1/api/dashboard/dispatch") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = (await request.json()) as {
+                  target?: string;
+                  prompt: string;
+                  sessionId?: string;
+                };
+                if (!body.prompt?.trim()) {
+                  return Response.json(
+                    { success: false, reason: "Prompt is required" },
+                    { status: 400 },
+                  );
+                }
+
+                const prompt = body.prompt.trim();
+                const target = body.target?.trim();
+                const sessionId = body.sessionId?.trim();
+
+                if (sessionId) {
+                  const route = registry.resolveBySessionId(sessionId);
+                  if (!route) {
+                    return Response.json(
+                      { success: false, reason: `Session ${sessionId} not found or offline` },
+                      { status: 404 },
+                    );
+                  }
+                  const result = await dispatcher.sendCommand({
+                    commandId: randomUUID(),
+                    type: "session.prompt",
+                    machineId: route.machineId,
+                    route,
+                    prompt,
+                  });
+                  return Response.json({ success: result.status === "accepted", result });
+                }
+
+                const machines = registry.listMachines();
+                const allProjects: {
+                  machineId: string;
+                  projectLabel: string;
+                  hostLabel?: string;
+                  sessionId?: string;
+                }[] = [];
+                for (const m of machines) {
+                  for (const p of m.projects) {
+                    allProjects.push({
+                      machineId: m.machineId,
+                      projectLabel: p.projectLabel,
+                      hostLabel: m.hostLabel,
+                      sessionId: p.sessionId,
+                    });
+                  }
+                }
+
+                const selected = target
+                  ? allProjects.find(
+                      (p) =>
+                        p.projectLabel.toLowerCase() === target.toLowerCase() ||
+                        p.hostLabel?.toLowerCase() === target.toLowerCase(),
+                    )
+                  : allProjects.length === 1
+                    ? allProjects[0]
+                    : undefined;
+
+                if (!selected) {
+                  return Response.json(
+                    {
+                      success: false,
+                      reason: target
+                        ? `Target project "${target}" not found`
+                        : "Multiple projects online, please specify target project",
+                    },
+                    { status: 400 },
+                  );
+                }
+
+                const result = await dispatcher.sendCommand({
+                  commandId: randomUUID(),
+                  type: "session.spawn",
+                  machineId: selected.machineId,
+                  title: prompt.slice(0, 30),
+                  prompt,
+                });
+
+                return Response.json({ success: result.status === "accepted", result });
+              } catch (err) {
+                return Response.json(
+                  { success: false, reason: (err as Error).message },
+                  { status: 500 },
+                );
+              }
+            })();
+          }
+
+          if (url.pathname === "/v1/api/dashboard/cancel") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = (await request.json()) as { sessionId: string };
+                if (!body.sessionId?.trim()) {
+                  return Response.json(
+                    { success: false, reason: "Session ID is required" },
+                    { status: 400 },
+                  );
+                }
+                const route = registry.resolveBySessionId(body.sessionId.trim());
+                if (!route) {
+                  return Response.json(
+                    { success: false, reason: "Session not found or offline" },
+                    { status: 404 },
+                  );
+                }
+                const result = await dispatcher.sendCommand({
+                  commandId: randomUUID(),
+                  type: "session.cancel",
+                  machineId: route.machineId,
+                  route,
+                });
+                return Response.json({ success: result.status === "accepted", result });
+              } catch (err) {
+                return Response.json(
+                  { success: false, reason: (err as Error).message },
+                  { status: 500 },
+                );
+              }
+            })();
+          }
+
+          if (url.pathname === "/v1/api/dashboard/settings") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return Response.json({ success: true, message: "Settings saved" });
+          }
+
           if (
             url.pathname !== "/v1/health" &&
             url.pathname !== "/v1/status" &&
