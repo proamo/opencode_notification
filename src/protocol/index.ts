@@ -27,12 +27,12 @@ export const TelegramRuntimeConfigSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(24 * 60),
+    .max(365 * 24 * 60),
   questionTtlMinutes: z
     .number()
     .int()
     .min(1)
-    .max(24 * 60),
+    .max(365 * 24 * 60),
 });
 export type TelegramRuntimeConfig = z.infer<typeof TelegramRuntimeConfigSchema>;
 

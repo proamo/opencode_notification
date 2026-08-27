@@ -58,13 +58,13 @@ export const NotifierConfigSchema = z
           .number()
           .int()
           .min(1)
-          .max(24 * 60)
-          .default(24 * 60),
+          .max(365 * 24 * 60)
+          .default(30 * 24 * 60),
         questionTtlMinutes: z
           .number()
           .int()
           .min(1)
-          .max(24 * 60)
+          .max(365 * 24 * 60)
           .default(30),
       })
       .strict()

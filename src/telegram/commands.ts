@@ -226,12 +226,74 @@ async function handleRunCommand(
     return translate(locale, "cmd.run.usage");
   }
 
-  // 1. Try matching the first argument as target (e.g. /run adspower-farm check logs)
+  // 1. Check if targetArg is an existing Session ID (e.g. /run ses_4a8b... fix login bug)
   const targetArg = args[0] ?? "";
   let prompt = args.slice(1).join(" ").trim();
+
+  const activeSessions = context.registry.listActiveSessions();
+  const sessionMatch = activeSessions.find(
+    (s) =>
+      s.route.sessionId.toLowerCase() === targetArg.toLowerCase() ||
+      (targetArg.startsWith("ses_") &&
+        s.route.sessionId.toLowerCase().startsWith(targetArg.toLowerCase())),
+  );
+
+  let sessionRoute: RouteKey | undefined = sessionMatch?.route;
+  let sessionProjectLabel = sessionMatch?.projectLabel;
+  let sessionTitle = sessionMatch?.sessionLabel;
+  let sessionHost = sessionMatch?.hostLabel;
+
+  if (!sessionRoute && targetArg.startsWith("ses_")) {
+    const dummyRoute: RouteKey = {
+      machineId: "00000000-0000-0000-0000-000000000000",
+      instanceId: "00000000-0000-0000-0000-000000000000",
+      projectId: "unknown-project-placeholder",
+      sessionId: targetArg,
+      routeGeneration: "00000000-0000-0000-0000-000000000000",
+    };
+    const resolved = context.registry.resolve(dummyRoute);
+    if (resolved) {
+      sessionRoute = resolved.route;
+      sessionProjectLabel = resolved.projectLabel;
+      sessionTitle = resolved.sessionLabel;
+      sessionHost = resolved.hostLabel;
+    }
+  }
+
+  if (sessionRoute && prompt) {
+    const commandId = randomUUID();
+    const result = await context.dispatcher.sendCommand({
+      type: "session.prompt",
+      commandId,
+      route: sessionRoute,
+      text: prompt,
+    });
+
+    if (result.status === "accepted") {
+      const hostTag = sessionHost ? `[${sessionHost}] ` : "";
+      const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+      const lines = [
+        locale === "zh-TW"
+          ? `🔄 <b>已成功接續至歷史工作階段：${hostTag}${sessionProjectLabel ?? "專案"}</b>`
+          : `🔄 <b>Resumed session: ${hostTag}${sessionProjectLabel ?? "project"}</b>`,
+        "",
+        `📝 <b>Session:</b> <i>${sessionTitle ?? "任務"}</i> (<code>${sessionRoute.sessionId}</code>)`,
+        `💬 <b>指令：</b> <i>${promptDisplay}</i>`,
+        "",
+        locale === "zh-TW"
+          ? "⏳ 正在該 Session 上下文中執行，完成後將自動推播結論！"
+          : "⏳ Running in existing session context, a notification will arrive upon completion.",
+      ];
+      return lines.join("\n");
+    }
+
+    return `${translate(locale, "cmd.run.failed")}: ${result.reason ?? result.status}`;
+  }
+
+  // 2. Try matching targetArg as project or host name (spawn new session)
   let targetConn = context.registry.findConnection(targetArg);
 
-  // 2. If not found with 1st arg, maybe target was 2 words (e.g. /run d009-win10 openclaw check logs)
+  // 3. If not found with 1st arg, maybe target was 2 words (e.g. /run d009-win10 openclaw check logs)
   if (!targetConn && args.length >= 3) {
     const conn2 =
       context.registry.findConnection(args[1]) ?? context.registry.findConnection(args[0]);
@@ -241,7 +303,7 @@ async function handleRunCommand(
     }
   }
 
-  // 3. If still not found and only 1 connection is online, treat entire args as prompt
+  // 4. If still not found and only 1 connection is online, treat entire args as prompt
   if (!targetConn) {
     const defaultConn = context.registry.findConnection(undefined);
     if (defaultConn) {

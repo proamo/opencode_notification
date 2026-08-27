@@ -231,5 +231,35 @@ describe("Slash Commands System", () => {
       dispatcher,
     });
     expect(usageResult).toContain("使用方式");
+
+    // Test /run with existing Session ID to resume
+    const route: RouteKey = {
+      machineId,
+      instanceId,
+      projectId: "opaque-project-alpha-12345",
+      sessionId: "ses_history_abc",
+      routeGeneration: crypto.randomUUID(),
+    };
+    registry.registerRoute("conn-1", {
+      route,
+      projectLabel: "MyProject",
+      sessionLabel: "Delivered 3 days ago",
+      hostLabel: "d009-win10",
+    });
+
+    const resumeResult = await executeSlashCommand({
+      text: "/run ses_history_abc fix reported bug",
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+    expect(resumeResult).toContain("已成功接續至歷史工作階段");
+    expect(resumeResult).toContain("MyProject");
+    expect(resumeResult).toContain("ses_history_abc");
+    expect(dispatchedCommand).toMatchObject({
+      type: "session.prompt",
+      route,
+      text: "fix reported bug",
+    });
   });
 });
