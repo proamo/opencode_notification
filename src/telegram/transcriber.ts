@@ -6,11 +6,11 @@ const TranscriptionResponseSchema = z.object({
 
 export type VoiceTranscriberOptions = {
   apiKey: string;
-  provider?: "groq" | "openai" | "custom";
-  model?: string;
-  endpoint?: string;
-  language?: string;
-  fetchFn?: typeof fetch;
+  provider?: "groq" | "openai" | "custom" | undefined;
+  model?: string | undefined;
+  endpoint?: string | undefined;
+  language?: string | undefined;
+  fetchFn?: typeof fetch | undefined;
 };
 
 export class VoiceTranscriber {
@@ -42,10 +42,10 @@ export class VoiceTranscriber {
   async transcribe(
     audioBuffer: Uint8Array,
     options?: {
-      mimeType?: string;
-      fileName?: string;
-      promptHint?: string;
-      signal?: AbortSignal;
+      mimeType?: string | undefined;
+      fileName?: string | undefined;
+      promptHint?: string | undefined;
+      signal?: AbortSignal | undefined;
     },
   ): Promise<string> {
     const fileName = options?.fileName ?? "voice.ogg";
@@ -64,14 +64,18 @@ export class VoiceTranscriber {
       formData.append("prompt", promptHint);
     }
 
-    const response = await this.#fetch(this.#endpoint, {
+    const fetchOptions: RequestInit = {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.#apiKey}`,
       },
       body: formData,
-      signal: options?.signal,
-    });
+    };
+    if (options?.signal) {
+      fetchOptions.signal = options.signal;
+    }
+
+    const response = await this.#fetch(this.#endpoint, fetchOptions);
 
     if (!response.ok) {
       let errorBody = "";

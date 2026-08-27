@@ -7,13 +7,13 @@ describe("VoiceTranscriber", () => {
     let requestedAuth = "";
     let formFields: Record<string, unknown> = {};
 
-    const mockFetch = async (
-      input: RequestInfo | URL,
+    const mockFetch = (async (
+      input: string | URL | Request,
       init?: RequestInit,
     ): Promise<Response> => {
       requestedUrl = String(input);
       requestedAuth = (init?.headers as Record<string, string>)?.Authorization ?? "";
-      
+
       const body = init?.body as FormData;
       if (body) {
         formFields = {
@@ -33,12 +33,12 @@ describe("VoiceTranscriber", () => {
           headers: { "Content-Type": "application/json" },
         },
       );
-    };
+    }) as unknown as typeof fetch;
 
     const transcriber = new VoiceTranscriber({
       apiKey: "gsk_test1234567890",
       provider: "groq",
-      fetchFn: mockFetch as unknown as typeof fetch,
+      fetchFn: mockFetch,
     });
 
     const fakeAudio = new Uint8Array([0x4f, 0x67, 0x67, 0x53]); // Ogg header
@@ -54,14 +54,14 @@ describe("VoiceTranscriber", () => {
   });
 
   test("handles transcription errors gracefully", async () => {
-    const mockErrorFetch = async (): Promise<Response> => {
+    const mockErrorFetch = (async (): Promise<Response> => {
       return new Response("Invalid API key provided", { status: 401 });
-    };
+    }) as unknown as typeof fetch;
 
     const transcriber = new VoiceTranscriber({
       apiKey: "gsk_invalid",
       provider: "groq",
-      fetchFn: mockErrorFetch as unknown as typeof fetch,
+      fetchFn: mockErrorFetch,
     });
 
     const fakeAudio = new Uint8Array([0x00]);

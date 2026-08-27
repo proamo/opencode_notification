@@ -187,13 +187,17 @@ export class TelegramBotApi {
     return { messageId: message.message_id, chatId: String(message.chat.id) };
   }
 
-  async getFile(fileId: string, signal?: AbortSignal): Promise<TelegramFile> {
+  async getFile(fileId: string, signal?: AbortSignal | undefined): Promise<TelegramFile> {
     return await this.#call("getFile", { file_id: fileId }, TelegramFileSchema, signal);
   }
 
-  async downloadFile(filePath: string, signal?: AbortSignal): Promise<Uint8Array> {
+  async downloadFile(filePath: string, signal?: AbortSignal | undefined): Promise<Uint8Array> {
     const url = `https://api.telegram.org/file/bot${this.#token}/${filePath}`;
-    const response = await this.#fetch(url, { signal });
+    const fetchOptions: RequestInit = {};
+    if (signal) {
+      fetchOptions.signal = signal;
+    }
+    const response = await this.#fetch(url, fetchOptions);
     if (!response.ok) {
       throw new TelegramApiError({
         method: "downloadFile",

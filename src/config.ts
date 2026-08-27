@@ -80,7 +80,7 @@ export const NotifierConfigSchema = z
         language: z.string().default("zh"),
       })
       .strict()
-      .prefault({}),
+      .optional(),
   })
   .strict()
   .superRefine(({ role, gateway, telegram }, context) => {
