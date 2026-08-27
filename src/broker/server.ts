@@ -31,8 +31,10 @@ import {
   type TelegramOutboxPayload,
   TelegramOutboxWorker,
   TelegramPoller,
+  type TelegramUpdate,
   TelegramUpdateAuthorizer,
   type UpdateDisposition,
+  VoiceTranscriber,
 } from "../telegram";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
@@ -485,6 +487,20 @@ class BrokerTelegramRuntime {
       userId: input.config.userId,
       chatId: input.config.chatId,
     });
+
+    const voiceApiKey =
+      input.config.voiceApiKey ??
+      process.env.GROQ_API_KEY ??
+      process.env.OPENAI_API_KEY;
+
+    const transcriber = voiceApiKey
+      ? new VoiceTranscriber({
+          apiKey: voiceApiKey,
+          provider: input.config.voiceProvider ?? "groq",
+          model: input.config.voiceModel,
+        })
+      : undefined;
+
     const validatedHandler = createValidatedInteractionHandler(
       authorizer,
       {
@@ -522,6 +538,130 @@ class BrokerTelegramRuntime {
             disposition: "rejected",
             payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
           };
+        }
+
+        const voiceOrAudio = update.message?.voice ?? update.message?.audio;
+        if (voiceOrAudio) {
+          if (!transcriber) {
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: "⚠️ 尚未設定 Groq / OpenAI 語音辨識 API Key，無法處理語音訊息。請在 opencode.json 中加入 voice.apiKey。",
+              parseMode: "HTML",
+            });
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID(),
+              payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
+            };
+          }
+
+          try {
+            const fileInfo = await input.api.getFile(voiceOrAudio.file_id);
+            if (!fileInfo.file_path) {
+              throw new Error("Telegram did not return file path");
+            }
+            const audioBytes = await input.api.downloadFile(fileInfo.file_path);
+            const transcribedText = await transcriber.transcribe(audioBytes, {
+              mimeType: voiceOrAudio.mime_type ?? "audio/ogg",
+              fileName: "voice.ogg",
+            });
+
+            if (!transcribedText) {
+              await input.api.sendMessage({
+                chatId: input.config.chatId,
+                text: "🎙️ <i>無法辨識語音內容，請再試一次。</i>",
+                parseMode: "HTML",
+              });
+              return {
+                disposition: "acknowledged",
+                actionId: randomUUID(),
+                payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
+              };
+            }
+
+            // If it is a reply to an existing message:
+            if (update.message?.reply_to_message) {
+              const syntheticUpdate: TelegramUpdate = {
+                ...update,
+                message: {
+                  ...update.message,
+                  text: transcribedText,
+                },
+              };
+              await input.api.sendMessage({
+                chatId: input.config.chatId,
+                text: `🎙️ <b>語音轉文字：</b> <i>「${transcribedText}」</i>`,
+                parseMode: "HTML",
+              });
+              return await validatedHandler(syntheticUpdate);
+            }
+
+            // Direct voice command:
+            let commandText = transcribedText;
+            const lower = transcribedText.toLowerCase();
+
+            // Map common spoken phrases to slash commands
+            if (
+              lower.startsWith("run ") ||
+              lower.startsWith("執行 ") ||
+              lower.startsWith("派工 ")
+            ) {
+              commandText = `/run ${transcribedText.replace(/^(run|執行|派工)\s+/i, "")}`;
+            } else if (lower === "status" || lower === "狀態" || lower === "系統狀態") {
+              commandText = "/status";
+            } else if (
+              lower === "nodes" ||
+              lower === "主機" ||
+              lower === "主機列表" ||
+              lower === "電腦"
+            ) {
+              commandText = "/nodes";
+            } else if (
+              lower === "sessions" ||
+              lower === "任務列表" ||
+              lower === "工作階段"
+            ) {
+              commandText = "/sessions";
+            } else if (lower === "help" || lower === "說明" || lower === "幫助") {
+              commandText = "/help";
+            } else if (!isSlashCommand(commandText)) {
+              // If not a slash command, treat as /run <speech>
+              commandText = `/run ${transcribedText}`;
+            }
+
+            const replyText = await executeSlashCommand({
+              text: commandText,
+              locale: "zh-TW",
+              registry: input.registry,
+              dispatcher: input.dispatcher,
+              startedAt: this.#startedAt,
+              packageVersion: "3.0.0",
+            });
+
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: `🎙️ <b>語音指令：</b> <i>「${transcribedText}」</i>\n\n${replyText}`,
+              parseMode: "HTML",
+            });
+
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID(),
+              payloadHash: createHash("sha256").update(transcribedText).digest("hex"),
+            };
+          } catch (error) {
+            logTelegramRuntimeError("voice_transcription", error);
+            const errDesc = error instanceof Error ? error.message : "語音處理失敗";
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: `❌ 語音辨識錯誤：${errDesc}`,
+              parseMode: "HTML",
+            });
+            return {
+              disposition: "failed",
+              payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
+            };
+          }
         }
 
         const messageText = update.message?.text?.trim();

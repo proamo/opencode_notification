@@ -69,6 +69,18 @@ export const NotifierConfigSchema = z
       })
       .strict()
       .prefault({}),
+    voice: z
+      .object({
+        enabled: z.boolean().default(true),
+        provider: z.enum(["groq", "openai", "custom"]).default("groq"),
+        apiKey: z.string().min(1).optional(),
+        apiKeyFile: z.string().min(1).optional(),
+        model: z.string().default("whisper-large-v3-turbo"),
+        endpoint: z.string().url().optional(),
+        language: z.string().default("zh"),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict()
   .superRefine(({ role, gateway, telegram }, context) => {
@@ -138,6 +150,16 @@ export async function readNotifierBotToken(config: NotifierConfig): Promise<stri
     throw new ConfigValidationError("TOKEN_INVALID", "Telegram bot token file is invalid");
   }
   return parsed.data;
+}
+
+export async function readVoiceApiKey(config: NotifierConfig): Promise<string | undefined> {
+  if (config.voice?.apiKey) return config.voice.apiKey;
+  if (config.voice?.apiKeyFile) {
+    await assertSecureTokenFile(config.voice.apiKeyFile);
+    const key = (await readFile(config.voice.apiKeyFile, "utf8")).trim();
+    if (key) return key;
+  }
+  return process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
 }
 
 export async function assertSecureTokenFile(path: string): Promise<void> {

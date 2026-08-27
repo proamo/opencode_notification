@@ -12,12 +12,31 @@ const TelegramChatSchema = z.object({
   type: z.enum(["private", "group", "supergroup", "channel"]),
 });
 
+const TelegramVoiceSchema = z.object({
+  file_id: z.string(),
+  file_unique_id: z.string().optional(),
+  duration: z.number().optional(),
+  mime_type: z.string().optional(),
+  file_size: z.number().optional(),
+});
+
+const TelegramAudioSchema = z.object({
+  file_id: z.string(),
+  file_unique_id: z.string().optional(),
+  duration: z.number().optional(),
+  mime_type: z.string().optional(),
+  file_size: z.number().optional(),
+  file_name: z.string().optional(),
+});
+
 const TelegramMessageSchema = z.object({
   message_id: z.number().int(),
   from: TelegramUserSchema.optional(),
   chat: TelegramChatSchema,
   date: z.number().int(),
   text: z.string().optional(),
+  voice: TelegramVoiceSchema.optional(),
+  audio: TelegramAudioSchema.optional(),
   sender_chat: TelegramChatSchema.optional(),
   forward_origin: z.unknown().optional(),
   author_signature: z.string().optional(),
@@ -36,6 +55,14 @@ const TelegramCallbackQuerySchema = z.object({
   message: TelegramMessageSchema.optional(),
   data: z.string().optional(),
 });
+
+export const TelegramFileSchema = z.object({
+  file_id: z.string(),
+  file_unique_id: z.string().optional(),
+  file_size: z.number().optional(),
+  file_path: z.string().optional(),
+});
+export type TelegramFile = z.infer<typeof TelegramFileSchema>;
 
 export const TelegramUpdateSchema = z.object({
   update_id: z.number().int(),
@@ -158,6 +185,25 @@ export class TelegramBotApi {
       input.signal,
     );
     return { messageId: message.message_id, chatId: String(message.chat.id) };
+  }
+
+  async getFile(fileId: string, signal?: AbortSignal): Promise<TelegramFile> {
+    return await this.#call("getFile", { file_id: fileId }, TelegramFileSchema, signal);
+  }
+
+  async downloadFile(filePath: string, signal?: AbortSignal): Promise<Uint8Array> {
+    const url = `https://api.telegram.org/file/bot${this.#token}/${filePath}`;
+    const response = await this.#fetch(url, { signal });
+    if (!response.ok) {
+      throw new TelegramApiError({
+        method: "downloadFile",
+        statusCode: response.status,
+        description: `Failed to download file from Telegram: ${response.statusText}`,
+        retryable: response.status >= 500,
+      });
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
   }
 
   async #call<T>(

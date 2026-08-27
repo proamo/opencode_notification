@@ -2,7 +2,11 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
-import { computeNotifierConfigFingerprint, readNotifierBotToken } from "./config";
+import {
+  computeNotifierConfigFingerprint,
+  readNotifierBotToken,
+  readVoiceApiKey,
+} from "./config";
 import { resolveLocale } from "./i18n";
 import { loadResolvedNotifierConfig, OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";
@@ -53,6 +57,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   const systemLocale = process.env.LC_ALL ?? process.env.LC_MESSAGES ?? process.env.LANG;
   if (systemLocale) localeInput.system = systemLocale;
   const locale = resolveLocale(localeInput);
+  const voiceApiKey = await readVoiceApiKey(configData);
 
   const broker = new BrokerClient({
     port: configData.broker.port,
@@ -72,6 +77,9 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
             locale,
             sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
             questionTtlMinutes: configData.interaction.questionTtlMinutes,
+            ...(voiceApiKey ? { voiceApiKey } : {}),
+            ...(configData.voice?.provider ? { voiceProvider: configData.voice.provider } : {}),
+            ...(configData.voice?.model ? { voiceModel: configData.voice.model } : {}),
           },
         }
       : {}),
