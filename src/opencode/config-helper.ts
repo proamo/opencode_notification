@@ -200,12 +200,19 @@ export async function loadResolvedNotifierConfig(
 
   try {
     const stateDir = defaultStateDirectory();
-    const botToken = (await readFile(join(stateDir, "telegram-bot-token"), "utf8")).trim();
-    if (botToken) {
+    const identityPath = join(stateDir, "telegram-identity.json");
+    const content = await readFile(identityPath, "utf8");
+    const idJson = JSON.parse(content);
+    if (idJson.userId && idJson.chatId) {
       return {
         mode: "local",
         role: "gateway",
-        locale: "auto",
+        locale: idJson.locale || "auto",
+        telegram: {
+          tokenFile: idJson.tokenFile || join(stateDir, "telegram-bot-token"),
+          userId: String(idJson.userId),
+          chatId: String(idJson.chatId),
+        },
         notifications: {
           completion: true,
           error: true,
