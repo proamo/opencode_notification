@@ -2,11 +2,7 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "@opencode-ai/plugin";
-import {
-  computeNotifierConfigFingerprint,
-  readNotifierBotToken,
-  readVoiceApiKey,
-} from "./config";
+import { computeNotifierConfigFingerprint, readNotifierBotToken, readVoiceApiKey } from "./config";
 import { resolveLocale } from "./i18n";
 import { loadResolvedNotifierConfig, OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";

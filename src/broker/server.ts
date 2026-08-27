@@ -489,9 +489,7 @@ class BrokerTelegramRuntime {
     });
 
     const voiceApiKey =
-      input.config.voiceApiKey ??
-      process.env.GROQ_API_KEY ??
-      process.env.OPENAI_API_KEY;
+      input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
 
     const transcriber = voiceApiKey
       ? new VoiceTranscriber({
@@ -616,11 +614,7 @@ class BrokerTelegramRuntime {
               lower === "電腦"
             ) {
               commandText = "/nodes";
-            } else if (
-              lower === "sessions" ||
-              lower === "任務列表" ||
-              lower === "工作階段"
-            ) {
+            } else if (lower === "sessions" || lower === "任務列表" || lower === "工作階段") {
               commandText = "/sessions";
             } else if (lower === "help" || lower === "說明" || lower === "幫助") {
               commandText = "/help";

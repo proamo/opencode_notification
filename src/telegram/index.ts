@@ -56,7 +56,6 @@ export {
   type TelegramRenderOptions,
 } from "./render";
 export {
-  type VoiceTranscriberOptions,
   VoiceTranscriber,
+  type VoiceTranscriberOptions,
 } from "./transcriber";
-
