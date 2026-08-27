@@ -188,13 +188,32 @@ export async function loadResolvedNotifierConfig(
     } catch {}
   }
 
-  // Final fallback: look inside default stateDirectory config
+  // Final fallback: look inside default stateDirectory config or bot token
   try {
-    const fallbackPath = join(defaultStateDirectory(), "opencode-notifier.json");
+    const stateDir = defaultStateDirectory();
+    const fallbackPath = join(stateDir, "opencode-notifier.json");
     const content = await readFile(fallbackPath, "utf8");
     const json = JSON.parse(content);
     const parsed = NotifierConfigSchema.safeParse(json);
     if (parsed.success) return parsed.data;
+  } catch {}
+
+  try {
+    const stateDir = defaultStateDirectory();
+    const botToken = (await readFile(join(stateDir, "telegram-bot-token"), "utf8")).trim();
+    if (botToken) {
+      return {
+        mode: "local",
+        role: "gateway",
+        locale: "auto",
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true,
+        },
+      };
+    }
   } catch {}
 
   return undefined;
