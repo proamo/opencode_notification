@@ -22,7 +22,9 @@ import {
 } from "../state";
 import {
   createValidatedInteractionHandler,
+  executeSlashCommand,
   interactionFeedbackText,
+  isSlashCommand,
   renderTelegramNotification,
   submitTelegramInteraction,
   TelegramBotApi,
@@ -440,6 +442,7 @@ class BrokerTelegramRuntime {
   readonly #poller: TelegramPoller;
   readonly #deliveryIntervalMs: number;
   readonly #now: () => number;
+  readonly #startedAt = Date.now();
   #started = false;
   #deliveryTimer: ReturnType<typeof setInterval> | undefined;
   #delivering = false;
@@ -465,35 +468,78 @@ class BrokerTelegramRuntime {
       userId: input.config.userId,
       chatId: input.config.chatId,
     });
+    const validatedHandler = createValidatedInteractionHandler(
+      authorizer,
+      {
+        database: input.database,
+        isRouteLive: (route) => input.registry.resolve(route) !== undefined,
+        now: input.now,
+      },
+      async (interaction, update) => {
+        if (update.callback_query) {
+          void input.api
+            .answerCallbackQuery({
+              callbackQueryId: update.callback_query.id,
+            })
+            .catch(() => {});
+        }
+        const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
+        await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
+        return {
+          disposition: outcome.result.status === "accepted" ? "acknowledged" : "failed",
+          actionId: outcome.result.commandId,
+          payloadHash: createHash("sha256")
+            .update(`${outcome.result.status}:${outcome.result.reason ?? ""}`)
+            .digest("hex"),
+        } satisfies UpdateDisposition;
+      },
+    );
+
     this.#poller = new TelegramPoller({
       api: input.api,
       database: input.database,
-      handleUpdate: createValidatedInteractionHandler(
-        authorizer,
-        {
-          database: input.database,
-          isRouteLive: (route) => input.registry.resolve(route) !== undefined,
-          now: input.now,
-        },
-        async (interaction, update) => {
-          if (update.callback_query) {
-            void input.api
-              .answerCallbackQuery({
-                callbackQueryId: update.callback_query.id,
-              })
-              .catch(() => {});
-          }
-          const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
-          await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
+      handleUpdate: async (update) => {
+        const auth = authorizer.authorize(update);
+        if (!auth.authorized) {
           return {
-            disposition: outcome.result.status === "accepted" ? "acknowledged" : "failed",
-            actionId: outcome.result.commandId,
-            payloadHash: createHash("sha256")
-              .update(`${outcome.result.status}:${outcome.result.reason ?? ""}`)
-              .digest("hex"),
-          } satisfies UpdateDisposition;
-        },
-      ),
+            disposition: "ignored",
+            payloadHash: createHash("sha256").update(JSON.stringify(update)).digest("hex"),
+          };
+        }
+
+        const messageText = update.message?.text?.trim();
+        if (update.message && isSlashCommand(messageText)) {
+          try {
+            const replyText = await executeSlashCommand({
+              text: messageText,
+              locale: "zh-TW",
+              registry: input.registry,
+              dispatcher: input.dispatcher,
+              startedAt: this.#startedAt,
+              packageVersion: "3.0.0",
+            });
+            await input.api.sendMessage({
+              chatId: input.config.chatId,
+              text: replyText,
+              parseMode: "HTML",
+              replyToMessageId: update.message.message_id,
+            });
+            return {
+              disposition: "acknowledged",
+              actionId: randomUUID(),
+              payloadHash: createHash("sha256").update(messageText).digest("hex"),
+            };
+          } catch (error) {
+            logTelegramRuntimeError("slash_command", error);
+            return {
+              disposition: "failed",
+              payloadHash: createHash("sha256").update(messageText).digest("hex"),
+            };
+          }
+        }
+
+        return await validatedHandler(update);
+      },
       ...(input.pollLongPollSeconds !== undefined
         ? { longPollSeconds: input.pollLongPollSeconds }
         : {}),

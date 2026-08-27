@@ -15,6 +15,9 @@ export async function runOpenCodeCommand(
   if (command.type === "permission.reply") {
     return await runPermissionReplyCommand(client, directory, command);
   }
+  if (command.type === "session.cancel") {
+    return await runSessionCancelCommand(client, directory, command);
+  }
   const exhaustive: never = command;
   return exhaustive;
 }
@@ -157,4 +160,44 @@ function permissionReplyApi(client: PluginInput["client"]): PermissionReplyApi |
     };
   }
   return undefined;
+}
+
+async function runSessionCancelCommand(
+  client: PluginInput["client"],
+  directory: string,
+  command: Extract<BrokerCommand, { type: "session.cancel" }>,
+): Promise<CommandResult> {
+  const maybeSession = client.session as unknown as {
+    abort?: (params: { path: { id: string }; query?: { directory?: string } }) => Promise<{ error?: unknown }>;
+    stop?: (params: { path: { id: string } }) => Promise<{ error?: unknown }>;
+    cancel?: (params: { path: { id: string } }) => Promise<{ error?: unknown }>;
+  };
+
+  try {
+    if (typeof maybeSession?.abort === "function") {
+      const res = await maybeSession.abort({ path: { id: command.route.sessionId }, query: { directory } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session abort failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+    if (typeof maybeSession?.stop === "function") {
+      const res = await maybeSession.stop({ path: { id: command.route.sessionId } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session stop failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+    if (typeof maybeSession?.cancel === "function") {
+      const res = await maybeSession.cancel({ path: { id: command.route.sessionId } });
+      if (res && typeof res === "object" && "error" in res && res.error) {
+        return { commandId: command.commandId, status: "rejected", reason: "session cancel failed" };
+      }
+      return { commandId: command.commandId, status: "accepted" };
+    }
+
+    return { commandId: command.commandId, status: "rejected", reason: "cancel API not supported by OpenCode client" };
+  } catch {
+    return { commandId: command.commandId, status: "indeterminate", reason: "cancel execution error" };
+  }
 }

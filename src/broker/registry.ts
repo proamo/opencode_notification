@@ -183,6 +183,46 @@ export class RouteRegistry {
   get routeCount(): number {
     return this.#routes.size;
   }
+
+  listNodes(): Array<{
+    connectionId: string;
+    machineId: string;
+    instanceId: string;
+    hostLabel?: string;
+    activeRoutesCount: number;
+    lastHeartbeatAt?: number;
+  }> {
+    const nodes = [];
+    for (const [connectionId, conn] of this.#connections) {
+      nodes.push({
+        connectionId,
+        machineId: conn.machineId,
+        instanceId: conn.instanceId,
+        ...(conn.hostLabel ? { hostLabel: conn.hostLabel } : {}),
+        activeRoutesCount: conn.routeKeys.size,
+        ...(conn.socket.data.lastHeartbeatAt ? { lastHeartbeatAt: conn.socket.data.lastHeartbeatAt } : {}),
+      });
+    }
+    return nodes;
+  }
+
+  listActiveSessions(): Array<{
+    route: RouteKey;
+    projectLabel: string;
+    sessionLabel: string;
+    hostLabel?: string;
+  }> {
+    const sessions = [];
+    for (const registered of this.#routes.values()) {
+      sessions.push({
+        route: registered.route,
+        projectLabel: registered.projectLabel,
+        sessionLabel: registered.sessionLabel,
+        ...(registered.hostLabel ? { hostLabel: registered.hostLabel } : {}),
+      });
+    }
+    return sessions;
+  }
 }
 
 export class RouteRegistrationError extends Error {

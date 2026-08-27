@@ -49,3 +49,9 @@ export {
   TelegramRenderError,
   type TelegramRenderOptions,
 } from "./render";
+export {
+  executeSlashCommand,
+  isSlashCommand,
+  parseSlashCommand,
+  type SlashCommandContext,
+} from "./commands";

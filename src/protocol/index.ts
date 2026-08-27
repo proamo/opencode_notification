@@ -113,6 +113,12 @@ export const BrokerCommandSchema = z.discriminatedUnion("type", [
     interactionId: z.string().min(1).max(256),
     response: z.enum(["once", "always", "reject"]),
   }),
+  z.object({
+    type: z.literal("session.cancel"),
+    commandId: z.uuid(),
+    route: RouteKeySchema,
+    reason: z.string().min(1).max(256).optional(),
+  }),
 ]);
 export type BrokerCommand = z.infer<typeof BrokerCommandSchema>;
 
