@@ -466,6 +466,7 @@ export function renderDashboardHtml(): string {
       // Render Active Voice Provider Badge & auto-populate settings
       if (data.voice) {
         const p = data.voice.provider;
+        const activeP = data.voice.activeProvider || p;
         const statVoice = document.getElementById('stat-voice');
         const statVoiceSub = document.getElementById('stat-voice-sub');
         if (p === 'cloudflare') {
@@ -490,28 +491,38 @@ export function renderDashboardHtml(): string {
           statVoiceSub.textContent = '🟡 請在設定頁填寫金鑰';
         }
 
-        // On first summary load, populate form fields if user hasn't edited them
+        // On first summary load, populate form fields for ALL providers
         if (!window._settingsPopulated) {
           window._settingsPopulated = true;
-          if (p && p !== 'none') {
-            document.getElementById('setting-provider').value = p;
-            onProviderChange();
+          if (activeP && activeP !== 'none') {
+            document.getElementById('setting-provider').value = activeP;
           }
-          if (data.voice.accountId) {
-            document.getElementById('cf-account-id').value = data.voice.accountId;
+          if (data.voice.cloudflare) {
+            if (data.voice.cloudflare.accountId) {
+              document.getElementById('cf-account-id').value = data.voice.cloudflare.accountId;
+            }
+            if (data.voice.cloudflare.apiToken) {
+              document.getElementById('cf-api-token').value = data.voice.cloudflare.apiToken;
+            }
           }
-          if (data.voice.apiKey) {
-            if (p === 'cloudflare') document.getElementById('cf-api-token').value = data.voice.apiKey;
-            else if (p === 'groq') document.getElementById('groq-api-key').value = data.voice.apiKey;
-            else if (p === 'openai') document.getElementById('openai-api-key').value = data.voice.apiKey;
-            else if (p === 'custom') document.getElementById('custom-api-key').value = data.voice.apiKey;
+          if (data.voice.groq && data.voice.groq.apiKey) {
+            document.getElementById('groq-api-key').value = data.voice.groq.apiKey;
           }
-          if (data.voice.endpoint) {
-            document.getElementById('custom-endpoint').value = data.voice.endpoint;
+          if (data.voice.openai && data.voice.openai.apiKey) {
+            document.getElementById('openai-api-key').value = data.voice.openai.apiKey;
           }
-          if (data.voice.model) {
-            document.getElementById('custom-model').value = data.voice.model;
+          if (data.voice.custom) {
+            if (data.voice.custom.endpoint) {
+              document.getElementById('custom-endpoint').value = data.voice.custom.endpoint;
+            }
+            if (data.voice.custom.apiKey) {
+              document.getElementById('custom-api-key').value = data.voice.custom.apiKey;
+            }
+            if (data.voice.custom.model) {
+              document.getElementById('custom-model').value = data.voice.custom.model;
+            }
           }
+          onProviderChange();
         }
       }
 
@@ -720,26 +731,21 @@ export function renderDashboardHtml(): string {
       const provider = document.getElementById('setting-provider').value;
       const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
 
-      let apiKey = '';
-      let accountId = '';
-      let endpoint = '';
-      let model = '';
+      const cfAccountId = document.getElementById('cf-account-id').value.trim();
+      const cfApiToken = document.getElementById('cf-api-token').value.trim();
+      const groqApiKey = document.getElementById('groq-api-key').value.trim();
+      const openaiApiKey = document.getElementById('openai-api-key').value.trim();
+      const customEndpoint = document.getElementById('custom-endpoint').value.trim();
+      const customApiKey = document.getElementById('custom-api-key').value.trim();
+      const customModel = document.getElementById('custom-model').value.trim();
 
-      if (provider === 'cloudflare') {
-        accountId = document.getElementById('cf-account-id').value.trim();
-        apiKey = document.getElementById('cf-api-token').value.trim();
-      } else if (provider === 'groq') {
-        apiKey = document.getElementById('groq-api-key').value.trim();
-      } else if (provider === 'openai') {
-        apiKey = document.getElementById('openai-api-key').value.trim();
-      } else if (provider === 'custom') {
-        endpoint = document.getElementById('custom-endpoint').value.trim();
-        apiKey = document.getElementById('custom-api-key').value.trim();
-        model = document.getElementById('custom-model').value.trim();
-      }
+      let activeKey = '';
+      if (provider === 'cloudflare') activeKey = cfApiToken;
+      else if (provider === 'groq') activeKey = groqApiKey;
+      else if (provider === 'openai') activeKey = openaiApiKey;
+      else if (provider === 'custom') activeKey = customApiKey;
 
-      // If user is trying to save an unverified provider or empty key without environment fallback
-      if (apiKey && testedVerifiedProvider !== provider) {
+      if (activeKey && testedVerifiedProvider !== provider) {
         const proceed = confirm('此引擎尚未完成「🧪 測試連線驗證」，確定要直接儲存嗎？建議先點擊測試確認可用。');
         if (!proceed) return;
       }
@@ -749,11 +755,11 @@ export function renderDashboardHtml(): string {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            voiceProvider: provider,
-            voiceApiKey: apiKey || undefined,
-            voiceAccountId: accountId || undefined,
-            voiceEndpoint: endpoint || undefined,
-            voiceModel: model || undefined,
+            activeProvider: provider,
+            cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+            groq: { apiKey: groqApiKey },
+            openai: { apiKey: openaiApiKey },
+            custom: { endpoint: customEndpoint, apiKey: customApiKey, model: customModel },
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });

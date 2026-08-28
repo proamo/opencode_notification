@@ -54,21 +54,78 @@ const DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2_000;
 const NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60_000;
 
 export type DashboardSettings = {
+  activeProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
+  cloudflare?: {
+    accountId?: string | undefined;
+    apiToken?: string | undefined;
+  } | undefined;
+  groq?: {
+    apiKey?: string | undefined;
+  } | undefined;
+  openai?: {
+    apiKey?: string | undefined;
+  } | undefined;
+  custom?: {
+    endpoint?: string | undefined;
+    apiKey?: string | undefined;
+    model?: string | undefined;
+  } | undefined;
+  sessionPromptTtlMinutes?: number | undefined;
+
+  // Backward compatibility
   voiceProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
   voiceApiKey?: string | undefined;
   voiceAccountId?: string | undefined;
   voiceEndpoint?: string | undefined;
   voiceModel?: string | undefined;
-  sessionPromptTtlMinutes?: number | undefined;
 };
+
+function normalizeSettings(s: DashboardSettings): DashboardSettings {
+  const activeProvider = s.activeProvider ?? s.voiceProvider ?? "cloudflare";
+  const cfAccountId =
+    s.cloudflare?.accountId ??
+    s.voiceAccountId ??
+    process.env.CLOUDFLARE_ACCOUNT_ID ??
+    process.env.CF_ACCOUNT_ID ??
+    "";
+  const cfApiToken =
+    s.cloudflare?.apiToken ??
+    (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ??
+    process.env.CLOUDFLARE_API_TOKEN ??
+    process.env.CF_API_TOKEN ??
+    "";
+  const groqKey =
+    s.groq?.apiKey ??
+    (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ??
+    process.env.GROQ_API_KEY ??
+    "";
+  const openaiKey =
+    s.openai?.apiKey ??
+    (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ??
+    process.env.OPENAI_API_KEY ??
+    "";
+  const customEndpoint = s.custom?.endpoint ?? s.voiceEndpoint ?? "";
+  const customKey =
+    s.custom?.apiKey ?? (s.voiceProvider === "custom" ? s.voiceApiKey : undefined) ?? "";
+  const customModel = s.custom?.model ?? s.voiceModel ?? "whisper-large-v3-turbo";
+
+  return {
+    activeProvider,
+    cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+    groq: { apiKey: groqKey },
+    openai: { apiKey: openaiKey },
+    custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
+    sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200,
+  };
+}
 
 async function loadDashboardSettings(stateDirectory: string): Promise<DashboardSettings> {
   const filePath = join(stateDirectory, "dashboard-settings.json");
   try {
     const raw = await readFile(filePath, "utf-8");
-    return JSON.parse(raw) as DashboardSettings;
+    return normalizeSettings(JSON.parse(raw) as DashboardSettings);
   } catch {
-    return {};
+    return normalizeSettings({});
   }
 }
 
@@ -312,30 +369,17 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             const uptimeFormatted =
               uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
 
-            const effectiveProvider =
-              persistedSettings.voiceProvider ??
-              (process.env.CLOUDFLARE_API_TOKEN
-                ? "cloudflare"
-                : process.env.GROQ_API_KEY
-                  ? "groq"
-                  : process.env.OPENAI_API_KEY
-                    ? "openai"
-                    : "none");
-
-            const effectiveApiKey =
-              persistedSettings.voiceApiKey ??
-              (effectiveProvider === "groq"
-                ? process.env.GROQ_API_KEY
-                : effectiveProvider === "cloudflare"
-                  ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
-                  : effectiveProvider === "openai"
-                    ? process.env.OPENAI_API_KEY
-                    : undefined);
-
-            const effectiveAccountId =
-              persistedSettings.voiceAccountId ??
-              process.env.CLOUDFLARE_ACCOUNT_ID ??
-              process.env.CF_ACCOUNT_ID;
+            const normalized = normalizeSettings(persistedSettings);
+            let activeKey: string | undefined;
+            if (normalized.activeProvider === "cloudflare") {
+              activeKey = normalized.cloudflare?.apiToken;
+            } else if (normalized.activeProvider === "groq") {
+              activeKey = normalized.groq?.apiKey;
+            } else if (normalized.activeProvider === "openai") {
+              activeKey = normalized.openai?.apiKey;
+            } else if (normalized.activeProvider === "custom") {
+              activeKey = normalized.custom?.apiKey || "custom";
+            }
 
             return Response.json({
               service: "opencode-telegram-link",
@@ -349,12 +393,13 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               machines,
               activeSessions,
               voice: {
-                provider: effectiveApiKey ? effectiveProvider : "none",
-                hasApiKey: Boolean(effectiveApiKey),
-                apiKey: effectiveApiKey,
-                accountId: effectiveAccountId,
-                endpoint: persistedSettings.voiceEndpoint,
-                model: persistedSettings.voiceModel,
+                provider: activeKey ? normalized.activeProvider : "none",
+                activeProvider: normalized.activeProvider ?? "cloudflare",
+                hasApiKey: Boolean(activeKey),
+                cloudflare: normalized.cloudflare,
+                groq: normalized.groq,
+                openai: normalized.openai,
+                custom: normalized.custom,
               },
             });
           }
@@ -597,35 +642,72 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             return (async () => {
               try {
                 const body = await readJsonBody<DashboardSettings>(request);
-                persistedSettings = {
+                persistedSettings = normalizeSettings({
                   ...persistedSettings,
-                  ...body,
-                };
+                  activeProvider:
+                    body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
+                  cloudflare: {
+                    ...persistedSettings.cloudflare,
+                    ...(body.cloudflare || {}),
+                    ...(body.voiceAccountId ? { accountId: body.voiceAccountId } : {}),
+                    ...(body.voiceProvider === "cloudflare" && body.voiceApiKey
+                      ? { apiToken: body.voiceApiKey }
+                      : {}),
+                  },
+                  groq: {
+                    ...persistedSettings.groq,
+                    ...(body.groq || {}),
+                    ...(body.voiceProvider === "groq" && body.voiceApiKey
+                      ? { apiKey: body.voiceApiKey }
+                      : {}),
+                  },
+                  openai: {
+                    ...persistedSettings.openai,
+                    ...(body.openai || {}),
+                    ...(body.voiceProvider === "openai" && body.voiceApiKey
+                      ? { apiKey: body.voiceApiKey }
+                      : {}),
+                  },
+                  custom: {
+                    ...persistedSettings.custom,
+                    ...(body.custom || {}),
+                    ...(body.voiceEndpoint ? { endpoint: body.voiceEndpoint } : {}),
+                    ...(body.voiceModel ? { model: body.voiceModel } : {}),
+                    ...(body.voiceProvider === "custom" && body.voiceApiKey
+                      ? { apiKey: body.voiceApiKey }
+                      : {}),
+                  },
+                  sessionPromptTtlMinutes:
+                    body.sessionPromptTtlMinutes ?? persistedSettings.sessionPromptTtlMinutes,
+                });
                 await saveDashboardSettings(state.stateDirectory, persistedSettings);
 
-                const effectiveProvider = persistedSettings.voiceProvider ?? "groq";
-                const effectiveKey =
-                  persistedSettings.voiceApiKey ??
-                  (effectiveProvider === "groq"
-                    ? process.env.GROQ_API_KEY
-                    : effectiveProvider === "cloudflare"
-                      ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
-                      : effectiveProvider === "openai"
-                        ? process.env.OPENAI_API_KEY
-                        : undefined);
+                const activeProvider = persistedSettings.activeProvider ?? "cloudflare";
+                let activeKey: string | undefined;
+                let activeAccountId: string | undefined;
+                let activeEndpoint: string | undefined;
+                let activeModel: string | undefined;
 
-                const effectiveAccountId =
-                  persistedSettings.voiceAccountId ??
-                  process.env.CLOUDFLARE_ACCOUNT_ID ??
-                  process.env.CF_ACCOUNT_ID;
+                if (activeProvider === "cloudflare") {
+                  activeKey = persistedSettings.cloudflare?.apiToken;
+                  activeAccountId = persistedSettings.cloudflare?.accountId;
+                } else if (activeProvider === "groq") {
+                  activeKey = persistedSettings.groq?.apiKey;
+                } else if (activeProvider === "openai") {
+                  activeKey = persistedSettings.openai?.apiKey;
+                } else if (activeProvider === "custom") {
+                  activeKey = persistedSettings.custom?.apiKey || "custom";
+                  activeEndpoint = persistedSettings.custom?.endpoint;
+                  activeModel = persistedSettings.custom?.model;
+                }
 
-                if (effectiveKey) {
+                if (activeKey) {
                   const newTranscriber = new VoiceTranscriber({
-                    apiKey: effectiveKey,
-                    accountId: effectiveAccountId,
-                    provider: effectiveProvider,
-                    endpoint: persistedSettings.voiceEndpoint,
-                    model: persistedSettings.voiceModel,
+                    apiKey: activeKey,
+                    accountId: activeAccountId,
+                    provider: activeProvider,
+                    endpoint: activeEndpoint,
+                    model: activeModel,
                   });
                   telegramRuntimeRef.value?.setTranscriber(newTranscriber);
                 }
