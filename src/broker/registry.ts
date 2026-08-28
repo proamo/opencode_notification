@@ -289,13 +289,14 @@ export class RouteRegistry {
       const finalProjectLabel =
         primaryProjectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
 
-      if (activeSessions.length > 0) {
+      const firstSession = activeSessions[0];
+      if (firstSession) {
         const sessionCountSuffix =
           activeSessions.length > 1 ? ` (+${activeSessions.length - 1} 個任務)` : "";
         machine.projects.push({
           projectLabel: finalProjectLabel,
-          sessionLabel: `${activeSessions[0].sessionLabel}${sessionCountSuffix}`,
-          sessionId: activeSessions[0].sessionId,
+          sessionLabel: `${firstSession.sessionLabel}${sessionCountSuffix}`,
+          sessionId: firstSession.sessionId,
         });
       } else {
         machine.projects.push({
