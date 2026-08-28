@@ -291,13 +291,18 @@ export function renderDashboardHtml(): string {
           <label class="form-label">🎙️ 語音辨識引擎 (STT Provider)</label>
           <select id="setting-provider" class="form-control">
             <option value="groq">Groq Whisper (免費、極速推薦)</option>
+            <option value="cloudflare">Cloudflare Workers AI (每日 10,000 次免費)</option>
             <option value="openai">OpenAI Whisper (官方 API)</option>
             <option value="custom">自訂 / 本地相容端點 (Custom / Local)</option>
           </select>
         </div>
+        <div class="form-group" id="group-accountid">
+          <label class="form-label">🏢 Cloudflare Account ID (使用 Cloudflare 時需填寫)</label>
+          <input type="text" id="setting-accountid" class="form-control" placeholder="2fa0dd0cbd72565d704fb330d85ad604">
+        </div>
         <div class="form-group">
-          <label class="form-label">🔑 語音 API 金鑰 (Voice API Key)</label>
-          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... 或 sk-...">
+          <label class="form-label">🔑 語音 API 金鑰 / Token (API Key / Token)</label>
+          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... 或 cfut_... 或 sk-...">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
             金鑰保存在 Gateway 本地環境，隨時可自由切換。
           </div>
@@ -495,6 +500,7 @@ export function renderDashboardHtml(): string {
     async function saveSettings() {
       const provider = document.getElementById('setting-provider').value;
       const apiKey = document.getElementById('setting-apikey').value.trim();
+      const accountId = document.getElementById('setting-accountid').value.trim();
       const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
 
       try {
@@ -504,6 +510,7 @@ export function renderDashboardHtml(): string {
           body: JSON.stringify({
             voiceProvider: provider,
             voiceApiKey: apiKey || undefined,
+            voiceAccountId: accountId || undefined,
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });

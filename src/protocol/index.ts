@@ -34,7 +34,8 @@ export const TelegramRuntimeConfigSchema = z.object({
     .min(1)
     .max(365 * 24 * 60),
   voiceApiKey: z.string().min(1).optional(),
-  voiceProvider: z.enum(["groq", "openai", "custom"]).optional(),
+  voiceAccountId: z.string().min(1).optional(),
+  voiceProvider: z.enum(["groq", "openai", "cloudflare", "custom"]).optional(),
   voiceModel: z.string().min(1).optional(),
 });
 export type TelegramRuntimeConfig = z.infer<typeof TelegramRuntimeConfigSchema>;

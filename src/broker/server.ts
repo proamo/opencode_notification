@@ -663,12 +663,22 @@ class BrokerTelegramRuntime {
     });
 
     const voiceApiKey =
-      input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
+      input.config.voiceApiKey ??
+      process.env.GROQ_API_KEY ??
+      process.env.OPENAI_API_KEY ??
+      process.env.CLOUDFLARE_API_TOKEN ??
+      process.env.CF_API_TOKEN;
+
+    const voiceAccountId =
+      input.config.voiceAccountId ??
+      process.env.CLOUDFLARE_ACCOUNT_ID ??
+      process.env.CF_ACCOUNT_ID;
 
     const transcriber = voiceApiKey
       ? new VoiceTranscriber({
           apiKey: voiceApiKey,
-          provider: input.config.voiceProvider ?? "groq",
+          accountId: voiceAccountId,
+          provider: input.config.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : "groq"),
           model: input.config.voiceModel,
         })
       : undefined;

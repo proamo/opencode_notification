@@ -53,6 +53,53 @@ describe("VoiceTranscriber", () => {
     expect(formFields.language).toBe("zh");
   });
 
+  test("transcribes audio buffer via Cloudflare Workers AI", async () => {
+    let requestedUrl = "";
+    let requestedAuth = "";
+    let requestedContentType = "";
+
+    const mockFetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      requestedUrl = String(input);
+      requestedAuth = (init?.headers as Record<string, string>)?.Authorization ?? "";
+      requestedContentType = (init?.headers as Record<string, string>)?.[
+        "Content-Type"
+      ] ?? "";
+
+      return new Response(
+        JSON.stringify({
+          result: {
+            text: "系統狀態",
+          },
+          success: true,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    const transcriber = new VoiceTranscriber({
+      apiKey: "cfut_test_token_123",
+      accountId: "test_account_id_456",
+      provider: "cloudflare",
+      fetchFn: mockFetch,
+    });
+
+    const fakeAudio = new Uint8Array([0x01, 0x02, 0x03]);
+    const result = await transcriber.transcribe(fakeAudio);
+
+    expect(result).toBe("系統狀態");
+    expect(requestedUrl).toBe(
+      "https://api.cloudflare.com/client/v4/accounts/test_account_id_456/ai/run/@cf/openai/whisper",
+    );
+    expect(requestedAuth).toBe("Bearer cfut_test_token_123");
+    expect(requestedContentType).toBe("application/octet-stream");
+  });
+
   test("handles transcription errors gracefully", async () => {
     const mockErrorFetch = (async (): Promise<Response> => {
       return new Response("Invalid API key provided", { status: 401 });

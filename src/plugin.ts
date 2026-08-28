@@ -74,6 +74,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
             sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
             questionTtlMinutes: configData.interaction.questionTtlMinutes,
             ...(voiceApiKey ? { voiceApiKey } : {}),
+            ...(configData.voice?.accountId ? { voiceAccountId: configData.voice.accountId } : {}),
             ...(configData.voice?.provider ? { voiceProvider: configData.voice.provider } : {}),
             ...(configData.voice?.model ? { voiceModel: configData.voice.model } : {}),
           },

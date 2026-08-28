@@ -72,9 +72,10 @@ export const NotifierConfigSchema = z
     voice: z
       .object({
         enabled: z.boolean().default(true),
-        provider: z.enum(["groq", "openai", "custom"]).default("groq"),
+        provider: z.enum(["groq", "openai", "cloudflare", "custom"]).default("groq"),
         apiKey: z.string().min(1).optional(),
         apiKeyFile: z.string().min(1).optional(),
+        accountId: z.string().min(1).optional(),
         model: z.string().default("whisper-large-v3-turbo"),
         endpoint: z.string().url().optional(),
         language: z.string().default("zh"),
