@@ -14518,9 +14518,10 @@ var DiagnosticSchema = exports_external.object({
 
 // src/setup.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
+import { existsSync } from "fs";
 import { chmod as chmod3, lstat as lstat5, mkdir as mkdir3, open as open2, readFile as readFile5, rename as rename4, rm as rm2, writeFile as writeFile3 } from "fs/promises";
 import { hostname as hostname3, platform as platform4 } from "os";
-import { join as join5 } from "path";
+import { dirname as dirname2, join as join5, resolve as resolve2 } from "path";
 
 // src/config.ts
 import { createHash } from "crypto";
@@ -14555,7 +14556,7 @@ var NotifierConfigSchema = exports_external.object({
     pluginBufferSize: exports_external.number().int().min(1).max(1000).default(100)
   }).strict().prefault({}),
   broker: exports_external.object({
-    host: exports_external.string().min(1).default("0.0.0.0"),
+    host: exports_external.string().min(1).default("127.0.0.1"),
     port: exports_external.number().int().min(1024).max(65535).default(42617)
   }).strict().prefault({}),
   interaction: exports_external.object({
@@ -14651,7 +14652,7 @@ async function assertSecureTokenFile(path) {
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new ConfigValidationError("TOKEN_FILE_UNSAFE", "Telegram bot token file must be a regular file");
   }
-  if (platform() !== "win32") {
+  if (platform() !== "win32" && process.env.OPENCODE_TELEGRAM_CONTAINER !== "1") {
     if ((stats.mode & 63) !== 0) {
       throw new ConfigValidationError("TOKEN_FILE_PERMISSIONS_UNSAFE", "Telegram bot token file must not allow group or other access");
     }
@@ -15468,7 +15469,7 @@ async function assertPrivatePath(path, expectedType, expectedMode) {
   if (!typeMatches || stats.isSymbolicLink()) {
     throw new Error(`${path} must be a regular ${expectedType}`);
   }
-  if (platform2() === "win32")
+  if (platform2() === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1")
     return;
   if ((stats.mode & 63) !== 0) {
     throw new Error(`${path} permissions must not allow group or other access`);
@@ -15532,13 +15533,43 @@ function parseJsonc(content) {
           i++;
         }
         i++;
+      } else if (char === ",") {
+        let j = i + 1;
+        let isTrailing = false;
+        while (j < content.length) {
+          const c = content[j];
+          const next = content[j + 1];
+          if (c === " " || c === "\t" || c === `
+` || c === "\r") {
+            j++;
+          } else if (c === "/" && next === "/") {
+            j += 2;
+            while (j < content.length && content[j] !== `
+` && content[j] !== "\r") {
+              j++;
+            }
+          } else if (c === "/" && next === "*") {
+            j += 2;
+            while (j < content.length && !(content[j] === "*" && content[j + 1] === "/")) {
+              j++;
+            }
+            j += 2;
+          } else {
+            if (c === "}" || c === "]") {
+              isTrailing = true;
+            }
+            break;
+          }
+        }
+        if (!isTrailing) {
+          result += char;
+        }
       } else {
         result += char;
       }
     }
   }
-  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
-  return JSON.parse(cleaned);
+  return JSON.parse(result);
 }
 function getCandidateConfigPaths(cwd = process.cwd()) {
   const home = homedir2();
@@ -15759,23 +15790,42 @@ async function injectOpenCodeConfig(targetPath, config2) {
     }
     return false;
   };
+  function mergePluginOptions(existing, updated) {
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      return updated;
+    }
+    const merged = {
+      ...existing,
+      ...updated
+    };
+    if (typeof existing.notifications === "object" && existing.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
+      merged.notifications = {
+        ...existing.notifications,
+        ...updated.notifications
+      };
+    }
+    return merged;
+  }
   if (Array.isArray(existingJson.plugin)) {
-    const tuple2 = ["opencode-telegram-link", pluginConfig];
     const index = existingJson.plugin.findIndex(isMatch);
     if (index >= 0) {
-      existingJson.plugin[index] = tuple2;
+      const existingEntry = existingJson.plugin[index];
+      const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
+      const pluginName = Array.isArray(existingEntry) && typeof existingEntry[0] === "string" ? existingEntry[0] : "opencode-telegram-link";
+      existingJson.plugin[index] = [pluginName, mergePluginOptions(existingOptions, pluginConfig)];
     } else {
-      existingJson.plugin.push(tuple2);
+      existingJson.plugin.push(["opencode-telegram-link", pluginConfig]);
     }
   } else if (Array.isArray(existingJson.plugins)) {
     if (!existingJson.plugins.includes("opencode-telegram-link")) {
       existingJson.plugins.push("opencode-telegram-link");
     }
     const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
-    existingPluginMap["opencode-telegram-link"] = pluginConfig;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
     existingJson.plugin = existingPluginMap;
   } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
-    existingJson.plugin["opencode-telegram-link"] = pluginConfig;
+    const existingPluginMap = existingJson.plugin;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
   } else {
     existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
   }
@@ -16158,10 +16208,13 @@ async function validateExistingDatabase(path) {
     if (!stats.isFile() || stats.isSymbolicLink()) {
       throw new Error(`${path} must be a regular file`);
     }
-    if (process.platform !== "win32" && (stats.mode & 63) !== 0) {
+    if (process.platform === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1") {
+      return true;
+    }
+    if ((stats.mode & 63) !== 0) {
       throw new Error(`${path} permissions must not allow group or other access`);
     }
-    if (process.platform !== "win32" && typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
       throw new Error(`${path} must be owned by the current user`);
     }
     return true;
@@ -16600,6 +16653,26 @@ class TelegramApiError extends Error {
 }
 
 // src/setup.ts
+function resolveDockerComposeContext(cwd) {
+  const candidateFiles = [
+    join5(cwd, "docker-compose.yml"),
+    join5(resolve2(import.meta.dir, ".."), "docker-compose.yml"),
+    join5(resolve2(import.meta.dir, "../.."), "docker-compose.yml"),
+    join5(import.meta.dir, "docker-compose.yml")
+  ];
+  for (const file2 of candidateFiles) {
+    try {
+      if (existsSync(file2)) {
+        return {
+          composeFile: file2,
+          projectDir: dirname2(file2)
+        };
+      }
+    } catch {}
+  }
+  return;
+}
+
 class SetupError extends Error {
   code;
   constructor(code, message) {
@@ -16993,8 +17066,22 @@ ${generatePluginConfigSnippet(configData)}
 `);
       try {
         const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-        const result = Bun.spawnSync([dockerCmd, "compose", "up", "-d", "--build"], {
-          cwd,
+        const composeCtx = resolveDockerComposeContext(cwd);
+        if (!composeCtx) {
+          throw new Error("Could not find docker-compose.yml in project or package directory");
+        }
+        const result = Bun.spawnSync([
+          dockerCmd,
+          "compose",
+          "-f",
+          composeCtx.composeFile,
+          "--project-directory",
+          composeCtx.projectDir,
+          "up",
+          "-d",
+          "--build"
+        ], {
+          cwd: composeCtx.projectDir,
           env: {
             ...process.env,
             HOME: process.env.HOME || process.env.USERPROFILE || ""
@@ -17005,16 +17092,18 @@ ${generatePluginConfigSnippet(configData)}
 ` : `\u2502  \u2714 Docker Broker container started in background!
 `);
         } else {
-          stdout.write(isZh ? `\u2502  \u2716 Docker \u81EA\u52D5\u555F\u52D5\u672A\u6210\u529F\uFF08\u8ACB\u78BA\u8A8D Docker Desktop \u662F\u5426\u904B\u884C\u4E2D\uFF09\u3002
-` : `\u2502  \u2716 Docker start was not successful (please check if Docker is running).
+          const stderr2 = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
+          stdout.write(isZh ? `\u2502  \u2716 Docker \u81EA\u52D5\u555F\u52D5\u672A\u6210\u529F${stderr2 ? ` (${stderr2})` : ""}\uFF08\u8ACB\u78BA\u8A8D Docker Desktop \u662F\u5426\u904B\u884C\u4E2D\uFF09\u3002
+` : `\u2502  \u2716 Docker start failed${stderr2 ? ` (${stderr2})` : ""} (please check if Docker is running).
 `);
-          stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u57F7\u884C: docker compose up -d
-` : `\u2502  You can manually run later: docker compose up -d
+          stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u57F7\u884C: docker compose -f "${composeCtx.composeFile}" up -d
+` : `\u2502  You can manually run later: docker compose -f "${composeCtx.composeFile}" up -d
 `);
         }
-      } catch {
-        stdout.write(isZh ? `\u2502  \u2716 \u672A\u5075\u6E2C\u5230 Docker \u6307\u4EE4\uFF0C\u60A8\u53EF\u65BC\u5B89\u88DD Docker \u5F8C\u57F7\u884C: docker compose up -d
-` : `\u2502  \u2716 Docker command not found. You can run 'docker compose up -d' after installing Docker.
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        stdout.write(isZh ? `\u2502  \u2716 Docker \u555F\u52D5\u5931\u6557: ${msg}\uFF0C\u60A8\u53EF\u65BC\u5B89\u88DD/\u555F\u52D5 Docker \u5F8C\u624B\u52D5\u57F7\u884C docker compose up -d
+` : `\u2502  \u2716 Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.
 `);
       }
     } else {
@@ -17387,7 +17476,7 @@ class RouteRegistry {
     if (exact)
       return exact;
     for (const registered of this.#routes.values()) {
-      if (registered.route.machineId === parsed.machineId && registered.route.projectId === parsed.projectId && registered.route.sessionId === parsed.sessionId) {
+      if (registered.route.machineId === parsed.machineId && registered.route.instanceId === parsed.instanceId && registered.route.projectId === parsed.projectId && registered.route.sessionId === parsed.sessionId) {
         return registered;
       }
     }
@@ -18752,14 +18841,14 @@ function isTerminalTelegramError(error51) {
 async function abortableDelay(milliseconds, signal) {
   if (signal.aborted)
     return;
-  await new Promise((resolve2) => {
+  await new Promise((resolve3) => {
     const onAbort = () => {
       clearTimeout(timeout);
-      resolve2();
+      resolve3();
     };
     const timeout = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
-      resolve2();
+      resolve3();
     }, milliseconds);
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -19747,7 +19836,7 @@ function renderDashboardHtml() {
 
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
-var DEFAULT_BIND_HOST = "0.0.0.0";
+var DEFAULT_BIND_HOST = "127.0.0.1";
 var CONTAINER_HOST = "0.0.0.0";
 var DEFAULT_PORT = 42617;
 var DEFAULT_REGISTRATION_TIMEOUT_MS = 1e4;
@@ -19782,6 +19871,32 @@ function maskSecret(val) {
   if (trimmed.length <= 8)
     return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
   return `${trimmed.slice(0, 4)}\u2022\u2022\u2022\u2022${trimmed.slice(-4)}`;
+}
+function maskDashboardSettings(settings) {
+  return {
+    activeProvider: settings.activeProvider ?? "cloudflare",
+    cloudflare: {
+      accountId: settings.cloudflare?.accountId ?? "",
+      hasAccountId: Boolean(settings.cloudflare?.accountId),
+      hasApiToken: Boolean(settings.cloudflare?.apiToken),
+      maskedToken: maskSecret(settings.cloudflare?.apiToken)
+    },
+    groq: {
+      hasApiKey: Boolean(settings.groq?.apiKey),
+      maskedKey: maskSecret(settings.groq?.apiKey)
+    },
+    openai: {
+      hasApiKey: Boolean(settings.openai?.apiKey),
+      maskedKey: maskSecret(settings.openai?.apiKey)
+    },
+    custom: {
+      endpoint: settings.custom?.endpoint ?? "",
+      hasApiKey: Boolean(settings.custom?.apiKey),
+      maskedKey: maskSecret(settings.custom?.apiKey),
+      model: settings.custom?.model ?? "whisper-large-v3-turbo"
+    },
+    sessionPromptTtlMinutes: settings.sessionPromptTtlMinutes ?? 43200
+  };
 }
 function isMaskedOrEmpty(val) {
   if (!val)
@@ -19847,8 +19962,8 @@ class BrokerServer {
     this.#removeDiscovery = input.removeDiscovery;
     this.#pendingCommands = input.pendingCommands;
     this.#telegramRuntimeRef = input.telegramRuntimeRef;
-    this.finished = new Promise((resolve2) => {
-      this.#resolveFinished = resolve2;
+    this.finished = new Promise((resolve3) => {
+      this.#resolveFinished = resolve3;
     });
   }
   async stop() {
@@ -19891,10 +20006,10 @@ class BrokerServer {
       };
     }
     const requestId = randomUUID6();
-    const result = new Promise((resolve2) => {
+    const result = new Promise((resolve3) => {
       const timeout = setTimeout(() => {
         this.#pendingCommands.delete(requestId);
-        resolve2({
+        resolve3({
           commandId: command.commandId,
           status: "indeterminate",
           reason: "command timed out"
@@ -19904,7 +20019,7 @@ class BrokerServer {
       this.#pendingCommands.set(requestId, {
         connectionId: socket.data.connectionId,
         commandId: command.commandId,
-        resolve: resolve2,
+        resolve: resolve3,
         timeout
       });
     });
@@ -20261,7 +20376,10 @@ async function startBroker(options = {}) {
                     ...activeModel ? { model: activeModel } : {}
                   }));
                 }
-                return Response.json({ success: true, settings: persistedSettings });
+                return Response.json({
+                  success: true,
+                  settings: maskDashboardSettings(persistedSettings)
+                });
               } catch (err) {
                 return Response.json({ success: false, reason: err.message }, { status: 500 });
               }
@@ -21618,4 +21736,4 @@ export {
   runBroker
 };
 
-//# debugId=16B4D0F53010435164756E2164756E21
+//# debugId=D6354AE41D53F43A64756E2164756E21

@@ -7,7 +7,13 @@ import {
   injectOpenCodeConfig,
   removeOpenCodeConfig,
 } from "../src/opencode";
-import { runGuidedSetup, runInteractiveSetup, runSetupCli, SetupError } from "../src/setup";
+import {
+  resolveDockerComposeContext,
+  runGuidedSetup,
+  runInteractiveSetup,
+  runSetupCli,
+  SetupError,
+} from "../src/setup";
 import { runInteractiveUninstall } from "../src/uninstall";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCD";
@@ -566,6 +572,22 @@ describe("interactive uninstaller wizard", () => {
     const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
     expect(parsed.plugins).toEqual([]);
     expect(parsed.plugin).toEqual({});
+  });
+
+  test("resolveDockerComposeContext locates docker-compose.yml in project or package directory", async () => {
+    const emptyWorkspace = await createTemporaryDirectory();
+    // Empty workspace should fall back to package directory compose file
+    const resolved = resolveDockerComposeContext(emptyWorkspace);
+    expect(resolved).toBeDefined();
+    expect(resolved?.composeFile).toContain("docker-compose.yml");
+
+    // When workspace has its own docker-compose.yml, prioritize project cwd
+    const customCompose = join(emptyWorkspace, "docker-compose.yml");
+    await writeFile(customCompose, "services:\n  broker:\n    image: custom\n", "utf8");
+    const customResolved = resolveDockerComposeContext(emptyWorkspace);
+    expect(customResolved).toBeDefined();
+    expect(customResolved?.composeFile).toBe(customCompose);
+    expect(customResolved?.projectDir).toBe(emptyWorkspace);
   });
 });
 

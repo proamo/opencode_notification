@@ -14553,7 +14553,7 @@ var NotifierConfigSchema = exports_external.object({
     pluginBufferSize: exports_external.number().int().min(1).max(1000).default(100)
   }).strict().prefault({}),
   broker: exports_external.object({
-    host: exports_external.string().min(1).default("0.0.0.0"),
+    host: exports_external.string().min(1).default("127.0.0.1"),
     port: exports_external.number().int().min(1024).max(65535).default(42617)
   }).strict().prefault({}),
   interaction: exports_external.object({
@@ -14649,7 +14649,7 @@ async function assertSecureTokenFile(path) {
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new ConfigValidationError("TOKEN_FILE_UNSAFE", "Telegram bot token file must be a regular file");
   }
-  if (platform() !== "win32") {
+  if (platform() !== "win32" && process.env.OPENCODE_TELEGRAM_CONTAINER !== "1") {
     if ((stats.mode & 63) !== 0) {
       throw new ConfigValidationError("TOKEN_FILE_PERMISSIONS_UNSAFE", "Telegram bot token file must not allow group or other access");
     }
@@ -15607,7 +15607,7 @@ async function assertPrivatePath(path, expectedType, expectedMode) {
   if (!typeMatches || stats.isSymbolicLink()) {
     throw new Error(`${path} must be a regular ${expectedType}`);
   }
-  if (platform2() === "win32")
+  if (platform2() === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1")
     return;
   if ((stats.mode & 63) !== 0) {
     throw new Error(`${path} permissions must not allow group or other access`);
@@ -15671,13 +15671,43 @@ function parseJsonc(content) {
           i++;
         }
         i++;
+      } else if (char === ",") {
+        let j = i + 1;
+        let isTrailing = false;
+        while (j < content.length) {
+          const c = content[j];
+          const next = content[j + 1];
+          if (c === " " || c === "\t" || c === `
+` || c === "\r") {
+            j++;
+          } else if (c === "/" && next === "/") {
+            j += 2;
+            while (j < content.length && content[j] !== `
+` && content[j] !== "\r") {
+              j++;
+            }
+          } else if (c === "/" && next === "*") {
+            j += 2;
+            while (j < content.length && !(content[j] === "*" && content[j + 1] === "/")) {
+              j++;
+            }
+            j += 2;
+          } else {
+            if (c === "}" || c === "]") {
+              isTrailing = true;
+            }
+            break;
+          }
+        }
+        if (!isTrailing) {
+          result += char;
+        }
       } else {
         result += char;
       }
     }
   }
-  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
-  return JSON.parse(cleaned);
+  return JSON.parse(result);
 }
 function getCandidateConfigPaths(cwd = process.cwd()) {
   const home = homedir2();
@@ -15898,23 +15928,42 @@ async function injectOpenCodeConfig(targetPath, config2) {
     }
     return false;
   };
+  function mergePluginOptions(existing, updated) {
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      return updated;
+    }
+    const merged = {
+      ...existing,
+      ...updated
+    };
+    if (typeof existing.notifications === "object" && existing.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
+      merged.notifications = {
+        ...existing.notifications,
+        ...updated.notifications
+      };
+    }
+    return merged;
+  }
   if (Array.isArray(existingJson.plugin)) {
-    const tuple2 = ["opencode-telegram-link", pluginConfig];
     const index = existingJson.plugin.findIndex(isMatch);
     if (index >= 0) {
-      existingJson.plugin[index] = tuple2;
+      const existingEntry = existingJson.plugin[index];
+      const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
+      const pluginName = Array.isArray(existingEntry) && typeof existingEntry[0] === "string" ? existingEntry[0] : "opencode-telegram-link";
+      existingJson.plugin[index] = [pluginName, mergePluginOptions(existingOptions, pluginConfig)];
     } else {
-      existingJson.plugin.push(tuple2);
+      existingJson.plugin.push(["opencode-telegram-link", pluginConfig]);
     }
   } else if (Array.isArray(existingJson.plugins)) {
     if (!existingJson.plugins.includes("opencode-telegram-link")) {
       existingJson.plugins.push("opencode-telegram-link");
     }
     const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
-    existingPluginMap["opencode-telegram-link"] = pluginConfig;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
     existingJson.plugin = existingPluginMap;
   } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
-    existingJson.plugin["opencode-telegram-link"] = pluginConfig;
+    const existingPluginMap = existingJson.plugin;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
   } else {
     existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
   }
@@ -16851,4 +16900,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=841FEECAD5CDE09764756E2164756E21
+//# debugId=6F35C4F64CF2136264756E2164756E21

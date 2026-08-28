@@ -11,12 +11,13 @@ describe("broker container image contract", () => {
 
     expect(dockerfile).toContain("FROM oven/bun:1.3.14-slim AS runtime");
     expect(dockerfile).toContain("COPY dist ./dist");
+    expect(dockerfile).toContain("OPENCODE_TELEGRAM_CONTAINER=1");
     expect(dockerfile).toContain("OPENCODE_TELEGRAM_BROKER_STATE_DIR=/state");
     expect(dockerfile).toContain("OPENCODE_TELEGRAM_BROKER_BIND_HOST=0.0.0.0");
     expect(dockerfile).toContain('VOLUME ["/state"]');
-    expect(dockerfile).toContain("USER 10001:10001");
+    expect(dockerfile).toContain("useradd -u 10001 -g opencode");
     expect(dockerfile).toContain("EXPOSE 42617/tcp");
-    expect(dockerfile).toContain('ENTRYPOINT ["bun", "/app/dist/broker/main.js"]');
+    expect(dockerfile).toContain('ENTRYPOINT ["/app/entrypoint.sh"]');
     expect(dockerfile).not.toContain("OPENCODE_TELEGRAM_BOT_TOKEN=");
     expect(dockerfile).not.toContain("OPENCODE_TELEGRAM_CHAT_ID=");
   });

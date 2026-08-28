@@ -151,8 +151,16 @@ describe("Web Dashboard", () => {
     });
 
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { success: boolean };
+    const data = (await res.json()) as {
+      success: boolean;
+      settings?: {
+        groq?: { hasApiKey: boolean; maskedKey?: string; apiKey?: string };
+      };
+    };
     expect(data.success).toBe(true);
+    expect(data.settings?.groq?.hasApiKey).toBe(true);
+    expect(data.settings?.groq?.maskedKey).toContain("••••");
+    expect(data.settings?.groq?.apiKey).toBeUndefined();
 
     // Verify summary returns masked key, not plaintext
     const summaryRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`, {

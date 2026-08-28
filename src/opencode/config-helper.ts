@@ -50,15 +50,43 @@ export function parseJsonc<T = Record<string, unknown>>(content: string): T {
           i++;
         }
         i++; // skip /
+      } else if (char === ",") {
+        // Look ahead for trailing comma: check next non-comment, non-whitespace character
+        let j = i + 1;
+        let isTrailing = false;
+        while (j < content.length) {
+          const c = content[j];
+          const next = content[j + 1];
+          if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+            j++;
+          } else if (c === "/" && next === "/") {
+            j += 2;
+            while (j < content.length && content[j] !== "\n" && content[j] !== "\r") {
+              j++;
+            }
+          } else if (c === "/" && next === "*") {
+            j += 2;
+            while (j < content.length && !(content[j] === "*" && content[j + 1] === "/")) {
+              j++;
+            }
+            j += 2;
+          } else {
+            if (c === "}" || c === "]") {
+              isTrailing = true;
+            }
+            break;
+          }
+        }
+        if (!isTrailing) {
+          result += char;
+        }
       } else {
         result += char;
       }
     }
   }
 
-  // Strip trailing commas before } or ]
-  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
-  return JSON.parse(cleaned) as T;
+  return JSON.parse(result) as T;
 }
 
 export function getCandidateConfigPaths(cwd: string = process.cwd()): string[] {
@@ -330,13 +358,43 @@ export async function injectOpenCodeConfig(
     return false;
   };
 
+  function mergePluginOptions(
+    existing: unknown,
+    updated: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
+      return updated;
+    }
+    const merged: Record<string, unknown> = {
+      ...(existing as Record<string, unknown>),
+      ...updated,
+    };
+    if (
+      typeof (existing as Record<string, unknown>).notifications === "object" &&
+      (existing as Record<string, unknown>).notifications !== null &&
+      typeof updated.notifications === "object" &&
+      updated.notifications !== null
+    ) {
+      merged.notifications = {
+        ...((existing as Record<string, unknown>).notifications as Record<string, unknown>),
+        ...(updated.notifications as Record<string, unknown>),
+      };
+    }
+    return merged;
+  }
+
   if (Array.isArray(existingJson.plugin)) {
-    const tuple = ["opencode-telegram-link", pluginConfig];
     const index = existingJson.plugin.findIndex(isMatch);
     if (index >= 0) {
-      existingJson.plugin[index] = tuple;
+      const existingEntry = existingJson.plugin[index];
+      const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
+      const pluginName =
+        Array.isArray(existingEntry) && typeof existingEntry[0] === "string"
+          ? existingEntry[0]
+          : "opencode-telegram-link";
+      existingJson.plugin[index] = [pluginName, mergePluginOptions(existingOptions, pluginConfig)];
     } else {
-      existingJson.plugin.push(tuple);
+      existingJson.plugin.push(["opencode-telegram-link", pluginConfig]);
     }
   } else if (Array.isArray(existingJson.plugins)) {
     if (!existingJson.plugins.includes("opencode-telegram-link")) {
@@ -346,10 +404,17 @@ export async function injectOpenCodeConfig(
       existingJson.plugin && typeof existingJson.plugin === "object"
         ? (existingJson.plugin as Record<string, unknown>)
         : {};
-    existingPluginMap["opencode-telegram-link"] = pluginConfig;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(
+      existingPluginMap["opencode-telegram-link"],
+      pluginConfig,
+    );
     existingJson.plugin = existingPluginMap;
   } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
-    (existingJson.plugin as Record<string, unknown>)["opencode-telegram-link"] = pluginConfig;
+    const existingPluginMap = existingJson.plugin as Record<string, unknown>;
+    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(
+      existingPluginMap["opencode-telegram-link"],
+      pluginConfig,
+    );
   } else {
     // Standard array tuple format
     existingJson.plugin = [["opencode-telegram-link", pluginConfig]];

@@ -1,6 +1,10 @@
 import { type NotifierConfig } from "./config";
 import type { SupportedLocale } from "./i18n";
 import { type TelegramBot } from "./telegram/api";
+export declare function resolveDockerComposeContext(cwd: string): {
+    composeFile: string;
+    projectDir: string;
+} | undefined;
 export type PairingCandidate = {
     userId: string;
     chatId: string;

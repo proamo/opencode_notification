@@ -713,14 +713,13 @@ async function validateExistingDatabase(path: string): Promise<boolean> {
     if (!stats.isFile() || stats.isSymbolicLink()) {
       throw new Error(`${path} must be a regular file`);
     }
-    if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
+    if (process.platform === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1") {
+      return true;
+    }
+    if ((stats.mode & 0o077) !== 0) {
       throw new Error(`${path} permissions must not allow group or other access`);
     }
-    if (
-      process.platform !== "win32" &&
-      typeof process.getuid === "function" &&
-      stats.uid !== process.getuid()
-    ) {
+    if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
       throw new Error(`${path} must be owned by the current user`);
     }
     return true;

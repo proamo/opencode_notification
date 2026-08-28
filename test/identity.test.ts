@@ -70,6 +70,23 @@ describe("state identity", () => {
     expect(first.routeGeneration).not.toBe(nextGeneration.routeGeneration);
     expect(first.instanceId).not.toBe(otherProcess.instanceId);
   });
+
+  test("allows state initialization in container mode (OPENCODE_TELEGRAM_CONTAINER=1)", async () => {
+    const original = process.env.OPENCODE_TELEGRAM_CONTAINER;
+    process.env.OPENCODE_TELEGRAM_CONTAINER = "1";
+    try {
+      const directory = await createTemporaryDirectory();
+      const state = await loadOrCreateStateIdentity(directory);
+      expect(state).toBeDefined();
+      expect(state.machineId).toBeDefined();
+    } finally {
+      if (original !== undefined) {
+        process.env.OPENCODE_TELEGRAM_CONTAINER = original;
+      } else {
+        delete process.env.OPENCODE_TELEGRAM_CONTAINER;
+      }
+    }
+  });
 });
 
 async function createTemporaryDirectory(): Promise<string> {

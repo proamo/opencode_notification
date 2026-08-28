@@ -27,13 +27,13 @@ describe("Telegram Poller Resilience", () => {
           }
         });
       },
-    } as any;
+    } as unknown as ConstructorParameters<typeof TelegramPoller>[0]["api"];
 
     const fakeDb = {
       pinTelegramBotFingerprint: () => {},
       getTelegramUpdateOffset: () => 0,
       commitInboundUpdate: () => {},
-    } as any;
+    } as unknown as ConstructorParameters<typeof TelegramPoller>[0]["database"];
 
     const poller = new TelegramPoller({
       api: fakeApi,

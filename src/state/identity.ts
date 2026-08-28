@@ -125,7 +125,7 @@ async function assertPrivatePath(
     throw new Error(`${path} must be a regular ${expectedType}`);
   }
 
-  if (platform() === "win32") return;
+  if (platform() === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1") return;
 
   if ((stats.mode & 0o077) !== 0) {
     throw new Error(`${path} permissions must not allow group or other access`);

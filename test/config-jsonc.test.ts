@@ -27,6 +27,7 @@ describe("JSONC Parsing & Config Injection Security", () => {
       /* Multi line
          comment */
       "url": "https://example.com/api//not-a-comment/*keep*/",
+      "note": "keep ,} and ,] exactly",
       "items": [
         1,
         2,
@@ -36,6 +37,7 @@ describe("JSONC Parsing & Config Injection Security", () => {
     const parsed = parseJsonc<Record<string, unknown>>(raw);
     expect(parsed.name).toBe("test-project");
     expect(parsed.url).toBe("https://example.com/api//not-a-comment/*keep*/");
+    expect(parsed.note).toBe("keep ,} and ,] exactly");
     expect(parsed.items).toEqual([1, 2]);
   });
 
@@ -121,5 +123,76 @@ describe("JSONC Parsing & Config Injection Security", () => {
 
     const contentAfter = await readFile(corruptedPath, "utf8");
     expect(contentAfter).toBe(badContent);
+  });
+
+  test("injectOpenCodeConfig preserves existing custom options when updating plugin tuple", async () => {
+    const configPath = join(tempDir, "existing-options.json");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          plugin: [
+            [
+              "opencode-telegram-link",
+              {
+                role: "gateway",
+                interaction: { allowAll: true },
+                voice: { model: "whisper-large" },
+                broker: { idleTimeoutMs: 120000 },
+                notifications: {
+                  includeChildLifecycle: true,
+                  completionDebounceMs: 5000,
+                  pluginBufferSize: 50,
+                },
+                customOption: "preserved-value",
+              },
+            ],
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const updateConfig = NotifierConfigSchema.parse({
+      mode: "local",
+      role: "node",
+      hostLabel: "Updated-Worker",
+      locale: "zh-TW",
+      gateway: {
+        url: "ws://10.0.0.1:42617/v1/connect",
+        secret: "updated_secret",
+      },
+      notifications: {
+        completion: true,
+        error: false,
+        question: true,
+        permission: true,
+      },
+    });
+
+    await injectOpenCodeConfig(configPath, updateConfig);
+
+    const writtenContent = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(writtenContent);
+    const tuple = parsed.plugin[0];
+    expect(tuple[0]).toBe("opencode-telegram-link");
+
+    const options = tuple[1];
+    // Updated managed fields
+    expect(options.role).toBe("node");
+    expect(options.hostLabel).toBe("Updated-Worker");
+    expect(options.gateway.url).toBe("ws://10.0.0.1:42617/v1/connect");
+    expect(options.notifications.error).toBe(false);
+
+    // Preserved custom fields
+    expect(options.interaction).toEqual({ allowAll: true });
+    expect(options.voice).toEqual({ model: "whisper-large" });
+    expect(options.broker).toEqual({ idleTimeoutMs: 120000 });
+    expect(options.notifications.includeChildLifecycle).toBe(true);
+    expect(options.notifications.completionDebounceMs).toBe(5000);
+    expect(options.notifications.pluginBufferSize).toBe(50);
+    expect(options.customOption).toBe("preserved-value");
   });
 });

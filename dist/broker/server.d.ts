@@ -45,8 +45,8 @@ declare const BrokerStatusSchema: z.ZodObject<{
         minor: z.ZodNumber;
     }, z.core.$strip>;
     bindHost: z.ZodEnum<{
-        "0.0.0.0": "0.0.0.0";
         "127.0.0.1": "127.0.0.1";
+        "0.0.0.0": "0.0.0.0";
     }>;
     connections: z.ZodNumber;
     routes: z.ZodNumber;

@@ -33,7 +33,7 @@ describe("NotifierConfigSchema", () => {
       completionDebounceMs: 1_500,
       pluginBufferSize: 100,
     });
-    expect(result.broker).toEqual({ host: "0.0.0.0", port: 42617 });
+    expect(result.broker).toEqual({ host: "127.0.0.1", port: 42617 });
     expect(result.interaction.sessionPromptTtlMinutes).toBe(30 * 24 * 60);
     expect(result.interaction.questionTtlMinutes).toBe(30);
   });

@@ -42,7 +42,7 @@ import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
-const DEFAULT_BIND_HOST = "0.0.0.0";
+const DEFAULT_BIND_HOST = "127.0.0.1";
 const CONTAINER_HOST = "0.0.0.0";
 const DEFAULT_PORT = 42617;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
@@ -132,6 +132,33 @@ function maskSecret(val?: string | null): string | undefined {
   const trimmed = val.trim();
   if (trimmed.length <= 8) return "••••••••";
   return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
+}
+
+function maskDashboardSettings(settings: DashboardSettings) {
+  return {
+    activeProvider: settings.activeProvider ?? "cloudflare",
+    cloudflare: {
+      accountId: settings.cloudflare?.accountId ?? "",
+      hasAccountId: Boolean(settings.cloudflare?.accountId),
+      hasApiToken: Boolean(settings.cloudflare?.apiToken),
+      maskedToken: maskSecret(settings.cloudflare?.apiToken),
+    },
+    groq: {
+      hasApiKey: Boolean(settings.groq?.apiKey),
+      maskedKey: maskSecret(settings.groq?.apiKey),
+    },
+    openai: {
+      hasApiKey: Boolean(settings.openai?.apiKey),
+      maskedKey: maskSecret(settings.openai?.apiKey),
+    },
+    custom: {
+      endpoint: settings.custom?.endpoint ?? "",
+      hasApiKey: Boolean(settings.custom?.apiKey),
+      maskedKey: maskSecret(settings.custom?.apiKey),
+      model: settings.custom?.model ?? "whisper-large-v3-turbo",
+    },
+    sessionPromptTtlMinutes: settings.sessionPromptTtlMinutes ?? 43200,
+  };
 }
 
 function isMaskedOrEmpty(val?: string | null): boolean {
@@ -779,7 +806,10 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                   );
                 }
 
-                return Response.json({ success: true, settings: persistedSettings });
+                return Response.json({
+                  success: true,
+                  settings: maskDashboardSettings(persistedSettings),
+                });
               } catch (err) {
                 return Response.json(
                   { success: false, reason: (err as Error).message },

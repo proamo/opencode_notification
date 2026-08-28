@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { hostname, platform } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
 import type { SupportedLocale } from "./i18n";
 import {
@@ -11,6 +12,32 @@ import {
 } from "./opencode";
 import { defaultStateDirectory } from "./state";
 import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "./telegram/api";
+
+export function resolveDockerComposeContext(cwd: string):
+  | {
+      composeFile: string;
+      projectDir: string;
+    }
+  | undefined {
+  const candidateFiles = [
+    join(cwd, "docker-compose.yml"),
+    join(resolve(import.meta.dir, ".."), "docker-compose.yml"),
+    join(resolve(import.meta.dir, "../.."), "docker-compose.yml"),
+    join(import.meta.dir, "docker-compose.yml"),
+  ];
+
+  for (const file of candidateFiles) {
+    try {
+      if (existsSync(file)) {
+        return {
+          composeFile: file,
+          projectDir: dirname(file),
+        };
+      }
+    } catch {}
+  }
+  return undefined;
+}
 
 export type PairingCandidate = {
   userId: string;
@@ -521,13 +548,31 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       );
       try {
         const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-        const result = Bun.spawnSync([dockerCmd, "compose", "up", "-d", "--build"], {
-          cwd,
-          env: {
-            ...process.env,
-            HOME: process.env.HOME || process.env.USERPROFILE || "",
+        const composeCtx = resolveDockerComposeContext(cwd);
+        if (!composeCtx) {
+          throw new Error("Could not find docker-compose.yml in project or package directory");
+        }
+
+        const result = Bun.spawnSync(
+          [
+            dockerCmd,
+            "compose",
+            "-f",
+            composeCtx.composeFile,
+            "--project-directory",
+            composeCtx.projectDir,
+            "up",
+            "-d",
+            "--build",
+          ],
+          {
+            cwd: composeCtx.projectDir,
+            env: {
+              ...process.env,
+              HOME: process.env.HOME || process.env.USERPROFILE || "",
+            },
           },
-        });
+        );
         if (result.exitCode === 0) {
           stdout.write(
             isZh
@@ -535,22 +580,24 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
               : "│  ✔ Docker Broker container started in background!\n",
           );
         } else {
+          const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
           stdout.write(
             isZh
-              ? "│  ✖ Docker 自動啟動未成功（請確認 Docker Desktop 是否運行中）。\n"
-              : "│  ✖ Docker start was not successful (please check if Docker is running).\n",
+              ? `│  ✖ Docker 自動啟動未成功${stderr ? ` (${stderr})` : ""}（請確認 Docker Desktop 是否運行中）。\n`
+              : `│  ✖ Docker start failed${stderr ? ` (${stderr})` : ""} (please check if Docker is running).\n`,
           );
           stdout.write(
             isZh
-              ? "│  您可於稍後手動執行: docker compose up -d\n"
-              : "│  You can manually run later: docker compose up -d\n",
+              ? `│  您可於稍後手動執行: docker compose -f "${composeCtx.composeFile}" up -d\n`
+              : `│  You can manually run later: docker compose -f "${composeCtx.composeFile}" up -d\n`,
           );
         }
-      } catch {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         stdout.write(
           isZh
-            ? "│  ✖ 未偵測到 Docker 指令，您可於安裝 Docker 後執行: docker compose up -d\n"
-            : "│  ✖ Docker command not found. You can run 'docker compose up -d' after installing Docker.\n",
+            ? `│  ✖ Docker 啟動失敗: ${msg}，您可於安裝/啟動 Docker 後手動執行 docker compose up -d\n`
+            : `│  ✖ Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.\n`,
         );
       }
     } else {

@@ -136,10 +136,11 @@ export class RouteRegistry {
     const exact = this.#routes.get(serializeRouteKey(parsed));
     if (exact) return exact;
 
-    // Hot fallback: match strictly by (machineId, projectId, sessionId) across active registered routes in the same project
+    // Hot fallback: match strictly by (machineId, instanceId, projectId, sessionId) across active registered routes (e.g. newer routeGeneration on same instance)
     for (const registered of this.#routes.values()) {
       if (
         registered.route.machineId === parsed.machineId &&
+        registered.route.instanceId === parsed.instanceId &&
         registered.route.projectId === parsed.projectId &&
         registered.route.sessionId === parsed.sessionId
       ) {

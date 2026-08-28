@@ -47,7 +47,7 @@ export const NotifierConfigSchema = z
       .prefault({}),
     broker: z
       .object({
-        host: z.string().min(1).default("0.0.0.0"),
+        host: z.string().min(1).default("127.0.0.1"),
         port: z.number().int().min(1024).max(65535).default(42617),
       })
       .strict()
@@ -173,7 +173,7 @@ export async function assertSecureTokenFile(path: string): Promise<void> {
       "Telegram bot token file must be a regular file",
     );
   }
-  if (platform() !== "win32") {
+  if (platform() !== "win32" && process.env.OPENCODE_TELEGRAM_CONTAINER !== "1") {
     if ((stats.mode & 0o077) !== 0) {
       throw new ConfigValidationError(
         "TOKEN_FILE_PERMISSIONS_UNSAFE",
