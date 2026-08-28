@@ -55,21 +55,29 @@ const NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60_000;
 
 export type DashboardSettings = {
   activeProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
-  cloudflare?: {
-    accountId?: string | undefined;
-    apiToken?: string | undefined;
-  } | undefined;
-  groq?: {
-    apiKey?: string | undefined;
-  } | undefined;
-  openai?: {
-    apiKey?: string | undefined;
-  } | undefined;
-  custom?: {
-    endpoint?: string | undefined;
-    apiKey?: string | undefined;
-    model?: string | undefined;
-  } | undefined;
+  cloudflare?:
+    | {
+        accountId?: string | undefined;
+        apiToken?: string | undefined;
+      }
+    | undefined;
+  groq?:
+    | {
+        apiKey?: string | undefined;
+      }
+    | undefined;
+  openai?:
+    | {
+        apiKey?: string | undefined;
+      }
+    | undefined;
+  custom?:
+    | {
+        endpoint?: string | undefined;
+        apiKey?: string | undefined;
+        model?: string | undefined;
+      }
+    | undefined;
   sessionPromptTtlMinutes?: number | undefined;
 
   // Backward compatibility

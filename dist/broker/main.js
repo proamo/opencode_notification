@@ -19605,7 +19605,7 @@ async function saveDashboardSettings(stateDirectory, settings) {
 }
 async function readJsonBody(request) {
   const text = await request.text();
-  if (!text || !text.trim()) {
+  if (!text?.trim()) {
     return {};
   }
   return JSON.parse(text);
@@ -21342,4 +21342,4 @@ export {
   runBroker
 };
 
-//# debugId=F66FF08595AEA54064756E2164756E21
+//# debugId=4F59F801CA119F3364756E2164756E21
