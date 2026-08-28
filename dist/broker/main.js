@@ -19579,6 +19579,13 @@ async function saveDashboardSettings(stateDirectory, settings) {
   const filePath = join6(stateDirectory, "dashboard-settings.json");
   await writeFile4(filePath, JSON.stringify(settings, null, 2), "utf-8");
 }
+async function readJsonBody(request) {
+  const text = await request.text();
+  if (!text || !text.trim()) {
+    return {};
+  }
+  return JSON.parse(text);
+}
 var HealthResponseSchema = exports_external.object({
   service: exports_external.literal("opencode-telegram-link"),
   machineId: exports_external.uuid(),
@@ -19781,7 +19788,7 @@ async function startBroker(options = {}) {
             }
             return (async () => {
               try {
-                const body = await request.json();
+                const body = await readJsonBody(request);
                 const apiKey = body.apiKey?.trim() || (body.provider === "groq" ? process.env.GROQ_API_KEY : body.provider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : body.provider === "openai" ? process.env.OPENAI_API_KEY : undefined);
                 if (!apiKey) {
                   return Response.json({ success: false, error: "\u8ACB\u586B\u5BEB API \u91D1\u9470 / Token" }, { status: 400 });
@@ -19846,7 +19853,7 @@ async function startBroker(options = {}) {
             }
             return (async () => {
               try {
-                const body = await request.json();
+                const body = await readJsonBody(request);
                 if (!body.prompt?.trim()) {
                   return Response.json({ success: false, reason: "Prompt is required" }, { status: 400 });
                 }
@@ -19903,7 +19910,7 @@ async function startBroker(options = {}) {
             }
             return (async () => {
               try {
-                const body = await request.json();
+                const body = await readJsonBody(request);
                 if (!body.sessionId?.trim()) {
                   return Response.json({ success: false, reason: "Session ID is required" }, { status: 400 });
                 }
@@ -19928,7 +19935,7 @@ async function startBroker(options = {}) {
             }
             return (async () => {
               try {
-                const body = await request.json();
+                const body = await readJsonBody(request);
                 persistedSettings = {
                   ...persistedSettings,
                   ...body
@@ -21264,4 +21271,4 @@ export {
   runBroker
 };
 
-//# debugId=A6C414A4CDA1372464756E2164756E21
+//# debugId=4611D1880D5E584D64756E2164756E21
