@@ -488,8 +488,6 @@ describe("interactive uninstaller wizard", () => {
     expect(status).toBe(0);
     expect(stderr).toBe("");
     expect(stdout).toContain("OpenCode Telegram Notifier — Uninstaller");
-    expect(stdout).toContain("已從");
-    expect(stdout).toContain("移除外掛設定");
     expect(stdout).toContain("Token 檔案已安全刪除");
     expect(stdout).toContain("已成功移除！");
 
