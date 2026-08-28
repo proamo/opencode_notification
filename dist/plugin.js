@@ -14313,7 +14313,8 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   voiceApiKey: exports_external.string().min(1).optional(),
-  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceAccountId: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "cloudflare", "custom"]).optional(),
   voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
@@ -14561,9 +14562,10 @@ var NotifierConfigSchema = exports_external.object({
   }).strict().prefault({}),
   voice: exports_external.object({
     enabled: exports_external.boolean().default(true),
-    provider: exports_external.enum(["groq", "openai", "custom"]).default("groq"),
+    provider: exports_external.enum(["groq", "openai", "cloudflare", "custom"]).default("groq"),
     apiKey: exports_external.string().min(1).optional(),
     apiKeyFile: exports_external.string().min(1).optional(),
+    accountId: exports_external.string().min(1).optional(),
     model: exports_external.string().default("whisper-large-v3-turbo"),
     endpoint: exports_external.string().url().optional(),
     language: exports_external.string().default("zh")
@@ -16645,6 +16647,7 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
         sessionPromptTtlMinutes: configData.interaction.sessionPromptTtlMinutes,
         questionTtlMinutes: configData.interaction.questionTtlMinutes,
         ...voiceApiKey ? { voiceApiKey } : {},
+        ...configData.voice?.accountId ? { voiceAccountId: configData.voice.accountId } : {},
         ...configData.voice?.provider ? { voiceProvider: configData.voice.provider } : {},
         ...configData.voice?.model ? { voiceModel: configData.voice.model } : {}
       }
@@ -16769,4 +16772,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=A67E26A508D558E764756E2164756E21
+//# debugId=2D8099862A913BDD64756E2164756E21

@@ -50,10 +50,12 @@ export declare const NotifierConfigSchema: z.ZodObject<{
         provider: z.ZodDefault<z.ZodEnum<{
             groq: "groq";
             openai: "openai";
+            cloudflare: "cloudflare";
             custom: "custom";
         }>>;
         apiKey: z.ZodOptional<z.ZodString>;
         apiKeyFile: z.ZodOptional<z.ZodString>;
+        accountId: z.ZodOptional<z.ZodString>;
         model: z.ZodDefault<z.ZodString>;
         endpoint: z.ZodOptional<z.ZodString>;
         language: z.ZodDefault<z.ZodString>;

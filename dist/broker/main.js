@@ -14314,7 +14314,8 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   voiceApiKey: exports_external.string().min(1).optional(),
-  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceAccountId: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "cloudflare", "custom"]).optional(),
   voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
@@ -14563,9 +14564,10 @@ var NotifierConfigSchema = exports_external.object({
   }).strict().prefault({}),
   voice: exports_external.object({
     enabled: exports_external.boolean().default(true),
-    provider: exports_external.enum(["groq", "openai", "custom"]).default("groq"),
+    provider: exports_external.enum(["groq", "openai", "cloudflare", "custom"]).default("groq"),
     apiKey: exports_external.string().min(1).optional(),
     apiKeyFile: exports_external.string().min(1).optional(),
+    accountId: exports_external.string().min(1).optional(),
     model: exports_external.string().default("whisper-large-v3-turbo"),
     endpoint: exports_external.string().url().optional(),
     language: exports_external.string().default("zh")
@@ -18674,12 +18676,21 @@ async function abortableDelay(milliseconds, signal) {
   });
 }
 // src/telegram/transcriber.ts
-var TranscriptionResponseSchema = exports_external.object({
-  text: exports_external.string()
-});
+var TranscriptionResponseSchema = exports_external.union([
+  exports_external.object({
+    text: exports_external.string()
+  }),
+  exports_external.object({
+    result: exports_external.object({
+      text: exports_external.string()
+    }),
+    success: exports_external.boolean().optional()
+  })
+]);
 
 class VoiceTranscriber {
   #apiKey;
+  #accountId;
   #provider;
   #model;
   #endpoint;
@@ -18687,6 +18698,7 @@ class VoiceTranscriber {
   #fetch;
   constructor(options) {
     this.#apiKey = options.apiKey.trim();
+    this.#accountId = options.accountId?.trim();
     this.#provider = options.provider ?? "groq";
     this.#language = options.language ?? "zh";
     this.#fetch = options.fetchFn ?? fetch;
@@ -18696,31 +18708,43 @@ class VoiceTranscriber {
     } else if (this.#provider === "openai") {
       this.#endpoint = options.endpoint ?? "https://api.openai.com/v1/audio/transcriptions";
       this.#model = options.model ?? "whisper-1";
+    } else if (this.#provider === "cloudflare") {
+      const accountId = this.#accountId ?? "2fa0dd0cbd72565d704fb330d85ad604";
+      this.#endpoint = options.endpoint ?? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/openai/whisper`;
+      this.#model = options.model ?? "@cf/openai/whisper";
     } else {
       this.#endpoint = options.endpoint ?? "https://api.groq.com/openai/v1/audio/transcriptions";
       this.#model = options.model ?? "whisper-large-v3-turbo";
     }
   }
   async transcribe(audioBuffer, options) {
-    const fileName = options?.fileName ?? "voice.ogg";
-    const mimeType = options?.mimeType ?? "audio/ogg";
-    const promptHint = options?.promptHint ?? "OpenCode, /run, /status, /nodes, /sessions, /cancel, adspower-farm, FispERP, codeCenter, \u722C\u87F2, \u4FEE\u5FA9, \u90E8\u7F72";
-    const formData = new FormData;
-    const blob = new Blob([audioBuffer], { type: mimeType });
-    formData.append("file", blob, fileName);
-    formData.append("model", this.#model);
-    formData.append("language", this.#language);
-    formData.append("response_format", "json");
-    if (promptHint) {
-      formData.append("prompt", promptHint);
-    }
     const fetchOptions = {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.#apiKey}`
-      },
-      body: formData
+      }
     };
+    if (this.#provider === "cloudflare") {
+      fetchOptions.headers = {
+        ...fetchOptions.headers,
+        "Content-Type": "application/octet-stream"
+      };
+      fetchOptions.body = audioBuffer;
+    } else {
+      const fileName = options?.fileName ?? "voice.ogg";
+      const mimeType = options?.mimeType ?? "audio/ogg";
+      const promptHint = options?.promptHint ?? "OpenCode, /run, /status, /nodes, /sessions, /cancel, adspower-farm, FispERP, codeCenter, \u722C\u87F2, \u4FEE\u5FA9, \u90E8\u7F72";
+      const formData = new FormData;
+      const blob = new Blob([audioBuffer], { type: mimeType });
+      formData.append("file", blob, fileName);
+      formData.append("model", this.#model);
+      formData.append("language", this.#language);
+      formData.append("response_format", "json");
+      if (promptHint) {
+        formData.append("prompt", promptHint);
+      }
+      fetchOptions.body = formData;
+    }
     if (options?.signal) {
       fetchOptions.signal = options.signal;
     }
@@ -18738,6 +18762,9 @@ class VoiceTranscriber {
     const parsed = TranscriptionResponseSchema.safeParse(json2);
     if (!parsed.success) {
       throw new Error("Invalid transcription response from speech provider");
+    }
+    if ("result" in parsed.data) {
+      return parsed.data.result.text.trim();
     }
     return parsed.data.text.trim();
   }
@@ -19036,13 +19063,18 @@ function renderDashboardHtml() {
           <label class="form-label">\uD83C\uDF99\uFE0F \u8A9E\u97F3\u8FA8\u8B58\u5F15\u64CE (STT Provider)</label>
           <select id="setting-provider" class="form-control">
             <option value="groq">Groq Whisper (\u514D\u8CBB\u3001\u6975\u901F\u63A8\u85A6)</option>
+            <option value="cloudflare">Cloudflare Workers AI (\u6BCF\u65E5 10,000 \u6B21\u514D\u8CBB)</option>
             <option value="openai">OpenAI Whisper (\u5B98\u65B9 API)</option>
             <option value="custom">\u81EA\u8A02 / \u672C\u5730\u76F8\u5BB9\u7AEF\u9EDE (Custom / Local)</option>
           </select>
         </div>
+        <div class="form-group" id="group-accountid">
+          <label class="form-label">\uD83C\uDFE2 Cloudflare Account ID (\u4F7F\u7528 Cloudflare \u6642\u9700\u586B\u5BEB)</label>
+          <input type="text" id="setting-accountid" class="form-control" placeholder="2fa0dd0cbd72565d704fb330d85ad604">
+        </div>
         <div class="form-group">
-          <label class="form-label">\uD83D\uDD11 \u8A9E\u97F3 API \u91D1\u9470 (Voice API Key)</label>
-          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... \u6216 sk-...">
+          <label class="form-label">\uD83D\uDD11 \u8A9E\u97F3 API \u91D1\u9470 / Token (API Key / Token)</label>
+          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... \u6216 cfut_... \u6216 sk-...">
           <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
             \u91D1\u9470\u4FDD\u5B58\u5728 Gateway \u672C\u5730\u74B0\u5883\uFF0C\u96A8\u6642\u53EF\u81EA\u7531\u5207\u63DB\u3002
           </div>
@@ -19240,6 +19272,7 @@ function renderDashboardHtml() {
     async function saveSettings() {
       const provider = document.getElementById('setting-provider').value;
       const apiKey = document.getElementById('setting-apikey').value.trim();
+      const accountId = document.getElementById('setting-accountid').value.trim();
       const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
 
       try {
@@ -19249,6 +19282,7 @@ function renderDashboardHtml() {
           body: JSON.stringify({
             voiceProvider: provider,
             voiceApiKey: apiKey || undefined,
+            voiceAccountId: accountId || undefined,
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });
@@ -19750,10 +19784,12 @@ class BrokerTelegramRuntime {
       userId: input.config.userId,
       chatId: input.config.chatId
     });
-    const voiceApiKey = input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY;
+    const voiceApiKey = input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN;
+    const voiceAccountId = input.config.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
     const transcriber = voiceApiKey ? new VoiceTranscriber({
       apiKey: voiceApiKey,
-      provider: input.config.voiceProvider ?? "groq",
+      accountId: voiceAccountId,
+      provider: input.config.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : "groq"),
       model: input.config.voiceModel
     }) : undefined;
     const validatedHandler = createValidatedInteractionHandler(authorizer, {
@@ -20860,4 +20896,4 @@ export {
   runBroker
 };
 
-//# debugId=EBD32A398923510B64756E2164756E21
+//# debugId=8371AEE9112C2EA064756E2164756E21

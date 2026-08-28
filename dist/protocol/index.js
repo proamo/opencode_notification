@@ -14313,7 +14313,8 @@ var TelegramRuntimeConfigSchema = exports_external.object({
   sessionPromptTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   questionTtlMinutes: exports_external.number().int().min(1).max(365 * 24 * 60),
   voiceApiKey: exports_external.string().min(1).optional(),
-  voiceProvider: exports_external.enum(["groq", "openai", "custom"]).optional(),
+  voiceAccountId: exports_external.string().min(1).optional(),
+  voiceProvider: exports_external.enum(["groq", "openai", "cloudflare", "custom"]).optional(),
   voiceModel: exports_external.string().min(1).optional()
 });
 var RouteKeySchema = exports_external.object({
@@ -14536,4 +14537,4 @@ export {
   BROKER_CAPABILITIES
 };
 
-//# debugId=DA2E56797C71FB6764756E2164756E21
+//# debugId=587F33196EA7F75464756E2164756E21

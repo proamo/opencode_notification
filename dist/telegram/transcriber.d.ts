@@ -1,6 +1,7 @@
 export type VoiceTranscriberOptions = {
     apiKey: string;
-    provider?: "groq" | "openai" | "custom" | undefined;
+    accountId?: string | undefined;
+    provider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
     model?: string | undefined;
     endpoint?: string | undefined;
     language?: string | undefined;

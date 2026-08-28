@@ -21,9 +21,11 @@ export declare const TelegramRuntimeConfigSchema: z.ZodObject<{
     sessionPromptTtlMinutes: z.ZodNumber;
     questionTtlMinutes: z.ZodNumber;
     voiceApiKey: z.ZodOptional<z.ZodString>;
+    voiceAccountId: z.ZodOptional<z.ZodString>;
     voiceProvider: z.ZodOptional<z.ZodEnum<{
         groq: "groq";
         openai: "openai";
+        cloudflare: "cloudflare";
         custom: "custom";
     }>>;
     voiceModel: z.ZodOptional<z.ZodString>;
@@ -59,9 +61,11 @@ export declare const RegisterEnvelopeSchema: z.ZodObject<{
             sessionPromptTtlMinutes: z.ZodNumber;
             questionTtlMinutes: z.ZodNumber;
             voiceApiKey: z.ZodOptional<z.ZodString>;
+            voiceAccountId: z.ZodOptional<z.ZodString>;
             voiceProvider: z.ZodOptional<z.ZodEnum<{
                 groq: "groq";
                 openai: "openai";
+                cloudflare: "cloudflare";
                 custom: "custom";
             }>>;
             voiceModel: z.ZodOptional<z.ZodString>;
@@ -589,9 +593,11 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
             sessionPromptTtlMinutes: z.ZodNumber;
             questionTtlMinutes: z.ZodNumber;
             voiceApiKey: z.ZodOptional<z.ZodString>;
+            voiceAccountId: z.ZodOptional<z.ZodString>;
             voiceProvider: z.ZodOptional<z.ZodEnum<{
                 groq: "groq";
                 openai: "openai";
+                cloudflare: "cloudflare";
                 custom: "custom";
             }>>;
             voiceModel: z.ZodOptional<z.ZodString>;
