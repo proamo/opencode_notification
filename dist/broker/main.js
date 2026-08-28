@@ -17235,7 +17235,7 @@ function publicBot(bot) {
 // src/uninstall.ts
 import { rm as rm4 } from "fs/promises";
 import { homedir as homedir3 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/broker/registry.ts
 class RouteRegistry {
@@ -17483,6 +17483,8 @@ function sameSessionRoute(left, right) {
 }
 // src/broker/server.ts
 import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
+import { readFile as readFile6, writeFile as writeFile4 } from "fs/promises";
+import { join as join6 } from "path";
 
 // src/i18n/catalogs.ts
 var en = {
@@ -19235,7 +19237,7 @@ function renderDashboardHtml() {
       document.getElementById('stat-sessions').textContent = data.activeSessions ? data.activeSessions.length : 0;
       document.getElementById('uptime-text').textContent = 'Uptime: ' + (data.uptimeFormatted || '0m');
 
-      // Render Active Voice Provider Badge
+      // Render Active Voice Provider Badge & auto-populate settings
       if (data.voice) {
         const p = data.voice.provider;
         const statVoice = document.getElementById('stat-voice');
@@ -19252,15 +19254,38 @@ function renderDashboardHtml() {
           statVoice.textContent = 'OpenAI Whisper';
           statVoice.style.color = '#34d399';
           statVoiceSub.textContent = '\uD83D\uDFE2 \u5B98\u65B9 API \u5C31\u7DD2';
+        } else if (p === 'custom') {
+          statVoice.textContent = '\u81EA\u8A02\u8A9E\u97F3\u7AEF\u9EDE';
+          statVoice.style.color = '#34d399';
+          statVoiceSub.textContent = '\uD83D\uDFE2 \u81EA\u8A02\u7AEF\u9EDE\u5C31\u7DD2';
         } else {
           statVoice.textContent = '\u672A\u555F\u7528\u8A9E\u97F3';
           statVoice.style.color = '#f87171';
           statVoiceSub.textContent = '\uD83D\uDFE1 \u8ACB\u5728\u8A2D\u5B9A\u9801\u586B\u5BEB\u91D1\u9470';
         }
 
-        // Set accountId if present
-        if (data.voice.accountId && !document.getElementById('cf-account-id').value) {
-          document.getElementById('cf-account-id').value = data.voice.accountId;
+        // On first summary load, populate form fields if user hasn't edited them
+        if (!window._settingsPopulated) {
+          window._settingsPopulated = true;
+          if (p && p !== 'none') {
+            document.getElementById('setting-provider').value = p;
+            onProviderChange();
+          }
+          if (data.voice.accountId) {
+            document.getElementById('cf-account-id').value = data.voice.accountId;
+          }
+          if (data.voice.apiKey) {
+            if (p === 'cloudflare') document.getElementById('cf-api-token').value = data.voice.apiKey;
+            else if (p === 'groq') document.getElementById('groq-api-key').value = data.voice.apiKey;
+            else if (p === 'openai') document.getElementById('openai-api-key').value = data.voice.apiKey;
+            else if (p === 'custom') document.getElementById('custom-api-key').value = data.voice.apiKey;
+          }
+          if (data.voice.endpoint) {
+            document.getElementById('custom-endpoint').value = data.voice.endpoint;
+          }
+          if (data.voice.model) {
+            document.getElementById('custom-model').value = data.voice.model;
+          }
         }
       }
 
@@ -19448,8 +19473,8 @@ function renderDashboardHtml() {
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
-          resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + data.message + ')<br>\u5DF2\u78BA\u8A8D\u6B64\u91D1\u9470\u53EF\u6B63\u5E38\u8F49\u8B6F\u8A9E\u97F3\uFF0C\u60A8\u53EF\u4EE5\u9EDE\u64CA\u4E0B\u65B9\u5132\u5B58\u4E26\u555F\u7528\u3002';
-          showToast('\u2714 \u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01', 'success');
+          resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + data.message + ')<br><span style="color: #fff; font-weight: bold;">\uD83D\uDC49 \u8ACB\u52D9\u5FC5\u9EDE\u64CA\u4E0B\u65B9\u300C\uD83D\uDCBE \u5132\u5B58\u4E26\u5957\u7528\u8A2D\u5B9A\u300D\u6309\u9215\u4EE5\u6C38\u4E45\u555F\u7528\u6B64\u5F15\u64CE\uFF01</span>';
+          showToast('\u2714 \u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01\u8ACB\u9EDE\u64CA\u5132\u5B58', 'success');
         } else {
           testedVerifiedProvider = null;
           resBox.className = 'test-result-box error';
@@ -19541,6 +19566,19 @@ var DEFAULT_MAINTENANCE_INTERVAL_MS = 60000;
 var DEFAULT_COMMAND_TIMEOUT_MS = 1e4;
 var DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2000;
 var NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60000;
+async function loadDashboardSettings(stateDirectory) {
+  const filePath = join6(stateDirectory, "dashboard-settings.json");
+  try {
+    const raw = await readFile6(filePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+async function saveDashboardSettings(stateDirectory, settings) {
+  const filePath = join6(stateDirectory, "dashboard-settings.json");
+  await writeFile4(filePath, JSON.stringify(settings, null, 2), "utf-8");
+}
 var HealthResponseSchema = exports_external.object({
   service: exports_external.literal("opencode-telegram-link"),
   machineId: exports_external.uuid(),
@@ -19671,6 +19709,7 @@ async function startBroker(options = {}) {
   let broker;
   const telegramRuntimeRef = { value: undefined };
   const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
+  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const dispatcher = {
     sendCommand: async (command) => {
       if (!broker) {
@@ -19712,7 +19751,9 @@ async function startBroker(options = {}) {
             const uptimeMinutes = Math.floor(uptimeMs / 60000);
             const uptimeHours = Math.floor(uptimeMinutes / 60);
             const uptimeFormatted = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
-            const currentVoiceProvider = process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : "none";
+            const effectiveProvider = persistedSettings.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : "none");
+            const effectiveApiKey = persistedSettings.voiceApiKey ?? (effectiveProvider === "groq" ? process.env.GROQ_API_KEY : effectiveProvider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : effectiveProvider === "openai" ? process.env.OPENAI_API_KEY : undefined);
+            const effectiveAccountId = persistedSettings.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
             return Response.json({
               service: "opencode-telegram-link",
               version: "3.0.0",
@@ -19725,11 +19766,12 @@ async function startBroker(options = {}) {
               machines,
               activeSessions,
               voice: {
-                provider: currentVoiceProvider,
-                hasGroqKey: Boolean(process.env.GROQ_API_KEY),
-                hasCloudflareToken: Boolean(process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN),
-                hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
-                accountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID
+                provider: effectiveApiKey ? effectiveProvider : "none",
+                hasApiKey: Boolean(effectiveApiKey),
+                apiKey: effectiveApiKey,
+                accountId: effectiveAccountId,
+                endpoint: persistedSettings.voiceEndpoint,
+                model: persistedSettings.voiceModel
               }
             });
           }
@@ -19884,7 +19926,32 @@ async function startBroker(options = {}) {
             if (request.method !== "POST") {
               return new Response("Method not allowed", { status: 405 });
             }
-            return Response.json({ success: true, message: "Settings saved" });
+            return (async () => {
+              try {
+                const body = await request.json();
+                persistedSettings = {
+                  ...persistedSettings,
+                  ...body
+                };
+                await saveDashboardSettings(state.stateDirectory, persistedSettings);
+                const effectiveProvider = persistedSettings.voiceProvider ?? "groq";
+                const effectiveKey = persistedSettings.voiceApiKey ?? (effectiveProvider === "groq" ? process.env.GROQ_API_KEY : effectiveProvider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : effectiveProvider === "openai" ? process.env.OPENAI_API_KEY : undefined);
+                const effectiveAccountId = persistedSettings.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
+                if (effectiveKey) {
+                  const newTranscriber = new VoiceTranscriber({
+                    apiKey: effectiveKey,
+                    accountId: effectiveAccountId,
+                    provider: effectiveProvider,
+                    endpoint: persistedSettings.voiceEndpoint,
+                    model: persistedSettings.voiceModel
+                  });
+                  telegramRuntimeRef.value?.setTranscriber(newTranscriber);
+                }
+                return Response.json({ success: true, message: "\u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\u4E26\u5373\u6642\u751F\u6548" });
+              } catch (err) {
+                return Response.json({ success: false, message: err.message }, { status: 500 });
+              }
+            })();
           }
           if (url2.pathname !== "/v1/health" && url2.pathname !== "/v1/status" && url2.pathname !== "/v1/connect" && url2.pathname !== "/v1/control/stop") {
             return new Response("Not found", { status: 404 });
@@ -20069,6 +20136,10 @@ class BrokerTelegramRuntime {
   #started = false;
   #deliveryTimer;
   #delivering = false;
+  #transcriber;
+  setTranscriber(transcriber) {
+    this.#transcriber = transcriber;
+  }
   constructor(input) {
     this.#config = input.config;
     this.#database = input.database;
@@ -20083,7 +20154,7 @@ class BrokerTelegramRuntime {
     });
     const voiceApiKey = input.config.voiceApiKey ?? process.env.GROQ_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN;
     const voiceAccountId = input.config.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
-    const transcriber = voiceApiKey ? new VoiceTranscriber({
+    this.#transcriber = voiceApiKey ? new VoiceTranscriber({
       apiKey: voiceApiKey,
       accountId: voiceAccountId,
       provider: input.config.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : "groq"),
@@ -20120,10 +20191,10 @@ class BrokerTelegramRuntime {
         }
         const voiceOrAudio = update.message?.voice ?? update.message?.audio;
         if (voiceOrAudio) {
-          if (!transcriber) {
+          if (!this.#transcriber) {
             await input.api.sendMessage({
               chatId: input.config.chatId,
-              text: "\u26A0\uFE0F \u5C1A\u672A\u8A2D\u5B9A Groq / OpenAI \u8A9E\u97F3\u8FA8\u8B58 API Key\uFF0C\u7121\u6CD5\u8655\u7406\u8A9E\u97F3\u8A0A\u606F\u3002\u8ACB\u5728 opencode.json \u4E2D\u52A0\u5165 voice.apiKey\u3002",
+              text: "\u26A0\uFE0F \u5C1A\u672A\u8A2D\u5B9A\u8A9E\u97F3\u8FA8\u8B58 API Key\uFF0C\u7121\u6CD5\u8655\u7406\u8A9E\u97F3\u8A0A\u606F\u3002\u8ACB\u5728 Web \u8A2D\u5B9A\u9801\u6216 opencode.json \u4E2D\u52A0\u5165\u91D1\u9470\u3002",
               parseMode: "HTML"
             });
             return {
@@ -20138,7 +20209,7 @@ class BrokerTelegramRuntime {
               throw new Error("Telegram did not return file path");
             }
             const audioBytes = await input.api.downloadFile(fileInfo.file_path);
-            const transcribedText = await transcriber.transcribe(audioBytes, {
+            const transcribedText = await this.#transcriber.transcribe(audioBytes, {
               mimeType: voiceOrAudio.mime_type ?? "audio/ogg",
               fileName: "voice.ogg"
             });
@@ -20562,8 +20633,8 @@ function isAddressInUseError(error51) {
   return error51 instanceof Error && "code" in error51 && error51.code === "EADDRINUSE";
 }
 // src/broker/commands.ts
-import { chmod as chmod4, mkdir as mkdir4, open as open3, readFile as readFile6, rename as rename5, rm as rm3 } from "fs/promises";
-import { join as join6 } from "path";
+import { chmod as chmod4, mkdir as mkdir4, open as open3, readFile as readFile7, rename as rename5, rm as rm3 } from "fs/promises";
+import { join as join7 } from "path";
 
 // src/doctor.ts
 async function runDoctor(options = {}) {
@@ -20872,7 +20943,7 @@ async function runPurgeStateCommand(options, streams) {
 async function runRotateCredentialCommand(flags, env, streams) {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const state = await loadOrCreateStateIdentity(stateDirectory);
-  const tokenFile = stringFlag(flags, "token-file") ?? join6(state.stateDirectory, "telegram-bot-token");
+  const tokenFile = stringFlag(flags, "token-file") ?? join7(state.stateDirectory, "telegram-bot-token");
   const token = await readSecretToken(env);
   await writePrivateTokenFile2(tokenFile, token);
   streams.stdout.write(`Credential rotated at ${tokenFile}. Restart the broker to use it.
@@ -20916,7 +20987,7 @@ function parseBindHost(value) {
 async function readSecretToken(env) {
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE) {
     await assertSecureTokenFile(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE);
-    return (await readFile6(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
+    return (await readFile7(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
   }
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN)
     return env.OPENCODE_TELEGRAM_BOT_TOKEN.trim();
@@ -21079,9 +21150,9 @@ async function runInteractiveUninstall(options = {}) {
       }
     }
     const symlinkLocations = [
-      join7(cwd, "node_modules", "opencode-telegram-link"),
-      join7(homedir3(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
-      join7(homedir3(), ".opencode", "node_modules", "opencode-telegram-link")
+      join8(cwd, "node_modules", "opencode-telegram-link"),
+      join8(homedir3(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+      join8(homedir3(), ".opencode", "node_modules", "opencode-telegram-link")
     ];
     for (const symlink of symlinkLocations) {
       try {
@@ -21098,7 +21169,7 @@ async function runInteractiveUninstall(options = {}) {
   const cleanState = await reader.ask(isZh ? "\u25C7  [3/4] \u662F\u5426\u6E05\u9664\u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u8A0A\u606F\u8DEF\u7531\u72C0\u614B (SQLite)\uFF1F [Y/n]: " : "\u25C7  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ", stdout, "Y");
   if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
     try {
-      const dbPath = join7(stateDirectory, "state.sqlite");
+      const dbPath = join8(stateDirectory, "state.sqlite");
       await rm4(dbPath, { force: true });
       await rm4(`${dbPath}-wal`, { force: true });
       await rm4(`${dbPath}-shm`, { force: true });
@@ -21117,7 +21188,7 @@ async function runInteractiveUninstall(options = {}) {
   const cleanToken = await reader.ask(isZh ? "\u25C7  [4/4] \u662F\u5426\u522A\u9664\u5132\u5B58\u7684 Telegram Bot Token \u6A94\u6848\uFF1F [y/N]: " : "\u25C7  [4/4] Delete saved Telegram Bot Token file? [y/N]: ", stdout, "N");
   if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
     try {
-      const tokenPath = join7(stateDirectory, "telegram-bot-token");
+      const tokenPath = join8(stateDirectory, "telegram-bot-token");
       await rm4(tokenPath, { force: true });
       stdout.write(isZh ? `\u2502  \u2714 Token \u6A94\u6848\u5DF2\u5B89\u5168\u522A\u9664\u3002
 ` : `\u2502  \u2714 Token file securely removed.
@@ -21193,4 +21264,4 @@ export {
   runBroker
 };
 
-//# debugId=22830012C04D498964756E2164756E21
+//# debugId=A6C414A4CDA1372464756E2164756E21

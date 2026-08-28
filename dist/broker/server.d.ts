@@ -1,10 +1,18 @@
 import { z } from "zod";
 import { type BrokerCommand, type CommandResult, type NormalizedNotification, type TelegramRuntimeConfig } from "../protocol";
 import { StateDatabase } from "../state";
-import { TelegramBotApi } from "../telegram";
+import { TelegramBotApi, VoiceTranscriber } from "../telegram";
 import { type BrokerConnectionData, RouteRegistry } from "./registry";
 declare const LOOPBACK_HOST = "127.0.0.1";
 declare const CONTAINER_HOST = "0.0.0.0";
+export type DashboardSettings = {
+    voiceProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
+    voiceApiKey?: string | undefined;
+    voiceAccountId?: string | undefined;
+    voiceEndpoint?: string | undefined;
+    voiceModel?: string | undefined;
+    sessionPromptTtlMinutes?: number | undefined;
+};
 declare const HealthResponseSchema: z.ZodObject<{
     service: z.ZodLiteral<"opencode-telegram-link">;
     machineId: z.ZodUUID;
@@ -82,6 +90,7 @@ export declare class BrokerPortConflictError extends Error {
 }
 declare class BrokerTelegramRuntime {
     #private;
+    setTranscriber(transcriber: VoiceTranscriber | undefined): void;
     constructor(input: {
         config: TelegramRuntimeConfig;
         database: StateDatabase;
