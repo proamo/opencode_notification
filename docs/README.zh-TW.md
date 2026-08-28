@@ -365,6 +365,21 @@ Session: Fix flaky checkout test
 
 ---
 
+## 🤖 Telegram 指令選單 (行動指揮官)
+
+你可以直接在 Telegram 輸入以下指令管理跨主機叢集與任務：
+
+| 指令 | 說明 | 範例 |
+| :--- | :--- | :--- |
+| `/help` | 顯示行動指揮官說明選單 | `/help` |
+| `/status` | 查看 Gateway 系統健康度、運行時間、記憶體與版本 | `/status` |
+| `/nodes` | 列出目前所有連線中的電腦主機與專案狀態 | `/nodes` |
+| `/sessions` | 列出所有主機上進行中的工作階段與任務 | `/sessions` |
+| `/run <目標> <任務>` | 向指定主機、專案派發新任務，或接續歷史工作階段 | `/run openclaw 檢查測試日誌`<br>`/run ses_abc123 繼續除錯` |
+| `/cancel <session_id>` | 安全中止指定任務（具備重名與前綴碰撞保護） | `/cancel ses_abc123` |
+
+---
+
 ## Docker 容器模式（Docker Broker）
 
 推薦使用本機原生模式。若您偏好容器隔離，Broker 亦支援以單一 Docker 容器執行：

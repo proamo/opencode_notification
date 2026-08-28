@@ -351,6 +351,19 @@ Notification bodies are intentionally minimal. They omit raw transcripts, source
 
 Rejected replies receive localized feedback when the route is expired, offline, unauthorized, or rejected by OpenCode. Offline commands are not queued.
 
+## 🤖 Telegram Slash Commands (Mobile Commander)
+
+You can manage your multi-host cluster directly inside Telegram using slash commands:
+
+| Command | Description | Example |
+| :--- | :--- | :--- |
+| `/help` | Show command menu and interactive guide | `/help` |
+| `/status` | View Central Gateway health, uptime, memory, and version | `/status` |
+| `/nodes` | List all currently connected machines and active projects | `/nodes` |
+| `/sessions` | List active sessions across all connected nodes | `/sessions` |
+| `/run <target> <prompt>` | Dispatch new prompt to a machine, project, or resume session | `/run openclaw check test logs`<br>`/run ses_abc123 continue debugging` |
+| `/cancel <session_id>` | Abort a running session safely (fail-closed disambiguation) | `/cancel ses_abc123` |
+
 ## Docker Broker
 
 Native mode is recommended. Docker mode runs only the broker in a container; OpenCode and plugins continue to run on the host.

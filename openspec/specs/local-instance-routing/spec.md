@@ -55,6 +55,17 @@ Every routable registration and actionable notification SHALL be bound to the co
 - **WHEN** two registrations have identical project or session display labels but different composite identities
 - **THEN** the broker SHALL keep their routes distinct
 
+### Requirement: Fail-closed session resolution and disambiguation
+When resolving sessions by Session ID or prefix for slash commands (`/cancel`, `/run`), the resolver SHALL prioritize exact session matches and support prefix matches of at least 6 characters. If multiple matches exist across different instances, projects, or distinct sessions, the resolver MUST fail closed and return an ambiguous status. The system SHALL inform the user and MUST NOT dispatch commands to an arbitrary matching instance.
+
+#### Scenario: Unique session or prefix match
+- **WHEN** an authorized command specifies a session ID or prefix that uniquely matches one live session
+- **THEN** the resolver SHALL return the unique route for command dispatch
+
+#### Scenario: Duplicate or colliding session identifiers across instances
+- **WHEN** an authorized command specifies a session ID or prefix that matches sessions across multiple instances or projects
+- **THEN** the resolver MUST report the target as ambiguous, return localized corrective guidance, and MUST NOT dispatch the command
+
 ### Requirement: Instance and project identity lifecycle
 Each running OpenCode process SHALL use an instance identity that is unique among concurrent processes, and each project registration SHALL use a stable project identity independent of its display label. Restarting a process MUST create or restore identities according to documented persistence rules without silently reassigning an old live route to a different process or project.
 

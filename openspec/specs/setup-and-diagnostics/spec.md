@@ -156,19 +156,30 @@ The product SHALL provide a 1-command interactive uninstaller (`uninstall`) that
 - **THEN** any active native broker or Docker Broker container SHALL be terminated, `opencode-telegram-link` configuration SHALL be removed from `opencode.json`, operational SQLite databases SHALL be purged, and the private token file and state directory SHALL be removed
 
 ### Requirement: Multi-Engine Voice Configuration and Extended Retention
-Configuration validation SHALL support optional `voice` configuration properties (`enabled`, `provider`, `apiKey`, `apiKeyFile`, `model`, `endpoint`, `language`) supporting providers including Groq, OpenAI, and custom OpenAI-compatible endpoints. The system SHALL support session prompt replay TTL configurations up to 365 days with a 30-day default.
+Configuration validation SHALL support optional `voice` configuration properties (`enabled`, `provider`, `apiKey`, `apiKeyFile`, `accountId`, `model`, `endpoint`, `language`) supporting providers including Groq, OpenAI, Cloudflare Workers AI, and custom OpenAI-compatible endpoints. For Cloudflare Workers AI without a custom endpoint, `accountId` SHALL be strictly required. The system SHALL support session prompt replay TTL configurations up to 365 days with a 30-day default.
 
 #### Scenario: User configures Groq Whisper speech provider
 - **WHEN** the user specifies `voice: { provider: "groq", apiKey: "gsk_..." }`
 - **THEN** the configuration SHALL validate successfully and the broker SHALL initialize Groq Whisper STT processing
 
-#### Scenario: User configures Cloudflare Workers AI speech provider
-- **WHEN** the user specifies `voice: { provider: "cloudflare", apiKey: "cfut_...", accountId: "2fa0..." }`
-- **THEN** the configuration SHALL validate successfully and the broker SHALL route STT requests to Cloudflare Workers AI
+#### Scenario: User configures Cloudflare Workers AI speech provider with Account ID
+- **WHEN** the user specifies `voice: { provider: "cloudflare", apiKey: "cfut_...", accountId: "cf_account_123" }`
+- **THEN** the configuration SHALL validate successfully and the broker SHALL route STT requests to the user's Cloudflare Workers AI endpoint
 
-#### Scenario: User configures extended retention
-- **WHEN** the user configures `interaction: { sessionPromptTtlMinutes: 43200 }`
-- **THEN** validation SHALL accept the 30-day window without exceeding maximum bounds
+#### Scenario: User omits Account ID for Cloudflare provider without custom endpoint
+- **WHEN** the user specifies `voice: { provider: "cloudflare", apiKey: "cfut_..." }` without `accountId` or `endpoint`
+- **THEN** the VoiceTranscriber constructor MUST throw an error indicating that accountId is required
+
+### Requirement: Web Dashboard Authentication and Session Security
+The Central Gateway SHALL protect all Dashboard APIs (`/v1/api/dashboard/*`) with Broker Secret verification. The dashboard UI SHALL automatically sanitize sensitive tokens from the browser address bar and history via `history.replaceState`. The system SHALL provide `POST /v1/api/dashboard/login` (issuing a `SameSite=Strict; HttpOnly` session cookie) and `POST /v1/api/dashboard/logout` (clearing the session cookie with `Max-Age=0`).
+
+#### Scenario: User logs in to Web Dashboard
+- **WHEN** a user provides a valid Broker Secret via token URL parameter or login prompt
+- **THEN** the server SHALL issue an HttpOnly session cookie, the client SHALL strip query tokens from the URL bar, and subsequent dashboard API calls SHALL succeed
+
+#### Scenario: User logs out from Web Dashboard
+- **WHEN** the user clicks the Logout button in the dashboard
+- **THEN** the server SHALL clear the HttpOnly session cookie, the client SHALL purge sessionStorage, and subsequent dashboard API calls SHALL require re-authentication
 
 
 
