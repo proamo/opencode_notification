@@ -18908,8 +18908,11 @@ function renderDashboardHtml() {
     }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 12px var(--accent-glow); }
+    .btn-secondary { background: rgba(255, 255, 255, 0.1); color: #e0e7ff; border: 1px solid var(--card-border); }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.18); }
     .btn-danger { background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
     .btn-danger:hover { background: var(--red); color: #fff; box-shadow: 0 0 12px var(--red-glow); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .form-group { margin-bottom: 18px; }
     .form-label { display: block; font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
@@ -18926,6 +18929,25 @@ function renderDashboardHtml() {
     }
     .form-control:focus { border-color: var(--accent); }
     textarea.form-control { resize: vertical; min-height: 100px; }
+
+    .provider-box {
+      background: rgba(30, 41, 59, 0.4);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+
+    .test-result-box {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+    .test-result-box.success { display: block; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
+    .test-result-box.error { display: block; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
+    .test-result-box.testing { display: block; background: rgba(99, 102, 241, 0.15); border: 1px solid #6366f1; color: #a5b4fc; }
 
     /* Alert / Notification Toast */
     #toast {
@@ -18998,9 +19020,9 @@ function renderDashboardHtml() {
         <div class="stat-sub">\u5373\u6642\u96D9\u5411\u4E8B\u4EF6\u4E32\u6D41\u4E2D</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">\u8A9E\u97F3\u8FA8\u8B58 / Voice STT</div>
-        <div class="stat-value" id="stat-voice" style="font-size: 20px; color: #a5b4fc;">Groq Whisper</div>
-        <div class="stat-sub">\u7E41\u9AD4\u4E2D\u6587\u9AD8\u7CBE\u5EA6\u6975\u901F\u8F49\u8B6F</div>
+        <div class="stat-label">\u751F\u6548\u8A9E\u97F3\u5F15\u64CE / Voice STT</div>
+        <div class="stat-value" id="stat-voice" style="font-size: 18px; color: #a5b4fc;">\u6AA2\u6E2C\u4E2D...</div>
+        <div class="stat-sub" id="stat-voice-sub">\u7E41\u9AD4\u4E2D\u6587\u6975\u901F\u8F49\u8B6F\u5C31\u7DD2</div>
       </div>
     </div>
 
@@ -19059,26 +19081,85 @@ function renderDashboardHtml() {
     <div id="tab-settings" class="tab-content">
       <h2 style="font-size: 18px; margin-bottom: 16px; color: #fff;">\u2699\uFE0F \u7CFB\u7D71\u8207\u8A9E\u97F3\u8FA8\u8B58\u8A2D\u5B9A (Settings)</h2>
       <div class="stat-card" style="max-width: 800px;">
+        
         <div class="form-group">
-          <label class="form-label">\uD83C\uDF99\uFE0F \u8A9E\u97F3\u8FA8\u8B58\u5F15\u64CE (STT Provider)</label>
-          <select id="setting-provider" class="form-control">
-            <option value="groq">Groq Whisper (\u514D\u8CBB\u3001\u6975\u901F\u63A8\u85A6)</option>
+          <label class="form-label">\uD83C\uDF99\uFE0F \u9078\u64C7\u6B32\u8A2D\u5B9A\u7684\u8A9E\u97F3\u8FA8\u8B58\u5F15\u64CE (STT Provider)</label>
+          <select id="setting-provider" class="form-control" onchange="onProviderChange()">
             <option value="cloudflare">Cloudflare Workers AI (\u6BCF\u65E5 10,000 \u6B21\u514D\u8CBB)</option>
-            <option value="openai">OpenAI Whisper (\u5B98\u65B9 API)</option>
-            <option value="custom">\u81EA\u8A02 / \u672C\u5730\u76F8\u5BB9\u7AEF\u9EDE (Custom / Local)</option>
+            <option value="groq">Groq Whisper (\u6BCF\u5206\u9418 20 \u6B21\u514D\u8CBB\u3001\u6975\u901F\u63A8\u8AD6)</option>
+            <option value="openai">OpenAI Whisper (\u5B98\u65B9\u6A19\u6E96 API)</option>
+            <option value="custom">\u81EA\u8A02 / \u672C\u5730\u76F8\u5BB9\u7AEF\u9EDE (Custom / Local Endpoint)</option>
           </select>
         </div>
-        <div class="form-group" id="group-accountid">
-          <label class="form-label">\uD83C\uDFE2 Cloudflare Account ID (\u4F7F\u7528 Cloudflare \u6642\u9700\u586B\u5BEB)</label>
-          <input type="text" id="setting-accountid" class="form-control" placeholder="2fa0dd0cbd72565d704fb330d85ad604">
-        </div>
-        <div class="form-group">
-          <label class="form-label">\uD83D\uDD11 \u8A9E\u97F3 API \u91D1\u9470 / Token (API Key / Token)</label>
-          <input type="password" id="setting-apikey" class="form-control" placeholder="gsk_... \u6216 cfut_... \u6216 sk-...">
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
-            \u91D1\u9470\u4FDD\u5B58\u5728 Gateway \u672C\u5730\u74B0\u5883\uFF0C\u96A8\u6642\u53EF\u81EA\u7531\u5207\u63DB\u3002
+
+        <!-- Provider Dynamic Form Container -->
+        <div class="provider-box">
+          <!-- Cloudflare Section -->
+          <div id="section-cloudflare" class="provider-section">
+            <div style="font-size: 13px; color: #a5b4fc; margin-bottom: 12px;">
+              \u2601\uFE0F <b>Cloudflare Workers AI</b>\uFF1A\u63D0\u4F9B\u6BCF\u65E5 10,000 \u6B21\u8D85\u5927\u514D\u8CBB\u984D\u5EA6\uFF0C\u9069\u5408\u9AD8\u983B\u7387\u8A9E\u97F3\u6D3E\u5DE5\u3002
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83C\uDFE2 Cloudflare Account ID</label>
+              <input type="text" id="cf-account-id" class="form-control" placeholder="\u4F8B\u5982: 2fa0dd0cbd72565d704fb330d85ad604">
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83D\uDD11 Cloudflare API Token (\u9700\u5177\u5099 Workers AI: Read \u6B0A\u9650)</label>
+              <input type="password" id="cf-api-token" class="form-control" placeholder="\u4F8B\u5982: cfut_...">
+            </div>
           </div>
+
+          <!-- Groq Section -->
+          <div id="section-groq" class="provider-section" style="display: none;">
+            <div style="font-size: 13px; color: #a5b4fc; margin-bottom: 12px;">
+              \u26A1 <b>Groq Whisper</b>\uFF1A\u4EE5 LPU \u6975\u901F\u63A8\u8AD6\u6676\u7247\u904B\u884C\uFF0C0.2 \u79D2\u6975\u901F\u8F49\u8B6F\u3002
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83D\uDD11 Groq API Key</label>
+              <input type="password" id="groq-api-key" class="form-control" placeholder="\u4F8B\u5982: gsk_...">
+            </div>
+          </div>
+
+          <!-- OpenAI Section -->
+          <div id="section-openai" class="provider-section" style="display: none;">
+            <div style="font-size: 13px; color: #a5b4fc; margin-bottom: 12px;">
+              \uD83E\uDE99 <b>OpenAI Whisper</b>\uFF1A\u5B98\u65B9\u6A19\u6E96 Whisper API\u3002
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83D\uDD11 OpenAI API Key</label>
+              <input type="password" id="openai-api-key" class="form-control" placeholder="\u4F8B\u5982: sk-...">
+            </div>
+          </div>
+
+          <!-- Custom Section -->
+          <div id="section-custom" class="provider-section" style="display: none;">
+            <div style="font-size: 13px; color: #a5b4fc; margin-bottom: 12px;">
+              \uD83D\uDCBB <b>\u81EA\u8A02 / \u672C\u5730\u7AEF\u9EDE</b>\uFF1A\u9069\u7528\u81EA\u67B6 whisper.cpp\u3001faster-whisper \u6216\u76F8\u5BB9\u4F3A\u670D\u5668\u3002
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83C\uDF10 \u81EA\u8A02\u7AEF\u9EDE URL (Endpoint URL)</label>
+              <input type="text" id="custom-endpoint" class="form-control" placeholder="http://127.0.0.1:8000/v1/audio/transcriptions">
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83D\uDD11 \u81EA\u8A02 API Key (\u9078\u586B)</label>
+              <input type="password" id="custom-api-key" class="form-control" placeholder="\u81EA\u8A02\u91D1\u9470 (\u82E5\u7121\u9700\u91D1\u9470\u53EF\u7559\u7A7A)">
+            </div>
+            <div class="form-group">
+              <label class="form-label">\uD83C\uDFF7\uFE0F \u6A21\u578B\u540D\u7A31 (Model Name)</label>
+              <input type="text" id="custom-model" class="form-control" value="whisper-large-v3-turbo">
+            </div>
+          </div>
+
+          <!-- Test Connection Button & Result Box -->
+          <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+            <button class="btn btn-secondary" type="button" onclick="testCurrentVoiceProvider()">
+              \uD83E\uDDEA \u6E2C\u8A66\u9023\u7DDA\u8207\u9A57\u8B49\u91D1\u9470 (Test Connection)
+            </button>
+          </div>
+          <div id="test-voice-result" class="test-result-box"></div>
         </div>
+
+        <!-- Global TTL Setting -->
         <div class="form-group">
           <label class="form-label">\u23F1\uFE0F Session \u6B77\u53F2\u56DE\u8986\u4FDD\u5B58\u5929\u6578 (TTL)</label>
           <input type="number" id="setting-ttl" class="form-control" value="30" min="1" max="365">
@@ -19086,8 +19167,9 @@ function renderDashboardHtml() {
             \u9810\u8A2D 30 \u5929\u5167\uFF0C\u96A8\u6642\u5728 Telegram \u56DE\u8986\u820A\u901A\u77E5\u7686\u80FD\u76F4\u63A5\u63A5\u7E8C\u4EA4\u8AC7\u3002
           </div>
         </div>
-        <button class="btn btn-primary" onclick="saveSettings()" style="padding: 10px 20px;">
-          \uD83D\uDCBE \u5132\u5B58\u8A2D\u5B9A (Save Settings)
+
+        <button id="btn-save-settings" class="btn btn-primary" onclick="saveSettings()" style="padding: 12px 24px; font-size: 14px;">
+          \uD83D\uDCBE \u5132\u5B58\u4E26\u5957\u7528\u8A2D\u5B9A (Save Settings)
         </button>
       </div>
     </div>
@@ -19102,6 +19184,7 @@ function renderDashboardHtml() {
 
   <script>
     let summaryData = null;
+    let testedVerifiedProvider = null;
 
     function showToast(msg, type = 'info') {
       const t = document.getElementById('toast');
@@ -19118,6 +19201,19 @@ function renderDashboardHtml() {
       if (activeBtn) activeBtn.classList.add('active');
       const targetContent = document.getElementById('tab-' + tabId);
       if (targetContent) targetContent.classList.add('active');
+    }
+
+    function onProviderChange() {
+      const p = document.getElementById('setting-provider').value;
+      document.getElementById('section-cloudflare').style.display = p === 'cloudflare' ? 'block' : 'none';
+      document.getElementById('section-groq').style.display = p === 'groq' ? 'block' : 'none';
+      document.getElementById('section-openai').style.display = p === 'openai' ? 'block' : 'none';
+      document.getElementById('section-custom').style.display = p === 'custom' ? 'block' : 'none';
+
+      // Reset test result box when switching provider
+      const resBox = document.getElementById('test-voice-result');
+      resBox.className = 'test-result-box';
+      resBox.style.display = 'none';
     }
 
     async function fetchSummary() {
@@ -19137,6 +19233,35 @@ function renderDashboardHtml() {
       document.getElementById('stat-connections').textContent = data.connectionsCount || 0;
       document.getElementById('stat-sessions').textContent = data.activeSessions ? data.activeSessions.length : 0;
       document.getElementById('uptime-text').textContent = 'Uptime: ' + (data.uptimeFormatted || '0m');
+
+      // Render Active Voice Provider Badge
+      if (data.voice) {
+        const p = data.voice.provider;
+        const statVoice = document.getElementById('stat-voice');
+        const statVoiceSub = document.getElementById('stat-voice-sub');
+        if (p === 'cloudflare') {
+          statVoice.textContent = 'Cloudflare AI';
+          statVoice.style.color = '#34d399';
+          statVoiceSub.textContent = '\uD83D\uDFE2 \u6BCF\u65E5 1 \u842C\u6B21\u984D\u5EA6\u5DF2\u5C31\u7DD2';
+        } else if (p === 'groq') {
+          statVoice.textContent = 'Groq Whisper';
+          statVoice.style.color = '#34d399';
+          statVoiceSub.textContent = '\uD83D\uDFE2 0.2s \u6975\u901F\u8F49\u8B6F\u5C31\u7DD2';
+        } else if (p === 'openai') {
+          statVoice.textContent = 'OpenAI Whisper';
+          statVoice.style.color = '#34d399';
+          statVoiceSub.textContent = '\uD83D\uDFE2 \u5B98\u65B9 API \u5C31\u7DD2';
+        } else {
+          statVoice.textContent = '\u672A\u555F\u7528\u8A9E\u97F3';
+          statVoice.style.color = '#f87171';
+          statVoiceSub.textContent = '\uD83D\uDFE1 \u8ACB\u5728\u8A2D\u5B9A\u9801\u586B\u5BEB\u91D1\u9470';
+        }
+
+        // Set accountId if present
+        if (data.voice.accountId && !document.getElementById('cf-account-id').value) {
+          document.getElementById('cf-account-id').value = data.voice.accountId;
+        }
+      }
 
       // Render Machines & Projects
       const container = document.getElementById('machines-container');
@@ -19269,11 +19394,93 @@ function renderDashboardHtml() {
       }
     }
 
+    async function testCurrentVoiceProvider() {
+      const provider = document.getElementById('setting-provider').value;
+      const resBox = document.getElementById('test-voice-result');
+      
+      let apiKey = '';
+      let accountId = '';
+      let endpoint = '';
+      let model = '';
+
+      if (provider === 'cloudflare') {
+        accountId = document.getElementById('cf-account-id').value.trim();
+        apiKey = document.getElementById('cf-api-token').value.trim();
+        if (!accountId) {
+          resBox.className = 'test-result-box error';
+          resBox.textContent = '\u274C \u8ACB\u586B\u5BEB Cloudflare Account ID\uFF01';
+          return;
+        }
+      } else if (provider === 'groq') {
+        apiKey = document.getElementById('groq-api-key').value.trim();
+      } else if (provider === 'openai') {
+        apiKey = document.getElementById('openai-api-key').value.trim();
+      } else if (provider === 'custom') {
+        endpoint = document.getElementById('custom-endpoint').value.trim();
+        apiKey = document.getElementById('custom-api-key').value.trim();
+        model = document.getElementById('custom-model').value.trim();
+      }
+
+      resBox.className = 'test-result-box testing';
+      resBox.textContent = '\uD83D\uDD04 \u6B63\u5728\u5411 ' + provider + ' \u767C\u9001\u97F3\u8A0A\u9032\u884C\u771F\u5BE6\u9023\u7DDA\u8207\u6B0A\u9650\u9A57\u8B49...';
+
+      try {
+        const res = await fetch('/v1/api/dashboard/test-voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            apiKey: apiKey || undefined,
+            accountId: accountId || undefined,
+            endpoint: endpoint || undefined,
+            model: model || undefined
+          })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          testedVerifiedProvider = provider;
+          resBox.className = 'test-result-box success';
+          resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + data.message + ')<br>\u5DF2\u78BA\u8A8D\u6B64\u91D1\u9470\u53EF\u6B63\u5E38\u8F49\u8B6F\u8A9E\u97F3\uFF0C\u60A8\u53EF\u4EE5\u9EDE\u64CA\u4E0B\u65B9\u5132\u5B58\u4E26\u555F\u7528\u3002';
+        } else {
+          testedVerifiedProvider = null;
+          resBox.className = 'test-result-box error';
+          resBox.textContent = '\u274C \u9A57\u8B49\u5931\u6557\uFF1A' + (data.error || '\u7121\u6CD5\u9023\u7DDA\u81F3\u8A9E\u97F3\u670D\u52D9');
+        }
+      } catch (err) {
+        testedVerifiedProvider = null;
+        resBox.className = 'test-result-box error';
+        resBox.textContent = '\u274C \u6E2C\u8A66\u8ACB\u6C42\u51FA\u932F\uFF1A' + err.message;
+      }
+    }
+
     async function saveSettings() {
       const provider = document.getElementById('setting-provider').value;
-      const apiKey = document.getElementById('setting-apikey').value.trim();
-      const accountId = document.getElementById('setting-accountid').value.trim();
       const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
+
+      let apiKey = '';
+      let accountId = '';
+      let endpoint = '';
+      let model = '';
+
+      if (provider === 'cloudflare') {
+        accountId = document.getElementById('cf-account-id').value.trim();
+        apiKey = document.getElementById('cf-api-token').value.trim();
+      } else if (provider === 'groq') {
+        apiKey = document.getElementById('groq-api-key').value.trim();
+      } else if (provider === 'openai') {
+        apiKey = document.getElementById('openai-api-key').value.trim();
+      } else if (provider === 'custom') {
+        endpoint = document.getElementById('custom-endpoint').value.trim();
+        apiKey = document.getElementById('custom-api-key').value.trim();
+        model = document.getElementById('custom-model').value.trim();
+      }
+
+      // If user is trying to save an unverified provider or empty key without environment fallback
+      if (apiKey && testedVerifiedProvider !== provider) {
+        const proceed = confirm('\u6B64\u5F15\u64CE\u5C1A\u672A\u5B8C\u6210\u300C\uD83E\uDDEA \u6E2C\u8A66\u9023\u7DDA\u9A57\u8B49\u300D\uFF0C\u78BA\u5B9A\u8981\u76F4\u63A5\u5132\u5B58\u55CE\uFF1F\u5EFA\u8B70\u5148\u9EDE\u64CA\u6E2C\u8A66\u78BA\u8A8D\u53EF\u7528\u3002');
+        if (!proceed) return;
+      }
 
       try {
         const res = await fetch('/v1/api/dashboard/settings', {
@@ -19283,12 +19490,15 @@ function renderDashboardHtml() {
             voiceProvider: provider,
             voiceApiKey: apiKey || undefined,
             voiceAccountId: accountId || undefined,
+            voiceEndpoint: endpoint || undefined,
+            voiceModel: model || undefined,
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });
         const data = await res.json();
         if (data.success) {
-          showToast('\uD83D\uDCBE \u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\uFF01', 'success');
+          showToast('\uD83D\uDCBE \u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\u4E26\u751F\u6548\uFF01', 'success');
+          fetchSummary();
         } else {
           showToast('\u5132\u5B58\u5931\u6557\uFF1A' + data.message, 'error');
         }
@@ -19296,6 +19506,9 @@ function renderDashboardHtml() {
         showToast('\u5132\u5B58\u5931\u6557\uFF1A' + err.message, 'error');
       }
     }
+
+    // Initialize provider fields
+    onProviderChange();
 
     // Auto-refresh summary every 3 seconds
     fetchSummary();
@@ -19488,6 +19701,7 @@ async function startBroker(options = {}) {
             const uptimeMinutes = Math.floor(uptimeMs / 60000);
             const uptimeHours = Math.floor(uptimeMinutes / 60);
             const uptimeFormatted = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
+            const currentVoiceProvider = process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : "none";
             return Response.json({
               service: "opencode-telegram-link",
               version: "3.0.0",
@@ -19498,8 +19712,80 @@ async function startBroker(options = {}) {
               connectionsCount: registry2.connectionCount,
               routeCount: registry2.routeCount,
               machines,
-              activeSessions
+              activeSessions,
+              voice: {
+                provider: currentVoiceProvider,
+                hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+                hasCloudflareToken: Boolean(process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN),
+                hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+                accountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID
+              }
             });
+          }
+          if (url2.pathname === "/v1/api/dashboard/test-voice") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = await request.json();
+                const apiKey = body.apiKey?.trim() || (body.provider === "groq" ? process.env.GROQ_API_KEY : body.provider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : body.provider === "openai" ? process.env.OPENAI_API_KEY : undefined);
+                if (!apiKey) {
+                  return Response.json({ success: false, error: "\u8ACB\u586B\u5BEB API \u91D1\u9470 / Token" }, { status: 400 });
+                }
+                if (body.provider === "cloudflare") {
+                  const accountId = body.accountId?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
+                  if (!accountId) {
+                    return Response.json({ success: false, error: "Cloudflare \u5FC5\u9808\u63D0\u4F9B Account ID" }, { status: 400 });
+                  }
+                }
+                const transcriber = new VoiceTranscriber({
+                  apiKey,
+                  ...body.accountId ? { accountId: body.accountId.trim() } : {},
+                  provider: body.provider,
+                  ...body.endpoint ? { endpoint: body.endpoint.trim() } : {},
+                  ...body.model ? { model: body.model.trim() } : {}
+                });
+                const sampleRate = 16000;
+                const numSamples = sampleRate;
+                const buffer = new Uint8Array(44 + numSamples * 2);
+                const view = new DataView(buffer.buffer);
+                buffer.set([82, 73, 70, 70], 0);
+                view.setUint32(4, 36 + numSamples * 2, true);
+                buffer.set([87, 65, 86, 69], 8);
+                buffer.set([102, 109, 116, 32], 12);
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true);
+                view.setUint16(22, 1, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * 2, true);
+                view.setUint16(32, 2, true);
+                view.setUint16(34, 16, true);
+                buffer.set([100, 97, 116, 97], 36);
+                view.setUint32(40, numSamples * 2, true);
+                for (let i = 0;i < numSamples; i++) {
+                  const sample = Math.sin(2 * Math.PI * 440 * i / sampleRate) * 0.5 * 32767;
+                  view.setInt16(44 + i * 2, Math.floor(sample), true);
+                }
+                const start = performance.now();
+                const text = await transcriber.transcribe(buffer, {
+                  mimeType: "audio/wav",
+                  fileName: "test.wav"
+                });
+                const latencyMs = Math.round(performance.now() - start);
+                return Response.json({
+                  success: true,
+                  latencyMs,
+                  text: text || "(\u6E2C\u8A66\u9023\u7DDA\u6210\u529F)",
+                  message: `\u9023\u7DDA\u9A57\u8B49\u6210\u529F (\u5EF6\u9072: ${latencyMs}ms)`
+                });
+              } catch (err) {
+                return Response.json({
+                  success: false,
+                  error: err instanceof Error ? err.message : "\u9023\u7DDA\u9A57\u8B49\u5931\u6557"
+                }, { status: 400 });
+              }
+            })();
           }
           if (url2.pathname === "/v1/api/dashboard/dispatch") {
             if (request.method !== "POST") {
@@ -20896,4 +21182,4 @@ export {
   runBroker
 };
 
-//# debugId=8371AEE9112C2EA064756E2164756E21
+//# debugId=1B4643A3A6F2D93564756E2164756E21
