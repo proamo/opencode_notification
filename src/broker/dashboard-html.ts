@@ -463,7 +463,7 @@ export function renderDashboardHtml(): string {
       document.getElementById('stat-sessions').textContent = data.activeSessions ? data.activeSessions.length : 0;
       document.getElementById('uptime-text').textContent = 'Uptime: ' + (data.uptimeFormatted || '0m');
 
-      // Render Active Voice Provider Badge
+      // Render Active Voice Provider Badge & auto-populate settings
       if (data.voice) {
         const p = data.voice.provider;
         const statVoice = document.getElementById('stat-voice');
@@ -480,15 +480,38 @@ export function renderDashboardHtml(): string {
           statVoice.textContent = 'OpenAI Whisper';
           statVoice.style.color = '#34d399';
           statVoiceSub.textContent = '🟢 官方 API 就緒';
+        } else if (p === 'custom') {
+          statVoice.textContent = '自訂語音端點';
+          statVoice.style.color = '#34d399';
+          statVoiceSub.textContent = '🟢 自訂端點就緒';
         } else {
           statVoice.textContent = '未啟用語音';
           statVoice.style.color = '#f87171';
           statVoiceSub.textContent = '🟡 請在設定頁填寫金鑰';
         }
 
-        // Set accountId if present
-        if (data.voice.accountId && !document.getElementById('cf-account-id').value) {
-          document.getElementById('cf-account-id').value = data.voice.accountId;
+        // On first summary load, populate form fields if user hasn't edited them
+        if (!window._settingsPopulated) {
+          window._settingsPopulated = true;
+          if (p && p !== 'none') {
+            document.getElementById('setting-provider').value = p;
+            onProviderChange();
+          }
+          if (data.voice.accountId) {
+            document.getElementById('cf-account-id').value = data.voice.accountId;
+          }
+          if (data.voice.apiKey) {
+            if (p === 'cloudflare') document.getElementById('cf-api-token').value = data.voice.apiKey;
+            else if (p === 'groq') document.getElementById('groq-api-key').value = data.voice.apiKey;
+            else if (p === 'openai') document.getElementById('openai-api-key').value = data.voice.apiKey;
+            else if (p === 'custom') document.getElementById('custom-api-key').value = data.voice.apiKey;
+          }
+          if (data.voice.endpoint) {
+            document.getElementById('custom-endpoint').value = data.voice.endpoint;
+          }
+          if (data.voice.model) {
+            document.getElementById('custom-model').value = data.voice.model;
+          }
         }
       }
 
@@ -676,8 +699,8 @@ export function renderDashboardHtml(): string {
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
-          resBox.innerHTML = '✔ <b>連線測試成功！</b> (' + data.message + ')<br>已確認此金鑰可正常轉譯語音，您可以點擊下方儲存並啟用。';
-          showToast('✔ 連線測試成功！', 'success');
+          resBox.innerHTML = '✔ <b>連線測試成功！</b> (' + data.message + ')<br><span style="color: #fff; font-weight: bold;">👉 請務必點擊下方「💾 儲存並套用設定」按鈕以永久啟用此引擎！</span>';
+          showToast('✔ 連線測試成功！請點擊儲存', 'success');
         } else {
           testedVerifiedProvider = null;
           resBox.className = 'test-result-box error';

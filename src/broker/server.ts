@@ -1,4 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import { type SupportedLocale, translate } from "../i18n";
 import {
@@ -50,6 +52,33 @@ const DEFAULT_MAINTENANCE_INTERVAL_MS = 60_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 const DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2_000;
 const NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60_000;
+
+export type DashboardSettings = {
+  voiceProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
+  voiceApiKey?: string | undefined;
+  voiceAccountId?: string | undefined;
+  voiceEndpoint?: string | undefined;
+  voiceModel?: string | undefined;
+  sessionPromptTtlMinutes?: number | undefined;
+};
+
+async function loadDashboardSettings(stateDirectory: string): Promise<DashboardSettings> {
+  const filePath = join(stateDirectory, "dashboard-settings.json");
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    return JSON.parse(raw) as DashboardSettings;
+  } catch {
+    return {};
+  }
+}
+
+async function saveDashboardSettings(
+  stateDirectory: string,
+  settings: DashboardSettings,
+): Promise<void> {
+  const filePath = join(stateDirectory, "dashboard-settings.json");
+  await writeFile(filePath, JSON.stringify(settings, null, 2), "utf-8");
+}
 
 const HealthResponseSchema = z.object({
   service: z.literal("opencode-telegram-link"),
@@ -221,6 +250,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
   let broker: BrokerServer | undefined;
   const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
   const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
+  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
 
   const dispatcher = {
     sendCommand: async (command: BrokerCommand): Promise<CommandResult> => {
@@ -274,13 +304,30 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             const uptimeFormatted =
               uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
 
-            const currentVoiceProvider = process.env.CLOUDFLARE_API_TOKEN
-              ? "cloudflare"
-              : process.env.GROQ_API_KEY
-                ? "groq"
-                : process.env.OPENAI_API_KEY
-                  ? "openai"
-                  : "none";
+            const effectiveProvider =
+              persistedSettings.voiceProvider ??
+              (process.env.CLOUDFLARE_API_TOKEN
+                ? "cloudflare"
+                : process.env.GROQ_API_KEY
+                  ? "groq"
+                  : process.env.OPENAI_API_KEY
+                    ? "openai"
+                    : "none");
+
+            const effectiveApiKey =
+              persistedSettings.voiceApiKey ??
+              (effectiveProvider === "groq"
+                ? process.env.GROQ_API_KEY
+                : effectiveProvider === "cloudflare"
+                  ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
+                  : effectiveProvider === "openai"
+                    ? process.env.OPENAI_API_KEY
+                    : undefined);
+
+            const effectiveAccountId =
+              persistedSettings.voiceAccountId ??
+              process.env.CLOUDFLARE_ACCOUNT_ID ??
+              process.env.CF_ACCOUNT_ID;
 
             return Response.json({
               service: "opencode-telegram-link",
@@ -294,13 +341,12 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               machines,
               activeSessions,
               voice: {
-                provider: currentVoiceProvider,
-                hasGroqKey: Boolean(process.env.GROQ_API_KEY),
-                hasCloudflareToken: Boolean(
-                  process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN,
-                ),
-                hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
-                accountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID,
+                provider: effectiveApiKey ? effectiveProvider : "none",
+                hasApiKey: Boolean(effectiveApiKey),
+                apiKey: effectiveApiKey,
+                accountId: effectiveAccountId,
+                endpoint: persistedSettings.voiceEndpoint,
+                model: persistedSettings.voiceModel,
               },
             });
           }
@@ -540,7 +586,50 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             if (request.method !== "POST") {
               return new Response("Method not allowed", { status: 405 });
             }
-            return Response.json({ success: true, message: "Settings saved" });
+            return (async () => {
+              try {
+                const body = (await request.json()) as DashboardSettings;
+                persistedSettings = {
+                  ...persistedSettings,
+                  ...body,
+                };
+                await saveDashboardSettings(state.stateDirectory, persistedSettings);
+
+                const effectiveProvider = persistedSettings.voiceProvider ?? "groq";
+                const effectiveKey =
+                  persistedSettings.voiceApiKey ??
+                  (effectiveProvider === "groq"
+                    ? process.env.GROQ_API_KEY
+                    : effectiveProvider === "cloudflare"
+                      ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
+                      : effectiveProvider === "openai"
+                        ? process.env.OPENAI_API_KEY
+                        : undefined);
+
+                const effectiveAccountId =
+                  persistedSettings.voiceAccountId ??
+                  process.env.CLOUDFLARE_ACCOUNT_ID ??
+                  process.env.CF_ACCOUNT_ID;
+
+                if (effectiveKey) {
+                  const newTranscriber = new VoiceTranscriber({
+                    apiKey: effectiveKey,
+                    accountId: effectiveAccountId,
+                    provider: effectiveProvider,
+                    endpoint: persistedSettings.voiceEndpoint,
+                    model: persistedSettings.voiceModel,
+                  });
+                  telegramRuntimeRef.value?.setTranscriber(newTranscriber);
+                }
+
+                return Response.json({ success: true, message: "設定已成功儲存並即時生效" });
+              } catch (err) {
+                return Response.json(
+                  { success: false, message: (err as Error).message },
+                  { status: 500 },
+                );
+              }
+            })();
           }
 
           if (
@@ -756,6 +845,11 @@ class BrokerTelegramRuntime {
   #started = false;
   #deliveryTimer: ReturnType<typeof setInterval> | undefined;
   #delivering = false;
+  #transcriber: VoiceTranscriber | undefined;
+
+  setTranscriber(transcriber: VoiceTranscriber | undefined): void {
+    this.#transcriber = transcriber;
+  }
 
   constructor(input: {
     config: TelegramRuntimeConfig;
@@ -789,7 +883,7 @@ class BrokerTelegramRuntime {
     const voiceAccountId =
       input.config.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
 
-    const transcriber = voiceApiKey
+    this.#transcriber = voiceApiKey
       ? new VoiceTranscriber({
           apiKey: voiceApiKey,
           accountId: voiceAccountId,
@@ -841,10 +935,10 @@ class BrokerTelegramRuntime {
 
         const voiceOrAudio = update.message?.voice ?? update.message?.audio;
         if (voiceOrAudio) {
-          if (!transcriber) {
+          if (!this.#transcriber) {
             await input.api.sendMessage({
               chatId: input.config.chatId,
-              text: "⚠️ 尚未設定 Groq / OpenAI 語音辨識 API Key，無法處理語音訊息。請在 opencode.json 中加入 voice.apiKey。",
+              text: "⚠️ 尚未設定語音辨識 API Key，無法處理語音訊息。請在 Web 設定頁或 opencode.json 中加入金鑰。",
               parseMode: "HTML",
             });
             return {
@@ -860,7 +954,7 @@ class BrokerTelegramRuntime {
               throw new Error("Telegram did not return file path");
             }
             const audioBytes = await input.api.downloadFile(fileInfo.file_path);
-            const transcribedText = await transcriber.transcribe(audioBytes, {
+            const transcribedText = await this.#transcriber.transcribe(audioBytes, {
               mimeType: voiceOrAudio.mime_type ?? "audio/ogg",
               fileName: "voice.ogg",
             });
