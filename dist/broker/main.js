@@ -17404,9 +17404,10 @@ class RouteRegistry {
             });
           }
         }
-      } else if (conn.projectLabel) {
+      } else {
+        const label2 = conn.projectLabel || `\u5C08\u6848\u8996\u7A97 (${conn.instanceId.slice(0, 6)})`;
         machine.projects.push({
-          projectLabel: conn.projectLabel
+          projectLabel: label2
         });
       }
     }
@@ -18975,6 +18976,49 @@ function renderDashboardHtml() {
     #toast.error { background: #7f1d1d; border-color: #ef4444; }
 
     footer { padding: 20px 28px; text-align: center; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--card-border); }
+
+    /* RWD Media Queries for Mobile & Tablet */
+    @media (max-width: 768px) {
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 18px;
+      }
+      .header-status {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .tabs {
+        padding: 10px 14px 0;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+      }
+      .tab-btn {
+        padding: 8px 14px;
+        font-size: 13px;
+      }
+      main {
+        padding: 16px;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .project-grid {
+        grid-template-columns: 1fr;
+      }
+      .table-container {
+        overflow-x: auto;
+      }
+      #toast {
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        text-align: center;
+      }
+    }
   </style>
 </head>
 <body>
@@ -21342,4 +21386,4 @@ export {
   runBroker
 };
 
-//# debugId=4F59F801CA119F3364756E2164756E21
+//# debugId=64686510E63A174064756E2164756E21
