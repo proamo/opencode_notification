@@ -509,7 +509,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
             return Response.json({
               service: "opencode-telegram-link",
-              version: "3.0.0",
+              version: "1.0.0-rc.1",
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
               uptimeMs,
@@ -1272,7 +1272,7 @@ class BrokerTelegramRuntime {
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "3.0.0",
+              packageVersion: "1.0.0-rc.1",
             });
 
             await input.api.sendMessage({
@@ -1310,7 +1310,7 @@ class BrokerTelegramRuntime {
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "3.0.0",
+              packageVersion: "1.0.0-rc.1",
             });
             await input.api.sendMessage({
               chatId: input.config.chatId,

@@ -63,7 +63,7 @@ Maximum frame size is `256 KiB`. Frames above that limit, invalid JSON, or schem
 {
   "type": "register",
   "payload": {
-    "packageVersion": "0.1.0",
+    "packageVersion": "1.0.0-rc.1",
     "openCodeVersion": "1.18.x",
     "machineId": "uuid",
     "instanceId": "uuid",

@@ -68,7 +68,7 @@ describe("Web Dashboard", () => {
       };
     };
     expect(data.service).toBe("opencode-telegram-link");
-    expect(data.version).toBe("3.0.0");
+    expect(data.version).toBe("1.0.0-rc.1");
     expect(data.connectionsCount).toBe(0);
     expect(Array.isArray(data.machines)).toBe(true);
     expect(Array.isArray(data.activeSessions)).toBe(true);

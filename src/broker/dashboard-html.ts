@@ -253,7 +253,7 @@ export function renderDashboardHtml(): string {
     <div class="brand">
       <span class="brand-logo">🤖</span>
       <span class="brand-title">OpenCode Commander</span>
-      <span class="brand-badge">V3.0 Gateway</span>
+      <span class="brand-badge">v1.0.0-rc.1</span>
     </div>
     <div class="header-status">
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -451,7 +451,7 @@ export function renderDashboardHtml(): string {
   <div id="toast"></div>
 
   <footer>
-    OpenCode Telegram Link V3.0 • Privacy-first remote development and monitoring
+    OpenCode Telegram Link v1.0.0-rc.1 • Privacy-first remote development and monitoring
   </footer>
 
   <script>

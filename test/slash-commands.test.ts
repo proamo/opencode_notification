@@ -68,11 +68,11 @@ describe("Slash Commands System", () => {
       registry,
       dispatcher,
       startedAt: Date.now() - 120_000,
-      packageVersion: "3.0.0",
+      packageVersion: "1.0.0-rc.1",
     });
 
     expect(result).toContain("Gateway 系統狀態");
-    expect(result).toContain("v3.0.0");
+    expect(result).toContain("v1.0.0-rc.1");
     expect(result).toContain("2m");
     expect(result).toContain("Memory RSS");
   });

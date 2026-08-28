@@ -62,7 +62,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
-    packageVersion: "0.1.0",
+    packageVersion: "1.0.0-rc.1",
     openCodeVersion: "1.18.x",
     ...(botToken && configData.telegram
       ? {

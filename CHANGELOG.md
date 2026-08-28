@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.1 - 2026-08-28
+
+- Add OpenCode Commander Web Dashboard with live cluster topology and metrics.
+- Add proactive remote task dispatching and live session cancellation.
+- Add multi-engine voice speech-to-text (Cloudflare Workers AI, Groq Whisper, OpenAI Whisper, Custom Endpoint).
+- Add multi-host Hub-and-Spoke Gateway and Node Agent architecture.
+- Add Telegram interactive inline keyboard approval and question buttons.
+- Add mobile and tablet responsive layout for dashboard.
+- Add fail-closed routing and session disambiguation for slash commands.
+- Add HttpOnly session authentication and token sanitization for dashboard.
+- Add interactive setup wizard and interactive uninstaller.
+- Add Traditional Chinese and English bilingual support.
+
 ## 0.1.0 - 2026-08-19
 
 - Wire OpenCode plugin notifications to broker-managed Telegram delivery and reply polling.

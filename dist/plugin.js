@@ -16771,7 +16771,7 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
-    packageVersion: "0.1.0",
+    packageVersion: "1.0.0-rc.1",
     openCodeVersion: "1.18.x",
     ...botToken && configData.telegram ? {
       telegram: {
@@ -16907,4 +16907,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=3A68B7B0F682895B64756E2164756E21
+//# debugId=6D799B2A2709A26964756E2164756E21

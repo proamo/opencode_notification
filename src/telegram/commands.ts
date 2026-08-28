@@ -103,7 +103,7 @@ function renderGatewayStatus(context: SlashCommandContext, locale: SupportedLoca
   const lines = [
     translate(locale, "cmd.status.title"),
     "",
-    `🏢 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "3.0.0"}</code>`,
+    `🏢 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "1.0.0-rc.1"}</code>`,
     `⏱️ <b>Uptime:</b> <code>${uptimeString}</code>`,
     `💾 <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
     `🌐 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,

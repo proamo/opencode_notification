@@ -1,6 +1,6 @@
 {
   "name": "opencode-telegram-link",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "description": "Privacy-first Telegram notifications and remote replies for OpenCode",
   "type": "module",
   "main": "./dist/plugin.js",
