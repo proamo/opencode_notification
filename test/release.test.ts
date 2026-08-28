@@ -11,6 +11,7 @@ describe("release configuration", () => {
     const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
     expect(packageJson.publishConfig).toEqual({ access: "public", provenance: true });
+    expect(packageJson.repository.url).toContain("proamo/opencode_notification");
     expect(packageJson.files).toEqual([
       "dist",
       "container",
