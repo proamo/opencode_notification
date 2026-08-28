@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { probeBroker } from "./broker";
 import { runStopCommand } from "./broker/commands";
