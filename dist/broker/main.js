@@ -19214,6 +19214,7 @@ function renderDashboardHtml() {
       const resBox = document.getElementById('test-voice-result');
       resBox.className = 'test-result-box';
       resBox.style.display = 'none';
+      resBox.innerHTML = '';
     }
 
     async function fetchSummary() {
@@ -19397,6 +19398,7 @@ function renderDashboardHtml() {
     async function testCurrentVoiceProvider() {
       const provider = document.getElementById('setting-provider').value;
       const resBox = document.getElementById('test-voice-result');
+      const testBtn = event?.target || document.querySelector('#tab-settings .btn-secondary');
       
       let apiKey = '';
       let accountId = '';
@@ -19407,8 +19409,10 @@ function renderDashboardHtml() {
         accountId = document.getElementById('cf-account-id').value.trim();
         apiKey = document.getElementById('cf-api-token').value.trim();
         if (!accountId) {
+          resBox.style.display = 'block';
           resBox.className = 'test-result-box error';
           resBox.textContent = '\u274C \u8ACB\u586B\u5BEB Cloudflare Account ID\uFF01';
+          showToast('\u8ACB\u586B\u5BEB Cloudflare Account ID', 'error');
           return;
         }
       } else if (provider === 'groq') {
@@ -19421,8 +19425,10 @@ function renderDashboardHtml() {
         model = document.getElementById('custom-model').value.trim();
       }
 
+      resBox.style.display = 'block';
       resBox.className = 'test-result-box testing';
       resBox.textContent = '\uD83D\uDD04 \u6B63\u5728\u5411 ' + provider + ' \u767C\u9001\u97F3\u8A0A\u9032\u884C\u771F\u5BE6\u9023\u7DDA\u8207\u6B0A\u9650\u9A57\u8B49...';
+      showToast('\uD83D\uDD04 \u6B63\u5728\u9023\u7DDA\u9A57\u8B49...', 'info');
 
       try {
         const res = await fetch('/v1/api/dashboard/test-voice', {
@@ -19438,19 +19444,24 @@ function renderDashboardHtml() {
         });
 
         const data = await res.json();
+        resBox.style.display = 'block';
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
           resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + data.message + ')<br>\u5DF2\u78BA\u8A8D\u6B64\u91D1\u9470\u53EF\u6B63\u5E38\u8F49\u8B6F\u8A9E\u97F3\uFF0C\u60A8\u53EF\u4EE5\u9EDE\u64CA\u4E0B\u65B9\u5132\u5B58\u4E26\u555F\u7528\u3002';
+          showToast('\u2714 \u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01', 'success');
         } else {
           testedVerifiedProvider = null;
           resBox.className = 'test-result-box error';
           resBox.textContent = '\u274C \u9A57\u8B49\u5931\u6557\uFF1A' + (data.error || '\u7121\u6CD5\u9023\u7DDA\u81F3\u8A9E\u97F3\u670D\u52D9');
+          showToast('\u274C \u9A57\u8B49\u5931\u6557\uFF1A' + (data.error || ''), 'error');
         }
       } catch (err) {
         testedVerifiedProvider = null;
+        resBox.style.display = 'block';
         resBox.className = 'test-result-box error';
         resBox.textContent = '\u274C \u6E2C\u8A66\u8ACB\u6C42\u51FA\u932F\uFF1A' + err.message;
+        showToast('\u274C \u6E2C\u8A66\u8ACB\u6C42\u51FA\u932F\uFF1A' + err.message, 'error');
       }
     }
 
@@ -21182,4 +21193,4 @@ export {
   runBroker
 };
 
-//# debugId=1B4643A3A6F2D93564756E2164756E21
+//# debugId=22830012C04D498964756E2164756E21
