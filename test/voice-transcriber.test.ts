@@ -64,9 +64,7 @@ describe("VoiceTranscriber", () => {
     ): Promise<Response> => {
       requestedUrl = String(input);
       requestedAuth = (init?.headers as Record<string, string>)?.Authorization ?? "";
-      requestedContentType = (init?.headers as Record<string, string>)?.[
-        "Content-Type"
-      ] ?? "";
+      requestedContentType = (init?.headers as Record<string, string>)?.["Content-Type"] ?? "";
 
       return new Response(
         JSON.stringify({

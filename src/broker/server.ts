@@ -670,15 +670,15 @@ class BrokerTelegramRuntime {
       process.env.CF_API_TOKEN;
 
     const voiceAccountId =
-      input.config.voiceAccountId ??
-      process.env.CLOUDFLARE_ACCOUNT_ID ??
-      process.env.CF_ACCOUNT_ID;
+      input.config.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
 
     const transcriber = voiceApiKey
       ? new VoiceTranscriber({
           apiKey: voiceApiKey,
           accountId: voiceAccountId,
-          provider: input.config.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : "groq"),
+          provider:
+            input.config.voiceProvider ??
+            (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : "groq"),
           model: input.config.voiceModel,
         })
       : undefined;
