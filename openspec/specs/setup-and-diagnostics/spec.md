@@ -162,6 +162,10 @@ Configuration validation SHALL support optional `voice` configuration properties
 - **WHEN** the user specifies `voice: { provider: "groq", apiKey: "gsk_..." }`
 - **THEN** the configuration SHALL validate successfully and the broker SHALL initialize Groq Whisper STT processing
 
+#### Scenario: User configures Cloudflare Workers AI speech provider
+- **WHEN** the user specifies `voice: { provider: "cloudflare", apiKey: "cfut_...", accountId: "2fa0..." }`
+- **THEN** the configuration SHALL validate successfully and the broker SHALL route STT requests to Cloudflare Workers AI
+
 #### Scenario: User configures extended retention
 - **WHEN** the user configures `interaction: { sessionPromptTtlMinutes: 43200 }`
 - **THEN** validation SHALL accept the 30-day window without exceeding maximum bounds
