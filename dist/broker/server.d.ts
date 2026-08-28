@@ -6,12 +6,28 @@ import { type BrokerConnectionData, RouteRegistry } from "./registry";
 declare const LOOPBACK_HOST = "127.0.0.1";
 declare const CONTAINER_HOST = "0.0.0.0";
 export type DashboardSettings = {
+    activeProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
+    cloudflare?: {
+        accountId?: string | undefined;
+        apiToken?: string | undefined;
+    } | undefined;
+    groq?: {
+        apiKey?: string | undefined;
+    } | undefined;
+    openai?: {
+        apiKey?: string | undefined;
+    } | undefined;
+    custom?: {
+        endpoint?: string | undefined;
+        apiKey?: string | undefined;
+        model?: string | undefined;
+    } | undefined;
+    sessionPromptTtlMinutes?: number | undefined;
     voiceProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
     voiceApiKey?: string | undefined;
     voiceAccountId?: string | undefined;
     voiceEndpoint?: string | undefined;
     voiceModel?: string | undefined;
-    sessionPromptTtlMinutes?: number | undefined;
 };
 declare const HealthResponseSchema: z.ZodObject<{
     service: z.ZodLiteral<"opencode-telegram-link">;

@@ -19240,6 +19240,7 @@ function renderDashboardHtml() {
       // Render Active Voice Provider Badge & auto-populate settings
       if (data.voice) {
         const p = data.voice.provider;
+        const activeP = data.voice.activeProvider || p;
         const statVoice = document.getElementById('stat-voice');
         const statVoiceSub = document.getElementById('stat-voice-sub');
         if (p === 'cloudflare') {
@@ -19264,28 +19265,38 @@ function renderDashboardHtml() {
           statVoiceSub.textContent = '\uD83D\uDFE1 \u8ACB\u5728\u8A2D\u5B9A\u9801\u586B\u5BEB\u91D1\u9470';
         }
 
-        // On first summary load, populate form fields if user hasn't edited them
+        // On first summary load, populate form fields for ALL providers
         if (!window._settingsPopulated) {
           window._settingsPopulated = true;
-          if (p && p !== 'none') {
-            document.getElementById('setting-provider').value = p;
-            onProviderChange();
+          if (activeP && activeP !== 'none') {
+            document.getElementById('setting-provider').value = activeP;
           }
-          if (data.voice.accountId) {
-            document.getElementById('cf-account-id').value = data.voice.accountId;
+          if (data.voice.cloudflare) {
+            if (data.voice.cloudflare.accountId) {
+              document.getElementById('cf-account-id').value = data.voice.cloudflare.accountId;
+            }
+            if (data.voice.cloudflare.apiToken) {
+              document.getElementById('cf-api-token').value = data.voice.cloudflare.apiToken;
+            }
           }
-          if (data.voice.apiKey) {
-            if (p === 'cloudflare') document.getElementById('cf-api-token').value = data.voice.apiKey;
-            else if (p === 'groq') document.getElementById('groq-api-key').value = data.voice.apiKey;
-            else if (p === 'openai') document.getElementById('openai-api-key').value = data.voice.apiKey;
-            else if (p === 'custom') document.getElementById('custom-api-key').value = data.voice.apiKey;
+          if (data.voice.groq && data.voice.groq.apiKey) {
+            document.getElementById('groq-api-key').value = data.voice.groq.apiKey;
           }
-          if (data.voice.endpoint) {
-            document.getElementById('custom-endpoint').value = data.voice.endpoint;
+          if (data.voice.openai && data.voice.openai.apiKey) {
+            document.getElementById('openai-api-key').value = data.voice.openai.apiKey;
           }
-          if (data.voice.model) {
-            document.getElementById('custom-model').value = data.voice.model;
+          if (data.voice.custom) {
+            if (data.voice.custom.endpoint) {
+              document.getElementById('custom-endpoint').value = data.voice.custom.endpoint;
+            }
+            if (data.voice.custom.apiKey) {
+              document.getElementById('custom-api-key').value = data.voice.custom.apiKey;
+            }
+            if (data.voice.custom.model) {
+              document.getElementById('custom-model').value = data.voice.custom.model;
+            }
           }
+          onProviderChange();
         }
       }
 
@@ -19494,26 +19505,21 @@ function renderDashboardHtml() {
       const provider = document.getElementById('setting-provider').value;
       const ttlDays = parseInt(document.getElementById('setting-ttl').value) || 30;
 
-      let apiKey = '';
-      let accountId = '';
-      let endpoint = '';
-      let model = '';
+      const cfAccountId = document.getElementById('cf-account-id').value.trim();
+      const cfApiToken = document.getElementById('cf-api-token').value.trim();
+      const groqApiKey = document.getElementById('groq-api-key').value.trim();
+      const openaiApiKey = document.getElementById('openai-api-key').value.trim();
+      const customEndpoint = document.getElementById('custom-endpoint').value.trim();
+      const customApiKey = document.getElementById('custom-api-key').value.trim();
+      const customModel = document.getElementById('custom-model').value.trim();
 
-      if (provider === 'cloudflare') {
-        accountId = document.getElementById('cf-account-id').value.trim();
-        apiKey = document.getElementById('cf-api-token').value.trim();
-      } else if (provider === 'groq') {
-        apiKey = document.getElementById('groq-api-key').value.trim();
-      } else if (provider === 'openai') {
-        apiKey = document.getElementById('openai-api-key').value.trim();
-      } else if (provider === 'custom') {
-        endpoint = document.getElementById('custom-endpoint').value.trim();
-        apiKey = document.getElementById('custom-api-key').value.trim();
-        model = document.getElementById('custom-model').value.trim();
-      }
+      let activeKey = '';
+      if (provider === 'cloudflare') activeKey = cfApiToken;
+      else if (provider === 'groq') activeKey = groqApiKey;
+      else if (provider === 'openai') activeKey = openaiApiKey;
+      else if (provider === 'custom') activeKey = customApiKey;
 
-      // If user is trying to save an unverified provider or empty key without environment fallback
-      if (apiKey && testedVerifiedProvider !== provider) {
+      if (activeKey && testedVerifiedProvider !== provider) {
         const proceed = confirm('\u6B64\u5F15\u64CE\u5C1A\u672A\u5B8C\u6210\u300C\uD83E\uDDEA \u6E2C\u8A66\u9023\u7DDA\u9A57\u8B49\u300D\uFF0C\u78BA\u5B9A\u8981\u76F4\u63A5\u5132\u5B58\u55CE\uFF1F\u5EFA\u8B70\u5148\u9EDE\u64CA\u6E2C\u8A66\u78BA\u8A8D\u53EF\u7528\u3002');
         if (!proceed) return;
       }
@@ -19523,11 +19529,11 @@ function renderDashboardHtml() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            voiceProvider: provider,
-            voiceApiKey: apiKey || undefined,
-            voiceAccountId: accountId || undefined,
-            voiceEndpoint: endpoint || undefined,
-            voiceModel: model || undefined,
+            activeProvider: provider,
+            cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+            groq: { apiKey: groqApiKey },
+            openai: { apiKey: openaiApiKey },
+            custom: { endpoint: customEndpoint, apiKey: customApiKey, model: customModel },
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });
@@ -19566,13 +19572,31 @@ var DEFAULT_MAINTENANCE_INTERVAL_MS = 60000;
 var DEFAULT_COMMAND_TIMEOUT_MS = 1e4;
 var DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2000;
 var NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60000;
+function normalizeSettings(s) {
+  const activeProvider = s.activeProvider ?? s.voiceProvider ?? "cloudflare";
+  const cfAccountId = s.cloudflare?.accountId ?? s.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID ?? "";
+  const cfApiToken = s.cloudflare?.apiToken ?? (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ?? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN ?? "";
+  const groqKey = s.groq?.apiKey ?? (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ?? process.env.GROQ_API_KEY ?? "";
+  const openaiKey = s.openai?.apiKey ?? (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ?? process.env.OPENAI_API_KEY ?? "";
+  const customEndpoint = s.custom?.endpoint ?? s.voiceEndpoint ?? "";
+  const customKey = s.custom?.apiKey ?? (s.voiceProvider === "custom" ? s.voiceApiKey : undefined) ?? "";
+  const customModel = s.custom?.model ?? s.voiceModel ?? "whisper-large-v3-turbo";
+  return {
+    activeProvider,
+    cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+    groq: { apiKey: groqKey },
+    openai: { apiKey: openaiKey },
+    custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
+    sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200
+  };
+}
 async function loadDashboardSettings(stateDirectory) {
   const filePath = join6(stateDirectory, "dashboard-settings.json");
   try {
     const raw = await readFile6(filePath, "utf-8");
-    return JSON.parse(raw);
+    return normalizeSettings(JSON.parse(raw));
   } catch {
-    return {};
+    return normalizeSettings({});
   }
 }
 async function saveDashboardSettings(stateDirectory, settings) {
@@ -19758,9 +19782,17 @@ async function startBroker(options = {}) {
             const uptimeMinutes = Math.floor(uptimeMs / 60000);
             const uptimeHours = Math.floor(uptimeMinutes / 60);
             const uptimeFormatted = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
-            const effectiveProvider = persistedSettings.voiceProvider ?? (process.env.CLOUDFLARE_API_TOKEN ? "cloudflare" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : "none");
-            const effectiveApiKey = persistedSettings.voiceApiKey ?? (effectiveProvider === "groq" ? process.env.GROQ_API_KEY : effectiveProvider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : effectiveProvider === "openai" ? process.env.OPENAI_API_KEY : undefined);
-            const effectiveAccountId = persistedSettings.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
+            const normalized = normalizeSettings(persistedSettings);
+            let activeKey;
+            if (normalized.activeProvider === "cloudflare") {
+              activeKey = normalized.cloudflare?.apiToken;
+            } else if (normalized.activeProvider === "groq") {
+              activeKey = normalized.groq?.apiKey;
+            } else if (normalized.activeProvider === "openai") {
+              activeKey = normalized.openai?.apiKey;
+            } else if (normalized.activeProvider === "custom") {
+              activeKey = normalized.custom?.apiKey || "custom";
+            }
             return Response.json({
               service: "opencode-telegram-link",
               version: "3.0.0",
@@ -19773,12 +19805,13 @@ async function startBroker(options = {}) {
               machines,
               activeSessions,
               voice: {
-                provider: effectiveApiKey ? effectiveProvider : "none",
-                hasApiKey: Boolean(effectiveApiKey),
-                apiKey: effectiveApiKey,
-                accountId: effectiveAccountId,
-                endpoint: persistedSettings.voiceEndpoint,
-                model: persistedSettings.voiceModel
+                provider: activeKey ? normalized.activeProvider : "none",
+                activeProvider: normalized.activeProvider ?? "cloudflare",
+                hasApiKey: Boolean(activeKey),
+                cloudflare: normalized.cloudflare,
+                groq: normalized.groq,
+                openai: normalized.openai,
+                custom: normalized.custom
               }
             });
           }
@@ -19936,21 +19969,59 @@ async function startBroker(options = {}) {
             return (async () => {
               try {
                 const body = await readJsonBody(request);
-                persistedSettings = {
+                persistedSettings = normalizeSettings({
                   ...persistedSettings,
-                  ...body
-                };
+                  activeProvider: body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
+                  cloudflare: {
+                    ...persistedSettings.cloudflare,
+                    ...body.cloudflare || {},
+                    ...body.voiceAccountId ? { accountId: body.voiceAccountId } : {},
+                    ...body.voiceProvider === "cloudflare" && body.voiceApiKey ? { apiToken: body.voiceApiKey } : {}
+                  },
+                  groq: {
+                    ...persistedSettings.groq,
+                    ...body.groq || {},
+                    ...body.voiceProvider === "groq" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                  },
+                  openai: {
+                    ...persistedSettings.openai,
+                    ...body.openai || {},
+                    ...body.voiceProvider === "openai" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                  },
+                  custom: {
+                    ...persistedSettings.custom,
+                    ...body.custom || {},
+                    ...body.voiceEndpoint ? { endpoint: body.voiceEndpoint } : {},
+                    ...body.voiceModel ? { model: body.voiceModel } : {},
+                    ...body.voiceProvider === "custom" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                  },
+                  sessionPromptTtlMinutes: body.sessionPromptTtlMinutes ?? persistedSettings.sessionPromptTtlMinutes
+                });
                 await saveDashboardSettings(state.stateDirectory, persistedSettings);
-                const effectiveProvider = persistedSettings.voiceProvider ?? "groq";
-                const effectiveKey = persistedSettings.voiceApiKey ?? (effectiveProvider === "groq" ? process.env.GROQ_API_KEY : effectiveProvider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : effectiveProvider === "openai" ? process.env.OPENAI_API_KEY : undefined);
-                const effectiveAccountId = persistedSettings.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID;
-                if (effectiveKey) {
+                const activeProvider = persistedSettings.activeProvider ?? "cloudflare";
+                let activeKey;
+                let activeAccountId;
+                let activeEndpoint;
+                let activeModel;
+                if (activeProvider === "cloudflare") {
+                  activeKey = persistedSettings.cloudflare?.apiToken;
+                  activeAccountId = persistedSettings.cloudflare?.accountId;
+                } else if (activeProvider === "groq") {
+                  activeKey = persistedSettings.groq?.apiKey;
+                } else if (activeProvider === "openai") {
+                  activeKey = persistedSettings.openai?.apiKey;
+                } else if (activeProvider === "custom") {
+                  activeKey = persistedSettings.custom?.apiKey || "custom";
+                  activeEndpoint = persistedSettings.custom?.endpoint;
+                  activeModel = persistedSettings.custom?.model;
+                }
+                if (activeKey) {
                   const newTranscriber = new VoiceTranscriber({
-                    apiKey: effectiveKey,
-                    accountId: effectiveAccountId,
-                    provider: effectiveProvider,
-                    endpoint: persistedSettings.voiceEndpoint,
-                    model: persistedSettings.voiceModel
+                    apiKey: activeKey,
+                    accountId: activeAccountId,
+                    provider: activeProvider,
+                    endpoint: activeEndpoint,
+                    model: activeModel
                   });
                   telegramRuntimeRef.value?.setTranscriber(newTranscriber);
                 }
@@ -21271,4 +21342,4 @@ export {
   runBroker
 };
 
-//# debugId=4611D1880D5E584D64756E2164756E21
+//# debugId=F66FF08595AEA54064756E2164756E21
