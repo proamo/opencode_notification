@@ -280,9 +280,13 @@ export class RouteRegistry {
             });
           }
         }
-      } else if (conn.projectLabel) {
+      } else {
+        const label =
+          conn.projectLabel ||
+          conn.workspacePath?.split(/[/\\]/).filter(Boolean).pop() ||
+          `專案視窗 (${conn.instanceId.slice(0, 6)})`;
         machine.projects.push({
-          projectLabel: conn.projectLabel,
+          projectLabel: label,
         });
       }
     }
