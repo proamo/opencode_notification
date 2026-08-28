@@ -80,6 +80,14 @@ async function saveDashboardSettings(
   await writeFile(filePath, JSON.stringify(settings, null, 2), "utf-8");
 }
 
+async function readJsonBody<T>(request: Request): Promise<T> {
+  const text = await request.text();
+  if (!text || !text.trim()) {
+    return {} as T;
+  }
+  return JSON.parse(text) as T;
+}
+
 const HealthResponseSchema = z.object({
   service: z.literal("opencode-telegram-link"),
   machineId: z.uuid(),
@@ -357,13 +365,13 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = (await request.json()) as {
+                const body = await readJsonBody<{
                   provider: "groq" | "openai" | "cloudflare" | "custom";
                   apiKey?: string;
                   accountId?: string;
                   endpoint?: string;
                   model?: string;
-                };
+                }>(request);
 
                 const apiKey =
                   body.apiKey?.trim() ||
@@ -457,11 +465,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = (await request.json()) as {
+                const body = await readJsonBody<{
                   target?: string;
                   prompt: string;
                   sessionId?: string;
-                };
+                }>(request);
                 if (!body.prompt?.trim()) {
                   return Response.json(
                     { success: false, reason: "Prompt is required" },
@@ -553,7 +561,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = (await request.json()) as { sessionId: string };
+                const body = await readJsonBody<{ sessionId: string }>(request);
                 if (!body.sessionId?.trim()) {
                   return Response.json(
                     { success: false, reason: "Session ID is required" },
@@ -588,7 +596,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = (await request.json()) as DashboardSettings;
+                const body = await readJsonBody<DashboardSettings>(request);
                 persistedSettings = {
                   ...persistedSettings,
                   ...body,
