@@ -281,10 +281,7 @@ export class RouteRegistry {
           }
         }
       } else {
-        const label =
-          conn.projectLabel ||
-          conn.workspacePath?.split(/[/\\]/).filter(Boolean).pop() ||
-          `專案視窗 (${conn.instanceId.slice(0, 6)})`;
+        const label = conn.projectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
         machine.projects.push({
           projectLabel: label,
         });
