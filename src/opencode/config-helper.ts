@@ -362,21 +362,31 @@ export async function injectOpenCodeConfig(
     existing: unknown,
     updated: Record<string, unknown>,
   ): Record<string, unknown> {
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-      return updated;
-    }
+    const existingObj =
+      existing && typeof existing === "object" && !Array.isArray(existing)
+        ? (existing as Record<string, unknown>)
+        : {};
     const merged: Record<string, unknown> = {
-      ...(existing as Record<string, unknown>),
+      ...existingObj,
       ...updated,
     };
+
+    // Clean up role-exclusive credentials and options when role changes
+    if (updated.role === "node") {
+      delete merged.telegram;
+    } else if (updated.role === "gateway") {
+      delete merged.gateway;
+      delete merged.hostLabel;
+    }
+
     if (
-      typeof (existing as Record<string, unknown>).notifications === "object" &&
-      (existing as Record<string, unknown>).notifications !== null &&
+      typeof existingObj.notifications === "object" &&
+      existingObj.notifications !== null &&
       typeof updated.notifications === "object" &&
       updated.notifications !== null
     ) {
       merged.notifications = {
-        ...((existing as Record<string, unknown>).notifications as Record<string, unknown>),
+        ...(existingObj.notifications as Record<string, unknown>),
         ...(updated.notifications as Record<string, unknown>),
       };
     }

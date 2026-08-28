@@ -88,30 +88,14 @@ export type DashboardSettings = {
   voiceModel?: string | undefined;
 };
 
-function normalizeSettings(s: DashboardSettings): DashboardSettings {
+function normalizePersistedSettings(s: DashboardSettings): DashboardSettings {
   const activeProvider = s.activeProvider ?? s.voiceProvider ?? "cloudflare";
-  const cfAccountId =
-    s.cloudflare?.accountId ??
-    s.voiceAccountId ??
-    process.env.CLOUDFLARE_ACCOUNT_ID ??
-    process.env.CF_ACCOUNT_ID ??
-    "";
+  const cfAccountId = s.cloudflare?.accountId ?? s.voiceAccountId ?? "";
   const cfApiToken =
-    s.cloudflare?.apiToken ??
-    (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ??
-    process.env.CLOUDFLARE_API_TOKEN ??
-    process.env.CF_API_TOKEN ??
-    "";
-  const groqKey =
-    s.groq?.apiKey ??
-    (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ??
-    process.env.GROQ_API_KEY ??
-    "";
+    s.cloudflare?.apiToken ?? (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ?? "";
+  const groqKey = s.groq?.apiKey ?? (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ?? "";
   const openaiKey =
-    s.openai?.apiKey ??
-    (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ??
-    process.env.OPENAI_API_KEY ??
-    "";
+    s.openai?.apiKey ?? (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ?? "";
   const customEndpoint = s.custom?.endpoint ?? s.voiceEndpoint ?? "";
   const customKey =
     s.custom?.apiKey ?? (s.voiceProvider === "custom" ? s.voiceApiKey : undefined) ?? "";
@@ -124,6 +108,33 @@ function normalizeSettings(s: DashboardSettings): DashboardSettings {
     openai: { apiKey: openaiKey },
     custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
     sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200,
+  };
+}
+
+function getResolvedRuntimeSettings(persisted: DashboardSettings): DashboardSettings {
+  const cfAccountId =
+    persisted.cloudflare?.accountId ||
+    process.env.CLOUDFLARE_ACCOUNT_ID ||
+    process.env.CF_ACCOUNT_ID ||
+    "";
+  const cfApiToken =
+    persisted.cloudflare?.apiToken ||
+    process.env.CLOUDFLARE_API_TOKEN ||
+    process.env.CF_API_TOKEN ||
+    "";
+  const groqKey = persisted.groq?.apiKey || process.env.GROQ_API_KEY || "";
+  const openaiKey = persisted.openai?.apiKey || process.env.OPENAI_API_KEY || "";
+  const customEndpoint = persisted.custom?.endpoint || "";
+  const customKey = persisted.custom?.apiKey || "";
+  const customModel = persisted.custom?.model || "whisper-large-v3-turbo";
+
+  return {
+    activeProvider: persisted.activeProvider ?? "cloudflare",
+    cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+    groq: { apiKey: groqKey },
+    openai: { apiKey: openaiKey },
+    custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
+    sessionPromptTtlMinutes: persisted.sessionPromptTtlMinutes ?? 43200,
   };
 }
 
@@ -171,9 +182,9 @@ async function loadDashboardSettings(stateDirectory: string): Promise<DashboardS
   const filePath = join(stateDirectory, "dashboard-settings.json");
   try {
     const raw = await readFile(filePath, "utf-8");
-    return normalizeSettings(JSON.parse(raw) as DashboardSettings);
+    return normalizePersistedSettings(JSON.parse(raw) as DashboardSettings);
   } catch {
-    return normalizeSettings({});
+    return normalizePersistedSettings({});
   }
 }
 
@@ -447,7 +458,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             const uptimeFormatted =
               uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
 
-            const normalized = normalizeSettings(persistedSettings);
+            const normalized = getResolvedRuntimeSettings(persistedSettings);
             let activeKey: string | undefined;
             if (normalized.activeProvider === "cloudflare") {
               activeKey = normalized.cloudflare?.apiToken;
@@ -628,7 +639,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const sessionId = body.sessionId?.trim();
 
                 if (sessionId) {
-                  const route = registry.resolveBySessionId(sessionId);
+                  const route = registry.resolveBySessionId(sessionId, target);
                   if (!route) {
                     return Response.json(
                       { success: false, reason: `Session ${sessionId} not found or offline` },
@@ -681,14 +692,17 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = await readJsonBody<{ sessionId: string }>(request);
+                const body = await readJsonBody<{ sessionId: string; target?: string }>(request);
                 if (!body.sessionId?.trim()) {
                   return Response.json(
                     { success: false, reason: "Session ID is required" },
                     { status: 400 },
                   );
                 }
-                const route = registry.resolveBySessionId(body.sessionId.trim());
+                const route = registry.resolveBySessionId(
+                  body.sessionId.trim(),
+                  body.target?.trim(),
+                );
                 if (!route) {
                   return Response.json(
                     { success: false, reason: "Session not found or offline" },
@@ -752,7 +766,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                     ? body.voiceApiKey?.trim()
                     : currentCustom.apiKey;
 
-                persistedSettings = normalizeSettings({
+                persistedSettings = normalizePersistedSettings({
                   activeProvider:
                     body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
                   cloudflare: {
@@ -775,23 +789,24 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 });
                 await saveDashboardSettings(state.stateDirectory, persistedSettings);
 
-                const activeProvider = persistedSettings.activeProvider ?? "cloudflare";
+                const resolved = getResolvedRuntimeSettings(persistedSettings);
+                const activeProvider = resolved.activeProvider ?? "cloudflare";
                 let activeKey: string | undefined;
                 let activeAccountId: string | undefined;
                 let activeEndpoint: string | undefined;
                 let activeModel: string | undefined;
 
                 if (activeProvider === "cloudflare") {
-                  activeKey = persistedSettings.cloudflare?.apiToken;
-                  activeAccountId = persistedSettings.cloudflare?.accountId;
+                  activeKey = resolved.cloudflare?.apiToken;
+                  activeAccountId = resolved.cloudflare?.accountId;
                 } else if (activeProvider === "groq") {
-                  activeKey = persistedSettings.groq?.apiKey;
+                  activeKey = resolved.groq?.apiKey;
                 } else if (activeProvider === "openai") {
-                  activeKey = persistedSettings.openai?.apiKey;
+                  activeKey = resolved.openai?.apiKey;
                 } else if (activeProvider === "custom") {
-                  activeKey = persistedSettings.custom?.apiKey;
-                  activeEndpoint = persistedSettings.custom?.endpoint;
-                  activeModel = persistedSettings.custom?.model;
+                  activeKey = resolved.custom?.apiKey;
+                  activeEndpoint = resolved.custom?.endpoint;
+                  activeModel = resolved.custom?.model;
                 }
 
                 if (activeKey) {
@@ -808,7 +823,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
                 return Response.json({
                   success: true,
-                  settings: maskDashboardSettings(persistedSettings),
+                  settings: maskDashboardSettings(resolved),
                 });
               } catch (err) {
                 return Response.json(

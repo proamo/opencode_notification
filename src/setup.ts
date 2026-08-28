@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { hostname, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -13,20 +13,30 @@ import {
 import { defaultStateDirectory } from "./state";
 import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "./telegram/api";
 
-export function resolveDockerComposeContext(cwd: string):
+export function resolveDockerComposeContext(
+  cwd: string = process.cwd(),
+  explicitComposePath?: string,
+):
   | {
       composeFile: string;
       projectDir: string;
     }
   | undefined {
-  const candidateFiles = [
-    join(cwd, "docker-compose.yml"),
+  if (explicitComposePath && existsSync(explicitComposePath)) {
+    return {
+      composeFile: explicitComposePath,
+      projectDir: dirname(explicitComposePath),
+    };
+  }
+
+  // Prioritize package-bundled compose files
+  const packageCandidates = [
     join(resolve(import.meta.dir, ".."), "docker-compose.yml"),
     join(resolve(import.meta.dir, "../.."), "docker-compose.yml"),
     join(import.meta.dir, "docker-compose.yml"),
   ];
 
-  for (const file of candidateFiles) {
+  for (const file of packageCandidates) {
     try {
       if (existsSync(file)) {
         return {
@@ -36,6 +46,21 @@ export function resolveDockerComposeContext(cwd: string):
       }
     } catch {}
   }
+
+  // Fallback to project cwd ONLY if it explicitly contains opencode-telegram-broker
+  const cwdCompose = join(cwd, "docker-compose.yml");
+  try {
+    if (existsSync(cwdCompose)) {
+      const content = readFileSync(cwdCompose, "utf8");
+      if (content.includes("opencode-telegram-broker") || content.includes("broker.Dockerfile")) {
+        return {
+          composeFile: cwdCompose,
+          projectDir: cwd,
+        };
+      }
+    }
+  } catch {}
+
   return undefined;
 }
 
@@ -531,6 +556,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     }
   }
 
+  let dockerFailed = false;
   if (isDocker) {
     stdout.write("│\n");
     const autoStartDocker = await reader.ask(
@@ -580,6 +606,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
               : "│  ✔ Docker Broker container started in background!\n",
           );
         } else {
+          dockerFailed = true;
           const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
           stdout.write(
             isZh
@@ -593,6 +620,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           );
         }
       } catch (err) {
+        dockerFailed = true;
         const msg = err instanceof Error ? err.message : String(err);
         stdout.write(
           isZh
@@ -656,6 +684,15 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   }
 
   stdout.write("│\n");
+  if (dockerFailed) {
+    stdout.write(
+      isZh
+        ? "└  ⚠ 設定檔已寫入，但 Docker 容器啟動失敗。請確認 Docker 服務運行後手動啟動容器。\n\n"
+        : "└  ⚠ Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.\n\n",
+    );
+    return 1;
+  }
+
   stdout.write(
     isZh
       ? "└  🎉 安裝設定完成！您現在可以回到 OpenCode 開始工作。\n\n"

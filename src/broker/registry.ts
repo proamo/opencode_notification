@@ -151,12 +151,45 @@ export class RouteRegistry {
     return undefined;
   }
 
-  resolveBySessionId(sessionId: string): RouteKey | undefined {
+  resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined {
+    const matches: RegisteredRoute[] = [];
     for (const registered of this.#routes.values()) {
       if (registered.route.sessionId === sessionId) {
-        return registered.route;
+        if (target) {
+          const conn = this.#connections.get(registered.connectionId);
+          if (
+            registered.route.machineId === target ||
+            registered.route.instanceId === target ||
+            registered.route.projectId === target ||
+            conn?.hostLabel === target ||
+            conn?.projectLabel === target ||
+            registered.projectLabel === target
+          ) {
+            matches.push(registered);
+          }
+        } else {
+          matches.push(registered);
+        }
       }
     }
+
+    const first = matches[0];
+    if (!first) return undefined;
+    if (matches.length === 1) return first.route;
+
+    // If all matches belong to the same instance & project (e.g. newer route generations), return latest
+    const allSameInstance = matches.every(
+      (m) =>
+        m.route.machineId === first.route.machineId &&
+        m.route.instanceId === first.route.instanceId &&
+        m.route.projectId === first.route.projectId,
+    );
+    if (allSameInstance) {
+      const last = matches[matches.length - 1];
+      return last ? last.route : first.route;
+    }
+
+    // Fail closed if ambiguous (multiple different instances/projects registered the same sessionId)
     return undefined;
   }
 

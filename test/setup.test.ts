@@ -574,20 +574,22 @@ describe("interactive uninstaller wizard", () => {
     expect(parsed.plugin).toEqual({});
   });
 
-  test("resolveDockerComposeContext locates docker-compose.yml in project or package directory", async () => {
-    const emptyWorkspace = await createTemporaryDirectory();
-    // Empty workspace should fall back to package directory compose file
-    const resolved = resolveDockerComposeContext(emptyWorkspace);
+  test("resolveDockerComposeContext prioritizes package compose and ignores unrelated foreign compose files", async () => {
+    const foreignWorkspace = await createTemporaryDirectory();
+    // Workspace with unrelated foreign docker-compose.yml (e.g. standard web app)
+    const foreignCompose = join(foreignWorkspace, "docker-compose.yml");
+    await writeFile(foreignCompose, "services:\n  web:\n    image: nginx\n", "utf8");
+
+    // Must prioritize package-provided docker-compose.yml instead of user's foreign web app
+    const resolved = resolveDockerComposeContext(foreignWorkspace);
     expect(resolved).toBeDefined();
+    expect(resolved?.composeFile).not.toBe(foreignCompose);
     expect(resolved?.composeFile).toContain("docker-compose.yml");
 
-    // When workspace has its own docker-compose.yml, prioritize project cwd
-    const customCompose = join(emptyWorkspace, "docker-compose.yml");
-    await writeFile(customCompose, "services:\n  broker:\n    image: custom\n", "utf8");
-    const customResolved = resolveDockerComposeContext(emptyWorkspace);
-    expect(customResolved).toBeDefined();
-    expect(customResolved?.composeFile).toBe(customCompose);
-    expect(customResolved?.projectDir).toBe(emptyWorkspace);
+    // Explicit path takes highest precedence
+    const explicit = resolveDockerComposeContext(foreignWorkspace, foreignCompose);
+    expect(explicit).toBeDefined();
+    expect(explicit?.composeFile).toBe(foreignCompose);
   });
 });
 

@@ -101,4 +101,65 @@ describe("Route Security & Strict Resolution", () => {
     expect(resolvedSameInstance).toBeDefined();
     expect(resolvedSameInstance?.route.instanceId).toBe(instanceIdA);
   });
+
+  test("resolveBySessionId fails closed on ambiguous session collision across instances unless target is provided", () => {
+    const registry = new RouteRegistry();
+    const connA = randomUUID();
+    const connB = randomUUID();
+    const machineId = randomUUID();
+    const instanceIdA = randomUUID();
+    const instanceIdB = randomUUID();
+    const sharedSessionId = "ses_collision_999";
+
+    const fakeSocketA = {
+      data: { connectionId: connA },
+      send: () => {},
+      close: () => {},
+    } as unknown as Parameters<typeof registry.registerConnection>[0];
+
+    const fakeSocketB = {
+      data: { connectionId: connB },
+      send: () => {},
+      close: () => {},
+    } as unknown as Parameters<typeof registry.registerConnection>[0];
+
+    registry.registerConnection(fakeSocketA, instanceIdA, machineId, "Node-A", "Project-A");
+    registry.registerConnection(fakeSocketB, instanceIdB, machineId, "Node-B", "Project-B");
+
+    registry.registerRoute(connA, {
+      route: {
+        machineId,
+        instanceId: instanceIdA,
+        projectId: "proj_a_1234567890",
+        sessionId: sharedSessionId,
+        routeGeneration: randomUUID(),
+      },
+      projectLabel: "Project-A",
+      sessionLabel: "Session 1",
+    });
+
+    registry.registerRoute(connB, {
+      route: {
+        machineId,
+        instanceId: instanceIdB,
+        projectId: "proj_b_1234567890",
+        sessionId: sharedSessionId,
+        routeGeneration: randomUUID(),
+      },
+      projectLabel: "Project-B",
+      sessionLabel: "Session 1",
+    });
+
+    // Ambiguous lookup without target MUST fail-closed (return undefined)
+    expect(registry.resolveBySessionId(sharedSessionId)).toBeUndefined();
+
+    // Disambiguated lookup with target resolves to the correct instance
+    const resolvedA = registry.resolveBySessionId(sharedSessionId, "Project-A");
+    expect(resolvedA).toBeDefined();
+    expect(resolvedA?.instanceId).toBe(instanceIdA);
+
+    const resolvedB = registry.resolveBySessionId(sharedSessionId, "Project-B");
+    expect(resolvedB).toBeDefined();
+    expect(resolvedB?.instanceId).toBe(instanceIdB);
+  });
 });

@@ -30,4 +30,20 @@ describe("broker container image contract", () => {
     expect(dockerignore).toContain("src");
     expect(dockerignore).toContain(".gitnexus");
   });
+
+  test("entrypoint.sh has valid POSIX shebang, no UTF-8 BOM, and adapts container UID to bind mount", async () => {
+    const rawBuffer = await Bun.file(join(root, "container", "entrypoint.sh")).arrayBuffer();
+    const bytes = new Uint8Array(rawBuffer);
+
+    // Byte 0 and 1 must strictly be '#!' (0x23, 0x21) - NO UTF-8 BOM (0xEF, 0xBB, 0xBF)
+    expect(bytes[0]).toBe(0x23);
+    expect(bytes[1]).toBe(0x21);
+
+    const script = new TextDecoder().decode(bytes);
+    expect(script.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(script).not.toContain("\r\n"); // POSIX LF line endings
+    expect(script).toContain("STATE_UID=$(stat -c '%u' /state");
+    expect(script).toContain('usermod -o -u "$STATE_UID" opencode');
+    expect(script).toContain("exec gosu opencode bun /app/dist/broker/main.js");
+  });
 });

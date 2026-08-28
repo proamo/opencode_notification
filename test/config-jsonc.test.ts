@@ -195,4 +195,71 @@ describe("JSONC Parsing & Config Injection Security", () => {
     expect(options.notifications.pluginBufferSize).toBe(50);
     expect(options.customOption).toBe("preserved-value");
   });
+
+  test("injectOpenCodeConfig removes stale role credentials when switching role from node to gateway", async () => {
+    const configPath = join(tempDir, "switch-role.json");
+    // Start with Node configuration (which has gateway.secret and hostLabel)
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          plugin: [
+            [
+              "opencode-telegram-link",
+              {
+                role: "node",
+                hostLabel: "Old-Node-Host",
+                gateway: {
+                  url: "ws://192.168.1.100:42617/v1/connect",
+                  secret: "old_node_secret_123",
+                },
+                customSetting: "keep-me",
+              },
+            ],
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    // Switch role to gateway (with Telegram credentials)
+    const gatewayConfig = NotifierConfigSchema.parse({
+      mode: "local",
+      role: "gateway",
+      locale: "en",
+      telegram: {
+        tokenFile: "/path/to/token",
+        userId: "999888777",
+        chatId: "999888777",
+      },
+      notifications: {
+        completion: true,
+        error: true,
+        question: true,
+        permission: true,
+      },
+    });
+
+    await injectOpenCodeConfig(configPath, gatewayConfig);
+
+    const writtenContent = await readFile(configPath, "utf8");
+    const parsed = JSON.parse(writtenContent);
+    const options = parsed.plugin[0][1];
+
+    expect(options.role).toBe("gateway");
+    expect(options.telegram).toEqual({
+      tokenFile: "/path/to/token",
+      userId: "999888777",
+      chatId: "999888777",
+    });
+
+    // Stale node-only fields must be cleaned up
+    expect(options.gateway).toBeUndefined();
+    expect(options.hostLabel).toBeUndefined();
+
+    // Custom option must remain
+    expect(options.customSetting).toBe("keep-me");
+  });
 });

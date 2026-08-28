@@ -1,7 +1,7 @@
 import { type NotifierConfig } from "./config";
 import type { SupportedLocale } from "./i18n";
 import { type TelegramBot } from "./telegram/api";
-export declare function resolveDockerComposeContext(cwd: string): {
+export declare function resolveDockerComposeContext(cwd?: string, explicitComposePath?: string): {
     composeFile: string;
     projectDir: string;
 } | undefined;

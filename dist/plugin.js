@@ -15929,16 +15929,20 @@ async function injectOpenCodeConfig(targetPath, config2) {
     return false;
   };
   function mergePluginOptions(existing, updated) {
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-      return updated;
-    }
+    const existingObj = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
     const merged = {
-      ...existing,
+      ...existingObj,
       ...updated
     };
-    if (typeof existing.notifications === "object" && existing.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
+    if (updated.role === "node") {
+      delete merged.telegram;
+    } else if (updated.role === "gateway") {
+      delete merged.gateway;
+      delete merged.hostLabel;
+    }
+    if (typeof existingObj.notifications === "object" && existingObj.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
       merged.notifications = {
-        ...existing.notifications,
+        ...existingObj.notifications,
         ...updated.notifications
       };
     }
@@ -16900,4 +16904,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=6F35C4F64CF2136264756E2164756E21
+//# debugId=21BF11356AD5B96664756E2164756E21

@@ -32,7 +32,7 @@ export declare class RouteRegistry {
     }): RegisteredRoute;
     unregisterRoute(connectionId: string, route: RouteKey): boolean;
     resolve(route: RouteKey): RegisteredRoute | undefined;
-    resolveBySessionId(sessionId: string): RouteKey | undefined;
+    resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined;
     owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined;
     ownerByInstance(instanceId: string): ServerWebSocket<BrokerConnectionData> | undefined;
     removeConnection(connectionId: string): void;

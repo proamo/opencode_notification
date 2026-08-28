@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, startBroker } from "../src/broker/server";
@@ -172,5 +172,39 @@ describe("Web Dashboard", () => {
     expect(summaryData.voice?.groq?.hasApiKey).toBe(true);
     expect(summaryData.voice?.groq?.maskedKey).toContain("••••");
     expect(summaryData.voice?.groq?.apiKey).toBeUndefined();
+  });
+
+  test("environment variable API keys are not persisted to disk when saving settings", async () => {
+    const originalEnv = process.env.GROQ_API_KEY;
+    process.env.GROQ_API_KEY = "gsk_env_secret_key_123456789";
+
+    try {
+      const saveRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/settings`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${brokerSecret}`,
+        },
+        body: JSON.stringify({
+          sessionPromptTtlMinutes: 1440,
+        }),
+      });
+
+      expect(saveRes.status).toBe(200);
+
+      // Verify the raw json file on disk does NOT contain the environment variable key
+      const diskPath = join(stateDirectory, "dashboard-settings.json");
+      const diskRaw = await readFile(diskPath, "utf8");
+      const diskParsed = JSON.parse(diskRaw);
+      expect(diskParsed.sessionPromptTtlMinutes).toBe(1440);
+      expect(diskParsed.groq?.apiKey).not.toBe("gsk_env_secret_key_123456789");
+      expect(diskRaw).not.toContain("gsk_env_secret_key_123456789");
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.GROQ_API_KEY = originalEnv;
+      } else {
+        delete process.env.GROQ_API_KEY;
+      }
+    }
   });
 });

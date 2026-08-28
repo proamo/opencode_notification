@@ -14518,7 +14518,7 @@ var DiagnosticSchema = exports_external.object({
 
 // src/setup.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { chmod as chmod3, lstat as lstat5, mkdir as mkdir3, open as open2, readFile as readFile5, rename as rename4, rm as rm2, writeFile as writeFile3 } from "fs/promises";
 import { hostname as hostname3, platform as platform4 } from "os";
 import { dirname as dirname2, join as join5, resolve as resolve2 } from "path";
@@ -15791,16 +15791,20 @@ async function injectOpenCodeConfig(targetPath, config2) {
     return false;
   };
   function mergePluginOptions(existing, updated) {
-    if (!existing || typeof existing !== "object" || Array.isArray(existing)) {
-      return updated;
-    }
+    const existingObj = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
     const merged = {
-      ...existing,
+      ...existingObj,
       ...updated
     };
-    if (typeof existing.notifications === "object" && existing.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
+    if (updated.role === "node") {
+      delete merged.telegram;
+    } else if (updated.role === "gateway") {
+      delete merged.gateway;
+      delete merged.hostLabel;
+    }
+    if (typeof existingObj.notifications === "object" && existingObj.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
       merged.notifications = {
-        ...existing.notifications,
+        ...existingObj.notifications,
         ...updated.notifications
       };
     }
@@ -16653,14 +16657,19 @@ class TelegramApiError extends Error {
 }
 
 // src/setup.ts
-function resolveDockerComposeContext(cwd) {
-  const candidateFiles = [
-    join5(cwd, "docker-compose.yml"),
+function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
+  if (explicitComposePath && existsSync(explicitComposePath)) {
+    return {
+      composeFile: explicitComposePath,
+      projectDir: dirname2(explicitComposePath)
+    };
+  }
+  const packageCandidates = [
     join5(resolve2(import.meta.dir, ".."), "docker-compose.yml"),
     join5(resolve2(import.meta.dir, "../.."), "docker-compose.yml"),
     join5(import.meta.dir, "docker-compose.yml")
   ];
-  for (const file2 of candidateFiles) {
+  for (const file2 of packageCandidates) {
     try {
       if (existsSync(file2)) {
         return {
@@ -16670,6 +16679,18 @@ function resolveDockerComposeContext(cwd) {
       }
     } catch {}
   }
+  const cwdCompose = join5(cwd, "docker-compose.yml");
+  try {
+    if (existsSync(cwdCompose)) {
+      const content = readFileSync(cwdCompose, "utf8");
+      if (content.includes("opencode-telegram-broker") || content.includes("broker.Dockerfile")) {
+        return {
+          composeFile: cwdCompose,
+          projectDir: cwd
+        };
+      }
+    }
+  } catch {}
   return;
 }
 
@@ -17056,6 +17077,7 @@ ${generatePluginConfigSnippet(configData)}
 `);
     }
   }
+  let dockerFailed = false;
   if (isDocker) {
     stdout.write(`\u2502
 `);
@@ -17092,6 +17114,7 @@ ${generatePluginConfigSnippet(configData)}
 ` : `\u2502  \u2714 Docker Broker container started in background!
 `);
         } else {
+          dockerFailed = true;
           const stderr2 = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
           stdout.write(isZh ? `\u2502  \u2716 Docker \u81EA\u52D5\u555F\u52D5\u672A\u6210\u529F${stderr2 ? ` (${stderr2})` : ""}\uFF08\u8ACB\u78BA\u8A8D Docker Desktop \u662F\u5426\u904B\u884C\u4E2D\uFF09\u3002
 ` : `\u2502  \u2716 Docker start failed${stderr2 ? ` (${stderr2})` : ""} (please check if Docker is running).
@@ -17101,6 +17124,7 @@ ${generatePluginConfigSnippet(configData)}
 `);
         }
       } catch (err) {
+        dockerFailed = true;
         const msg = err instanceof Error ? err.message : String(err);
         stdout.write(isZh ? `\u2502  \u2716 Docker \u555F\u52D5\u5931\u6557: ${msg}\uFF0C\u60A8\u53EF\u65BC\u5B89\u88DD/\u555F\u52D5 Docker \u5F8C\u624B\u52D5\u57F7\u884C docker compose up -d
 ` : `\u2502  \u2716 Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.
@@ -17156,6 +17180,14 @@ You will receive notifications here when sessions finish or require input.
   }
   stdout.write(`\u2502
 `);
+  if (dockerFailed) {
+    stdout.write(isZh ? `\u2514  \u26A0 \u8A2D\u5B9A\u6A94\u5DF2\u5BEB\u5165\uFF0C\u4F46 Docker \u5BB9\u5668\u555F\u52D5\u5931\u6557\u3002\u8ACB\u78BA\u8A8D Docker \u670D\u52D9\u904B\u884C\u5F8C\u624B\u52D5\u555F\u52D5\u5BB9\u5668\u3002
+
+` : `\u2514  \u26A0 Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.
+
+`);
+    return 1;
+  }
   stdout.write(isZh ? `\u2514  \uD83C\uDF89 \u5B89\u88DD\u8A2D\u5B9A\u5B8C\u6210\uFF01\u60A8\u73FE\u5728\u53EF\u4EE5\u56DE\u5230 OpenCode \u958B\u59CB\u5DE5\u4F5C\u3002
 
 ` : `\u2514  \uD83C\uDF89 Setup completed! You can now return to OpenCode and start working.
@@ -17482,11 +17514,29 @@ class RouteRegistry {
     }
     return;
   }
-  resolveBySessionId(sessionId) {
+  resolveBySessionId(sessionId, target) {
+    const matches = [];
     for (const registered of this.#routes.values()) {
       if (registered.route.sessionId === sessionId) {
-        return registered.route;
+        if (target) {
+          const conn = this.#connections.get(registered.connectionId);
+          if (registered.route.machineId === target || registered.route.instanceId === target || registered.route.projectId === target || conn?.hostLabel === target || conn?.projectLabel === target || registered.projectLabel === target) {
+            matches.push(registered);
+          }
+        } else {
+          matches.push(registered);
+        }
       }
+    }
+    const first = matches[0];
+    if (!first)
+      return;
+    if (matches.length === 1)
+      return first.route;
+    const allSameInstance = matches.every((m) => m.route.machineId === first.route.machineId && m.route.instanceId === first.route.instanceId && m.route.projectId === first.route.projectId);
+    if (allSameInstance) {
+      const last = matches[matches.length - 1];
+      return last ? last.route : first.route;
     }
     return;
   }
@@ -19846,12 +19896,12 @@ var DEFAULT_MAINTENANCE_INTERVAL_MS = 60000;
 var DEFAULT_COMMAND_TIMEOUT_MS = 1e4;
 var DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2000;
 var NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60000;
-function normalizeSettings(s) {
+function normalizePersistedSettings(s) {
   const activeProvider = s.activeProvider ?? s.voiceProvider ?? "cloudflare";
-  const cfAccountId = s.cloudflare?.accountId ?? s.voiceAccountId ?? process.env.CLOUDFLARE_ACCOUNT_ID ?? process.env.CF_ACCOUNT_ID ?? "";
-  const cfApiToken = s.cloudflare?.apiToken ?? (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ?? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN ?? "";
-  const groqKey = s.groq?.apiKey ?? (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ?? process.env.GROQ_API_KEY ?? "";
-  const openaiKey = s.openai?.apiKey ?? (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ?? process.env.OPENAI_API_KEY ?? "";
+  const cfAccountId = s.cloudflare?.accountId ?? s.voiceAccountId ?? "";
+  const cfApiToken = s.cloudflare?.apiToken ?? (s.voiceProvider === "cloudflare" ? s.voiceApiKey : undefined) ?? "";
+  const groqKey = s.groq?.apiKey ?? (s.voiceProvider === "groq" ? s.voiceApiKey : undefined) ?? "";
+  const openaiKey = s.openai?.apiKey ?? (s.voiceProvider === "openai" ? s.voiceApiKey : undefined) ?? "";
   const customEndpoint = s.custom?.endpoint ?? s.voiceEndpoint ?? "";
   const customKey = s.custom?.apiKey ?? (s.voiceProvider === "custom" ? s.voiceApiKey : undefined) ?? "";
   const customModel = s.custom?.model ?? s.voiceModel ?? "whisper-large-v3-turbo";
@@ -19862,6 +19912,23 @@ function normalizeSettings(s) {
     openai: { apiKey: openaiKey },
     custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
     sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200
+  };
+}
+function getResolvedRuntimeSettings(persisted) {
+  const cfAccountId = persisted.cloudflare?.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID || "";
+  const cfApiToken = persisted.cloudflare?.apiToken || process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN || "";
+  const groqKey = persisted.groq?.apiKey || process.env.GROQ_API_KEY || "";
+  const openaiKey = persisted.openai?.apiKey || process.env.OPENAI_API_KEY || "";
+  const customEndpoint = persisted.custom?.endpoint || "";
+  const customKey = persisted.custom?.apiKey || "";
+  const customModel = persisted.custom?.model || "whisper-large-v3-turbo";
+  return {
+    activeProvider: persisted.activeProvider ?? "cloudflare",
+    cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
+    groq: { apiKey: groqKey },
+    openai: { apiKey: openaiKey },
+    custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
+    sessionPromptTtlMinutes: persisted.sessionPromptTtlMinutes ?? 43200
   };
 }
 function maskSecret(val) {
@@ -19908,9 +19975,9 @@ async function loadDashboardSettings(stateDirectory) {
   const filePath = join6(stateDirectory, "dashboard-settings.json");
   try {
     const raw = await readFile6(filePath, "utf-8");
-    return normalizeSettings(JSON.parse(raw));
+    return normalizePersistedSettings(JSON.parse(raw));
   } catch {
-    return normalizeSettings({});
+    return normalizePersistedSettings({});
   }
 }
 async function saveDashboardSettings(stateDirectory, settings) {
@@ -20118,7 +20185,7 @@ async function startBroker(options = {}) {
             const uptimeMinutes = Math.floor(uptimeMs / 60000);
             const uptimeHours = Math.floor(uptimeMinutes / 60);
             const uptimeFormatted = uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
-            const normalized = normalizeSettings(persistedSettings);
+            const normalized = getResolvedRuntimeSettings(persistedSettings);
             let activeKey;
             if (normalized.activeProvider === "cloudflare") {
               activeKey = normalized.cloudflare?.apiToken;
@@ -20257,7 +20324,7 @@ async function startBroker(options = {}) {
                 const target = body.target?.trim();
                 const sessionId = body.sessionId?.trim();
                 if (sessionId) {
-                  const route = registry2.resolveBySessionId(sessionId);
+                  const route = registry2.resolveBySessionId(sessionId, target);
                   if (!route) {
                     return Response.json({ success: false, reason: `Session ${sessionId} not found or offline` }, { status: 404 });
                   }
@@ -20299,7 +20366,7 @@ async function startBroker(options = {}) {
                 if (!body.sessionId?.trim()) {
                   return Response.json({ success: false, reason: "Session ID is required" }, { status: 400 });
                 }
-                const route = registry2.resolveBySessionId(body.sessionId.trim());
+                const route = registry2.resolveBySessionId(body.sessionId.trim(), body.target?.trim());
                 if (!route) {
                   return Response.json({ success: false, reason: "Session not found or offline" }, { status: 404 });
                 }
@@ -20330,7 +20397,7 @@ async function startBroker(options = {}) {
                 const updatedGroqApiKey = !isMaskedOrEmpty(body.groq?.apiKey) ? body.groq?.apiKey?.trim() : body.voiceProvider === "groq" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentGroq.apiKey;
                 const updatedOpenAiApiKey = !isMaskedOrEmpty(body.openai?.apiKey) ? body.openai?.apiKey?.trim() : body.voiceProvider === "openai" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentOpenAi.apiKey;
                 const updatedCustomApiKey = !isMaskedOrEmpty(body.custom?.apiKey) ? body.custom?.apiKey?.trim() : body.voiceProvider === "custom" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentCustom.apiKey;
-                persistedSettings = normalizeSettings({
+                persistedSettings = normalizePersistedSettings({
                   activeProvider: body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
                   cloudflare: {
                     accountId: updatedCfAccountId,
@@ -20350,22 +20417,23 @@ async function startBroker(options = {}) {
                   sessionPromptTtlMinutes: body.sessionPromptTtlMinutes ?? persistedSettings.sessionPromptTtlMinutes
                 });
                 await saveDashboardSettings(state.stateDirectory, persistedSettings);
-                const activeProvider = persistedSettings.activeProvider ?? "cloudflare";
+                const resolved = getResolvedRuntimeSettings(persistedSettings);
+                const activeProvider = resolved.activeProvider ?? "cloudflare";
                 let activeKey;
                 let activeAccountId;
                 let activeEndpoint;
                 let activeModel;
                 if (activeProvider === "cloudflare") {
-                  activeKey = persistedSettings.cloudflare?.apiToken;
-                  activeAccountId = persistedSettings.cloudflare?.accountId;
+                  activeKey = resolved.cloudflare?.apiToken;
+                  activeAccountId = resolved.cloudflare?.accountId;
                 } else if (activeProvider === "groq") {
-                  activeKey = persistedSettings.groq?.apiKey;
+                  activeKey = resolved.groq?.apiKey;
                 } else if (activeProvider === "openai") {
-                  activeKey = persistedSettings.openai?.apiKey;
+                  activeKey = resolved.openai?.apiKey;
                 } else if (activeProvider === "custom") {
-                  activeKey = persistedSettings.custom?.apiKey;
-                  activeEndpoint = persistedSettings.custom?.endpoint;
-                  activeModel = persistedSettings.custom?.model;
+                  activeKey = resolved.custom?.apiKey;
+                  activeEndpoint = resolved.custom?.endpoint;
+                  activeModel = resolved.custom?.model;
                 }
                 if (activeKey) {
                   telegramRuntimeRef.value?.setTranscriber(new VoiceTranscriber({
@@ -20378,7 +20446,7 @@ async function startBroker(options = {}) {
                 }
                 return Response.json({
                   success: true,
-                  settings: maskDashboardSettings(persistedSettings)
+                  settings: maskDashboardSettings(resolved)
                 });
               } catch (err) {
                 return Response.json({ success: false, reason: err.message }, { status: 500 });
@@ -21736,4 +21804,4 @@ export {
   runBroker
 };
 
-//# debugId=D6354AE41D53F43A64756E2164756E21
+//# debugId=3201CF2416DFF39264756E2164756E21
