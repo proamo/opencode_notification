@@ -617,10 +617,10 @@ export function renderDashboardHtml(): string {
         const seenOptions = new Set();
         data.machines.forEach(m => {
           (m.projects || []).forEach(p => {
-            const key = `[${m.hostLabel || 'Host'}] ${p.projectLabel}`;
+            const key = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
             if (!seenOptions.has(key)) {
               seenOptions.add(key);
-              options += `<option value="${p.projectLabel}">${key}</option>`;
+              options += '<option value="' + p.projectLabel + '">' + key + '</option>';
             }
           });
         });
