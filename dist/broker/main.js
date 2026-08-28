@@ -17234,7 +17234,7 @@ function publicBot(bot) {
 
 // src/uninstall.ts
 import { rm as rm4 } from "fs/promises";
-import { homedir as homedir3 } from "os";
+import { homedir as homedir3, tmpdir } from "os";
 import { join as join8 } from "path";
 
 // src/broker/registry.ts
@@ -21312,8 +21312,12 @@ async function runInteractiveUninstall(options = {}) {
       await rm4(`${dbPath}-wal`, { force: true });
       await rm4(`${dbPath}-shm`, { force: true });
       await rm4(discoveryRecordPath(stateDirectory), { force: true });
-      stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u5DF2\u6E05\u9664\u3002
-` : `\u2502  \u2714 Operational state database cleared.
+      await rm4(join8(stateDirectory, "dashboard-settings.json"), { force: true });
+      try {
+        await rm4(join8(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+      } catch {}
+      stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u63A7\u5236\u53F0\u8A2D\u5B9A\u6A94 (dashboard-settings.json) \u5DF2\u6E05\u9664\u3002
+` : `\u2502  \u2714 Operational state database & dashboard settings cleared.
 `);
     } catch {
       stdout.write(isZh ? `\u2502  - \u66AB\u5B58\u8CC7\u6599\u5EAB\u4E0D\u5B58\u5728\u6216\u5DF2\u6E05\u7406\u3002
@@ -21402,4 +21406,4 @@ export {
   runBroker
 };
 
-//# debugId=AE73D6F84C01E97F64756E2164756E21
+//# debugId=5A5D62702B521C5A64756E2164756E21
