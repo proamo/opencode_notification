@@ -153,8 +153,14 @@ export async function runInteractiveUninstall(
       await rm(`${dbPath}-wal`, { force: true });
       await rm(`${dbPath}-shm`, { force: true });
       await rm(discoveryRecordPath(stateDirectory), { force: true });
+      await rm(join(stateDirectory, "dashboard-settings.json"), { force: true });
+      try {
+        await rm(join(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+      } catch {}
       stdout.write(
-        isZh ? "│  ✔ 運作暫存資料庫已清除。\n" : "│  ✔ Operational state database cleared.\n",
+        isZh
+          ? "│  ✔ 運作暫存資料庫與控制台設定檔 (dashboard-settings.json) 已清除。\n"
+          : "│  ✔ Operational state database & dashboard settings cleared.\n",
       );
     } catch {
       stdout.write(
