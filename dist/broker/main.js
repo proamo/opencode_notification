@@ -17393,21 +17393,32 @@ class RouteRegistry {
       if (conn.hostLabel) {
         machine.hostLabel = conn.hostLabel;
       }
-      if (conn.routeKeys.size > 0) {
-        for (const routeKey of conn.routeKeys) {
-          const reg = this.#routes.get(routeKey);
-          if (reg) {
-            machine.projects.push({
-              projectLabel: reg.projectLabel,
-              sessionLabel: reg.sessionLabel,
-              sessionId: reg.route.sessionId
-            });
+      let primaryProjectLabel = conn.projectLabel;
+      const activeSessions = [];
+      for (const routeKey of conn.routeKeys) {
+        const reg = this.#routes.get(routeKey);
+        if (reg) {
+          if (!primaryProjectLabel) {
+            primaryProjectLabel = reg.projectLabel;
           }
+          activeSessions.push({
+            sessionId: reg.route.sessionId,
+            sessionLabel: reg.sessionLabel
+          });
         }
-      } else {
-        const label2 = conn.projectLabel || `\u5C08\u6848\u8996\u7A97 (${conn.instanceId.slice(0, 6)})`;
+      }
+      const finalProjectLabel = primaryProjectLabel || `\u5C08\u6848\u8996\u7A97 (${conn.instanceId.slice(0, 6)})`;
+      const firstSession = activeSessions[0];
+      if (firstSession) {
+        const sessionCountSuffix = activeSessions.length > 1 ? ` (+${activeSessions.length - 1} \u500B\u4EFB\u52D9)` : "";
         machine.projects.push({
-          projectLabel: label2
+          projectLabel: finalProjectLabel,
+          sessionLabel: `${firstSession.sessionLabel}${sessionCountSuffix}`,
+          sessionId: firstSession.sessionId
+        });
+      } else {
+        machine.projects.push({
+          projectLabel: finalProjectLabel
         });
       }
     }
@@ -19389,9 +19400,14 @@ function renderDashboardHtml() {
         // Populate dispatch target dropdown
         const currentTarget = targetSelect.value;
         let options = '<option value="">-- \u81EA\u52D5\u5075\u6E2C / \u552F\u4E00\u5728\u7DDA\u5C08\u6848 --</option>';
+        const seenOptions = new Set();
         data.machines.forEach(m => {
           (m.projects || []).forEach(p => {
-            options += \`<option value="\${p.projectLabel}">[\${m.hostLabel || 'Host'}] \${p.projectLabel}</option>\`;
+            const key = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
+            if (!seenOptions.has(key)) {
+              seenOptions.add(key);
+              options += '<option value="' + p.projectLabel + '">' + key + '</option>';
+            }
           });
         });
         targetSelect.innerHTML = options;
@@ -21386,4 +21402,4 @@ export {
   runBroker
 };
 
-//# debugId=64686510E63A174064756E2164756E21
+//# debugId=AE73D6F84C01E97F64756E2164756E21
