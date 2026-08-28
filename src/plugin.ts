@@ -8,6 +8,7 @@ import { loadResolvedNotifierConfig, OpenCodeEventBridge } from "./opencode";
 import { BrokerClient } from "./plugin/client";
 import { runOpenCodeCommand } from "./plugin/commands";
 import { deriveProjectId, loadOrCreateStateIdentity } from "./state/identity";
+import { PACKAGE_VERSION } from "./version";
 
 function trace(msg: string) {
   try {
@@ -62,7 +63,7 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
-    packageVersion: "1.0.0-rc.1",
+    packageVersion: PACKAGE_VERSION,
     openCodeVersion: "1.18.x",
     ...(botToken && configData.telegram
       ? {

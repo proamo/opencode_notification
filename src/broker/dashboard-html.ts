@@ -1,3 +1,5 @@
+import { PACKAGE_VERSION } from "../version";
+
 export function renderDashboardHtml(): string {
   return `<!DOCTYPE html>
 <html lang="zh-TW">
@@ -253,7 +255,7 @@ export function renderDashboardHtml(): string {
     <div class="brand">
       <span class="brand-logo">🤖</span>
       <span class="brand-title">OpenCode Commander</span>
-      <span class="brand-badge">v1.0.0-rc.1</span>
+      <span class="brand-badge">v${PACKAGE_VERSION}</span>
     </div>
     <div class="header-status">
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -451,7 +453,7 @@ export function renderDashboardHtml(): string {
   <div id="toast"></div>
 
   <footer>
-    OpenCode Telegram Link v1.0.0-rc.1 • Privacy-first remote development and monitoring
+    OpenCode Telegram Link v${PACKAGE_VERSION} • Privacy-first remote development and monitoring
   </footer>
 
   <script>

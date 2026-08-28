@@ -38,6 +38,7 @@ import {
   type UpdateDisposition,
   VoiceTranscriber,
 } from "../telegram";
+import { PACKAGE_VERSION } from "../version";
 import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
@@ -509,7 +510,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
             return Response.json({
               service: "opencode-telegram-link",
-              version: "1.0.0-rc.1",
+              version: PACKAGE_VERSION,
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
               uptimeMs,
@@ -1272,7 +1273,7 @@ class BrokerTelegramRuntime {
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "1.0.0-rc.1",
+              packageVersion: PACKAGE_VERSION,
             });
 
             await input.api.sendMessage({
@@ -1310,7 +1311,7 @@ class BrokerTelegramRuntime {
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "1.0.0-rc.1",
+              packageVersion: PACKAGE_VERSION,
             });
             await input.api.sendMessage({
               chatId: input.config.chatId,

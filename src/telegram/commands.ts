@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RouteRegistry } from "../broker/registry";
 import { type SupportedLocale, translate } from "../i18n";
 import type { BrokerCommand, CommandResult } from "../protocol";
+import { PACKAGE_VERSION } from "../version";
 
 export type SlashCommandContext = {
   text: string;
@@ -103,7 +104,7 @@ function renderGatewayStatus(context: SlashCommandContext, locale: SupportedLoca
   const lines = [
     translate(locale, "cmd.status.title"),
     "",
-    `🏢 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "1.0.0-rc.1"}</code>`,
+    `🏢 <b>Gateway Version:</b> <code>v${context.packageVersion ?? PACKAGE_VERSION}</code>`,
     `⏱️ <b>Uptime:</b> <code>${uptimeString}</code>`,
     `💾 <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
     `🌐 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,

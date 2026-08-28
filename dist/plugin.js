@@ -16720,6 +16720,9 @@ async function runSessionSpawnCommand(client, directory, command) {
   }
 }
 
+// src/version.ts
+var PACKAGE_VERSION = "1.0.0-rc.1";
+
 // src/plugin.ts
 function trace(msg) {
   try {
@@ -16771,7 +16774,7 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
     gatewayUrl: configData.gateway?.url,
     gatewaySecret: configData.gateway?.secret,
     configFingerprint: computeNotifierConfigFingerprint(configData),
-    packageVersion: "1.0.0-rc.1",
+    packageVersion: PACKAGE_VERSION,
     openCodeVersion: "1.18.x",
     ...botToken && configData.telegram ? {
       telegram: {
@@ -16907,4 +16910,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=6D799B2A2709A26964756E2164756E21
+//# debugId=966C28E1A52B77B964756E2164756E21

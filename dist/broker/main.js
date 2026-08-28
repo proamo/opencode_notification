@@ -17973,6 +17973,11 @@ function rejectionHash(updateId, reason) {
 }
 // src/telegram/commands.ts
 import { randomUUID as randomUUID4 } from "crypto";
+
+// src/version.ts
+var PACKAGE_VERSION = "1.0.0-rc.1";
+
+// src/telegram/commands.ts
 function isSlashCommand(text) {
   if (!text)
     return false;
@@ -18051,7 +18056,7 @@ function renderGatewayStatus(context, locale) {
   const lines = [
     translate(locale, "cmd.status.title"),
     "",
-    `\uD83C\uDFE2 <b>Gateway Version:</b> <code>v${context.packageVersion ?? "1.0.0-rc.1"}</code>`,
+    `\uD83C\uDFE2 <b>Gateway Version:</b> <code>v${context.packageVersion ?? PACKAGE_VERSION}</code>`,
     `\u23F1\uFE0F <b>Uptime:</b> <code>${uptimeString}</code>`,
     `\uD83D\uDCBE <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
     `\uD83C\uDF10 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,
@@ -19271,7 +19276,7 @@ function renderDashboardHtml() {
     <div class="brand">
       <span class="brand-logo">\uD83E\uDD16</span>
       <span class="brand-title">OpenCode Commander</span>
-      <span class="brand-badge">v1.0.0-rc.1</span>
+      <span class="brand-badge">v${PACKAGE_VERSION}</span>
     </div>
     <div class="header-status">
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -19469,7 +19474,7 @@ function renderDashboardHtml() {
   <div id="toast"></div>
 
   <footer>
-    OpenCode Telegram Link v1.0.0-rc.1 \u2022 Privacy-first remote development and monitoring
+    OpenCode Telegram Link v${PACKAGE_VERSION} \u2022 Privacy-first remote development and monitoring
   </footer>
 
   <script>
@@ -20282,7 +20287,7 @@ async function startBroker(options = {}) {
             }
             return Response.json({
               service: "opencode-telegram-link",
-              version: "1.0.0-rc.1",
+              version: PACKAGE_VERSION,
               machineId: state.machineId,
               protocol: PROTOCOL_VERSION,
               uptimeMs,
@@ -20858,7 +20863,7 @@ class BrokerTelegramRuntime {
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "1.0.0-rc.1"
+              packageVersion: PACKAGE_VERSION
             });
             await input.api.sendMessage({
               chatId: input.config.chatId,
@@ -20895,7 +20900,7 @@ ${replyText}`,
               registry: input.registry,
               dispatcher: input.dispatcher,
               startedAt: this.#startedAt,
-              packageVersion: "1.0.0-rc.1"
+              packageVersion: PACKAGE_VERSION
             });
             await input.api.sendMessage({
               chatId: input.config.chatId,
@@ -21888,4 +21893,4 @@ export {
   runBroker
 };
 
-//# debugId=6EBC0456B5B1BE2664756E2164756E21
+//# debugId=6FD6A1E06755B2B164756E2164756E21

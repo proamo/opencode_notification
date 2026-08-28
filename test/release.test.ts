@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PACKAGE_VERSION } from "../src/version";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -43,6 +44,7 @@ describe("release configuration", () => {
 
     expect(changelog).toContain("# Changelog");
     expect(changelog).toContain(`## ${packageJson.version} - `);
+    expect(PACKAGE_VERSION).toBe(packageJson.version);
     expect(smoke).toContain("publishConfig.provenance must be true");
     expect(smoke).toContain("packed artifact is missing");
     expect(smoke).toContain("plugin default export is missing");
