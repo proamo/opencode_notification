@@ -1,23 +1,35 @@
-# OpenCode Telegram Notifier
+# OpenCode Telegram Notifier & OpenCode Commander
 
-OpenCode Telegram Notifier 是一個注重隱私與多專案精確路由的 OpenCode 外掛。它專為同時執行多個專案、多台電腦（開發主機、筆電、線上 VPS）的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並支援**手機端即時權限審批按鈕**、**選擇題按鈕點擊**、**AI 執行結論摘要**與**多主機標籤識別**，確保使用者從 Telegram 做的每一則互動都能精準送回當初發出通知的那個主機、專案與工作階段（Session）。
+OpenCode Telegram Notifier 是一個注重隱私、支援多主機集中控制與遠端主動派工的 OpenCode 外掛與控制中樞（Gateway）。它專為同時執行多個專案、多台電腦（開發主機、筆電、線上 VPS）的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並提供全新 **Web 控制台 (OpenCode Commander)**、**遠端主動派工**、**多核心語音辨識**、**一鍵權限審批**與**多主機標籤識別**，確保使用者無論在 Telegram 或是網頁看板上的每一次操作都能精準送回目標主機、專案與工作視窗。
 
-> 目前版本：**v2.0.0**（支援多主機 Hub-and-Spoke Gateway、節點 Agent 連線、主機標籤、Telegram 互動按鈕、遠端權限審批與 AI 執行結論）。
+> 目前版本：**v3.0.0**（OpenCode Commander Web 控制台、遠端主動派工、多核心語音 STT、多主機 Hub-and-Spoke Gateway、節點 Agent、Telegram 互動按鈕與 AI 執行結論）。
 > 目前狀態：pre-release implementation，尚未發布 npm 公開版本。
 
 [English Documentation](../README.md)
 
 ---
 
-## V2.0 核心功能與特色
+## V3.0 核心功能與特色
 
+- 🖥️ **OpenCode Commander（Web 視覺化控制台）**：內建現代化毛玻璃質感網頁控制台（預設 `http://<gateway-ip>:42617/dashboard`），即時掌握叢集狀態與運行指標。
+- 🌐 **叢集拓撲總覽 (Cluster Topology)**：1 對 1 精準對齊所有連線電腦與 VS Code 工作區視窗，即時呈現多任務進度與待命狀態。
+- 🚀 **遠端主動派工 (Proactive Remote Dispatch)**：免回電腦開視窗！直接在網頁看板或 Telegram 傳送 Prompt / 語音，即刻喚醒指定電腦或待命視窗開啟新任務！
+- 🎙️ **多核心語音極速轉譯 (Multi-Engine Voice STT)**：
+  - **Cloudflare Workers AI**（`@cf/openai/whisper-large-v3-turbo`，每日 1 萬次免費額度）。
+  - **Groq Whisper**（極速推論，支援 `whisper-large-v3-turbo`）。
+  - **OpenAI Whisper**（經典 `whisper-1` 引擎）。
+  - **自訂 / 自架 Whisper Endpoint**。
+  - **多引擎金鑰獨立持久化保留**：切換語音核心絕不覆蓋或遺失其他家 Token。
+  - **看板即時連線與驗證**：一鍵測試 API Key 連通性與轉譯測試。
+- 📱 **手機與平板 RWD 響應式設計**：自動適應窄螢幕，導航橫向滑動、卡片單欄排列、表格橫向滾動，手機操作流暢直覺。
+- 🛑 **即時任務中止 (Live Session Cancel)**：在網頁或 Telegram 按鈕上一鍵中止已失控或不需要的 Session。
 - 🌐 **多主機 Hub-and-Spoke Gateway 拓撲**：打破單機限制！透過單一 Telegram Bot 統一掌控多台電腦（公司電腦、MacBook、線上 VPS），完全免除訊息搶奪與 `409 Conflict` 衝突。
 - 🏷️ **主機身分標籤 (Host Tagging)**：推播頂部醒目標示來源主機（例如 `🖥️ [MacBook]` 或 `☁️ [Live-VPS]`），一目了然。
 - 🔄 **跨主機精準逆向路由 (Cross-Host Routing)**：在手機點擊按鈕或回覆文字，Central Gateway 自動分發指令精準回到該主機與 Session。
 - 🔘 **Telegram 互動式按鈕**：敏感操作（Bash 指令 / 檔案修改）觸發時，提供 `[ ✅ 允許本次 ]`、`[ ⚡ 總是允許 ]`、`[ ❌ 拒絕 ]` 一鍵遠端審批！
 - 📝 **AI 執行結論摘要**：任務完成時自動生成簡明扼要的執行結論，不用回到電腦看螢幕就知道做了什麼。
 - ⏰ **主機在地化時間**：通知時間直接採用安裝主機的本地時區（例如台北時間 UTC+8）。
-- 🔄 **Session-level 熱轉發**：支援跨夜排程回覆，即使 OpenCode 程序重新連線也能自動路由至最新活躍實例。
+- 🧹 **一鍵安全移除精靈 (`bun run uninstall`)**：提供乾淨的互動式移除工具，安全清理狀態資料庫、Token 與 `opencode.json` 外掛配置。
 - 🌐 **繁體中文與英文雙語**：完整的繁體中文（`zh-TW`）與英文（`en`）介面與提示。
 
 ---
@@ -87,6 +99,53 @@ bun run setup
 5. 📝 **自動寫入外掛設定**：自動偵測全域與專案的 `opencode.json` 一鍵注入配置（自動建立 `.bak` 備份）。
 6. 🚀 **自動啟動 Broker**：選 Docker 模式時自動於背景啟動容器；選原生模式時完成配置。
 7. 💬 **發送測試通知**：發送歡迎測試訊息到您的 Telegram，即刻驗收成果！
+
+---
+
+## 🖥️ OpenCode Commander（Web 視覺化控制台）
+
+Gateway 啟動後，直接透過瀏覽器開啟：
+
+```text
+http://localhost:42617/dashboard
+# 或在區域網路/手機瀏覽器開啟：
+http://<gateway-ip>:42617/dashboard
+```
+
+### 看板四大功能分頁：
+1. 🖥️ **拓撲總覽 (Nodes)**：
+   - 1 對 1 精準顯示所有連線主機與 VS Code 工作區視窗。
+   - 即時狀態呈現：活躍 Session、執行中子任務數量（Subagents），以及待命視窗標籤。
+   - 點擊卡片旁的 **`🚀 派工`** 即可直接指派任務。
+2. 📝 **活躍工作 (Sessions)**：
+   - 全叢集即時任務流清單。
+   - 支援一鍵點擊 **`🛑 中止`** 即刻取消正在進行的任務。
+3. 🚀 **遠端派工 (Dispatch)**：
+   - 自由挑選目標主機與工作視窗（支援自動偵測）。
+   - 輸入 Prompt 並點擊 **`🚀 立即發送派工`**，即刻喚醒指定視窗執行任務。
+4. ⚙️ **系統設定 (Settings)**：
+   - 設定 **語音辨識核心 (Voice STT)**：支援 Cloudflare Workers AI、Groq Whisper、OpenAI Whisper 與自訂 Endpoint。
+   - **多引擎金鑰獨立持久化儲存**：自由切換引擎，其他家 API Key / Token 絕不被覆蓋或遺失。
+   - 內建 **`⚡ 測試連線與驗證金鑰`** 一鍵診斷測試區塊。
+   - 熱重載機制：修改語音引擎即時生效，無需重啟 Gateway。
+
+---
+
+## 🎙️ Telegram 語音輸入操作
+
+您可以直接在 Telegram 對 Bot 傳送語音訊息或音訊檔案！Gateway 將自動轉譯語音文字並執行指令：
+
+1. **Cloudflare Workers AI（推薦首選）**：
+   - 模型：`@cf/openai/whisper-large-v3-turbo`
+   - 免費額度：**每日 1 萬次免費轉譯**。
+   - 需填寫：Cloudflare Account ID 與 API Token。
+2. **Groq Whisper**：
+   - 模型：`whisper-large-v3-turbo` / `whisper-large-v3`
+   - 極速推論反應時間。
+   - 需填寫：Groq API Key (`gsk_...`)。
+3. **OpenAI Whisper**：
+   - 模型：`whisper-1`
+   - 需填寫：OpenAI API Key (`sk-...`)。
 
 ---
 

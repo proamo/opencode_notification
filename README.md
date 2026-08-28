@@ -1,22 +1,36 @@
-# OpenCode Telegram Notifier
+# OpenCode Telegram Notifier & OpenCode Commander
 
-OpenCode Telegram Notifier is a privacy-first OpenCode plugin for asynchronous notifications, interactive inline buttons, and safe remote replies. It is designed for developers who run OpenCode across multiple projects and multiple computers (dev machine, laptop, VPS) while routing every Telegram interaction to the exact originating host, process, and session.
+OpenCode Telegram Notifier is a privacy-first OpenCode plugin and multi-host management gateway for asynchronous notifications, interactive inline buttons, safe remote replies, and proactive remote task dispatching. It is designed for developers who run OpenCode across multiple projects and multiple computers (dev machine, laptop, VPS) while routing every Telegram and Web interaction to the exact originating host, process, and workspace window.
 
-> Version: **v2.0.0** (Multi-Host Gateway & Node Agent Architecture, Host Tagging, Remote Permission Approvals & AI Execution Summaries).
+> Version: **v3.0.0** (OpenCode Commander Web Dashboard, Proactive Remote Dispatch, Multi-Engine Voice STT, Multi-Host Gateway & Node Agent Architecture).
 > Status: Pre-release implementation. Install from a release tarball or source checkout until the first public npm package is published.
 
-[繁體中文總覽](docs/README.zh-TW.md)
+[繁體中文總覽 (Traditional Chinese)](docs/README.zh-TW.md)
 
-## V2.0 Features & Highlights
+---
 
-- **Multi-Host Hub-and-Spoke Gateway**: Control multiple computers (e.g. Office PC, MacBook, Live VPS) from a single Telegram Bot without message collisions (`409 Conflict`).
-- **Host Tagging**: Notification headers prominently display the origin machine (e.g., `🖥️ [MacBook]` or `☁️ [Live-VPS]`).
-- **Cross-Host Reverse Routing**: Tap buttons or reply to any notification—the Central Gateway routes commands back to the exact machine and session.
-- **Interactive Inline Buttons**: Single-tap remote permission approvals (`[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, `[ ❌ Reject ]`) and question option selections.
-- **AI Execution Summaries**: Task completion notifications automatically include a concise AI-generated summary of actions taken.
-- **Host Local Time**: Timestamps formatted in the server host's local timezone.
-- **Session Hot Fallback**: Seamless message routing across OpenCode restarts, reconnects, and scheduled Telegram replies.
-- **Bilingual Support**: Full Traditional Chinese (`zh-TW`) and English (`en`) notifications and guidance.
+## V3.0 Features & Highlights
+
+- 🖥️ **OpenCode Commander (Web GUI Dashboard)**: Built-in modern Glassmorphism Web Console (`http://<gateway-ip>:42617/dashboard`) providing real-time visibility, live metrics, and centralized cluster management.
+- 🌐 **Cluster Topology & 1-to-1 Window Mapping**: Live cards for all connected computers and OpenCode workspace windows with real-time session indicators and task counters.
+- 🚀 **Proactive Remote Dispatch**: Dispatch new prompts and start new tasks on any connected machine or idle project window directly from the Web Dashboard or Telegram voice/text—no need to switch to VS Code!
+- 🎙️ **Multi-Engine Voice Transcription (Voice STT)**:
+  - **Cloudflare Workers AI** (`@cf/openai/whisper-large-v3-turbo` with 10,000 free requests/day).
+  - **Groq Whisper** (`whisper-large-v3-turbo` / `whisper-large-v3`).
+  - **OpenAI Whisper** (`whisper-1`).
+  - **Custom / Self-Hosted Whisper Endpoint**.
+  - **Independent Multi-Provider Credentials Retention**: Switch between speech providers seamlessly without losing API tokens.
+  - **Live Key Verification & Connection Testing**: In-dashboard one-click authentication and ping testing.
+- 📱 **Mobile & Tablet Responsive Web Design (RWD)**: Touch-friendly navigation tabs, auto-stacking cards, and horizontal scrollable session tables for full smartphone/tablet control.
+- 🛑 **Live Session Cancellation**: One-click remote task cancellation (`[ 🛑 Cancel ]`) from the Web Dashboard or Telegram inline buttons.
+- 🌐 **Multi-Host Hub-and-Spoke Gateway**: Control multiple computers (e.g. Office PC, MacBook, Live VPS) from a single Telegram Bot without message collisions (`409 Conflict`).
+- 🏷️ **Host Tagging**: Notification headers prominently display the origin machine (e.g., `🖥️ [MacBook]` or `☁️ [Live-VPS]`).
+- 🔄 **Cross-Host Reverse Routing**: Tap buttons or reply to any notification—the Central Gateway routes commands back to the exact machine and session.
+- 🔘 **Interactive Inline Buttons**: Single-tap remote permission approvals (`[ ✅ Allow Once ]`, `[ ⚡ Always Allow ]`, `[ ❌ Reject ]`) and question option selections.
+- 📝 **AI Execution Summaries**: Task completion notifications automatically include a concise AI-generated summary of actions taken.
+- ⏰ **Host Local Time**: Timestamps formatted in the server host's local timezone.
+- 🧹 **Interactive Uninstaller**: One-command safe cleanup (`bun run uninstall`) for database, state, tokens, and `opencode.json` configurations.
+- 🌐 **Bilingual Support**: Full Traditional Chinese (`zh-TW`) and English (`en`) notifications and dashboard guidance.
 
 ## Architecture
 
@@ -77,6 +91,53 @@ The interactive wizard will:
 - Automatically save the token in a secure private state file (`0600`/`0700`).
 - Automatically detect and update your `opencode.json` configuration file.
 - Send a test welcome notification to your Telegram!
+
+---
+
+## 🖥️ OpenCode Commander (Web Dashboard)
+
+Once the Gateway is running, navigate to:
+
+```text
+http://localhost:42617/dashboard
+# Or from another device / smartphone:
+http://<gateway-ip>:42617/dashboard
+```
+
+### Dashboard Tabs & Capabilities:
+1. **🖥️ Cluster Topology (Nodes)**:
+   - Live overview of all connected machines and OpenCode workspace windows (1-to-1 live mapping).
+   - Real-time status: Active sessions, running subagent counts, and idle window indicators.
+   - One-click **`🚀 Dispatch`** to start a new prompt on any window.
+2. **📝 Active Sessions (Sessions)**:
+   - Live stream of all ongoing tasks across the entire cluster.
+   - One-click **`🛑 Cancel`** to immediately abort runaway tasks.
+3. **🚀 Proactive Remote Dispatch (Dispatch)**:
+   - Select any connected machine / workspace (or auto-detect).
+   - Enter your prompt and click **`🚀 Dispatch Task`** to launch tasks remotely.
+4. **⚙️ System Settings (Settings)**:
+   - Configure **Voice STT Engine** (Cloudflare Workers AI, Groq Whisper, OpenAI Whisper, Custom Endpoint).
+   - **Independent Multi-Provider Credentials Retention**: Switch between providers without losing your saved API keys.
+   - In-dashboard **`⚡ Test & Verify Key`** connection diagnostic box.
+   - Dynamic zero-downtime hot reloading of speech engine credentials.
+
+---
+
+## 🎙️ Telegram Voice Input
+
+Send Telegram voice messages or audio files directly to the Bot! The Gateway transcribes voice messages using your configured speech engine:
+
+1. **Cloudflare Workers AI (Recommended)**:
+   - Model: `@cf/openai/whisper-large-v3-turbo`
+   - Free tier: **10,000 requests per day**.
+   - Requires: Cloudflare Account ID and API Token.
+2. **Groq Whisper**:
+   - Model: `whisper-large-v3-turbo` / `whisper-large-v3`
+   - Ultra-low latency transcription.
+   - Requires: Groq API Key (`gsk_...`).
+3. **OpenAI Whisper**:
+   - Model: `whisper-1`
+   - Requires: OpenAI API Key (`sk-...`).
 
 ---
 
