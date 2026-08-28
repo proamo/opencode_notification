@@ -47,12 +47,14 @@ describe("Web Dashboard", () => {
       connectionsCount: number;
       machines: unknown[];
       activeSessions: unknown[];
+      voice?: { provider: string };
     };
     expect(data.service).toBe("opencode-telegram-link");
     expect(data.version).toBe("3.0.0");
     expect(data.connectionsCount).toBe(0);
     expect(Array.isArray(data.machines)).toBe(true);
     expect(Array.isArray(data.activeSessions)).toBe(true);
+    expect(data.voice).toBeDefined();
   });
 
   test("handles dispatch validation when no targets are online", async () => {
@@ -82,6 +84,22 @@ describe("Web Dashboard", () => {
     const data = (await res.json()) as { success: boolean; reason: string };
     expect(data.success).toBe(false);
     expect(data.reason).toContain("not found");
+  });
+
+  test("handles test-voice missing credentials validation", async () => {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/test-voice`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "cloudflare",
+        apiKey: "cfut_test",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { success: boolean; error: string };
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("Account ID");
   });
 
   test("saves settings via /v1/api/dashboard/settings", async () => {

@@ -274,6 +274,14 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             const uptimeFormatted =
               uptimeHours > 0 ? `${uptimeHours}h ${uptimeMinutes % 60}m` : `${uptimeMinutes}m`;
 
+            const currentVoiceProvider = process.env.CLOUDFLARE_API_TOKEN
+              ? "cloudflare"
+              : process.env.GROQ_API_KEY
+                ? "groq"
+                : process.env.OPENAI_API_KEY
+                  ? "openai"
+                  : "none";
+
             return Response.json({
               service: "opencode-telegram-link",
               version: "3.0.0",
@@ -285,7 +293,116 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               routeCount: registry.routeCount,
               machines,
               activeSessions,
+              voice: {
+                provider: currentVoiceProvider,
+                hasGroqKey: Boolean(process.env.GROQ_API_KEY),
+                hasCloudflareToken: Boolean(
+                  process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN,
+                ),
+                hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+                accountId: process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID,
+              },
             });
+          }
+
+          if (url.pathname === "/v1/api/dashboard/test-voice") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = (await request.json()) as {
+                  provider: "groq" | "openai" | "cloudflare" | "custom";
+                  apiKey?: string;
+                  accountId?: string;
+                  endpoint?: string;
+                  model?: string;
+                };
+
+                const apiKey =
+                  body.apiKey?.trim() ||
+                  (body.provider === "groq"
+                    ? process.env.GROQ_API_KEY
+                    : body.provider === "cloudflare"
+                      ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
+                      : body.provider === "openai"
+                        ? process.env.OPENAI_API_KEY
+                        : undefined);
+
+                if (!apiKey) {
+                  return Response.json(
+                    { success: false, error: "請填寫 API 金鑰 / Token" },
+                    { status: 400 },
+                  );
+                }
+
+                if (body.provider === "cloudflare") {
+                  const accountId =
+                    body.accountId?.trim() ||
+                    process.env.CLOUDFLARE_ACCOUNT_ID ||
+                    process.env.CF_ACCOUNT_ID;
+                  if (!accountId) {
+                    return Response.json(
+                      { success: false, error: "Cloudflare 必須提供 Account ID" },
+                      { status: 400 },
+                    );
+                  }
+                }
+
+                const transcriber = new VoiceTranscriber({
+                  apiKey,
+                  ...(body.accountId ? { accountId: body.accountId.trim() } : {}),
+                  provider: body.provider,
+                  ...(body.endpoint ? { endpoint: body.endpoint.trim() } : {}),
+                  ...(body.model ? { model: body.model.trim() } : {}),
+                });
+
+                // Generate 1-second 16kHz test PCM WAV
+                const sampleRate = 16000;
+                const numSamples = sampleRate;
+                const buffer = new Uint8Array(44 + numSamples * 2);
+                const view = new DataView(buffer.buffer);
+                buffer.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+                view.setUint32(4, 36 + numSamples * 2, true);
+                buffer.set([0x57, 0x41, 0x56, 0x45], 8); // WAVE
+                buffer.set([0x66, 0x6d, 0x74, 0x20], 12); // fmt
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true);
+                view.setUint16(22, 1, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * 2, true);
+                view.setUint16(32, 2, true);
+                view.setUint16(34, 16, true);
+                buffer.set([0x64, 0x61, 0x74, 0x61], 36); // data
+                view.setUint32(40, numSamples * 2, true);
+                for (let i = 0; i < numSamples; i++) {
+                  const sample = Math.sin((2 * Math.PI * 440 * i) / sampleRate) * 0.5 * 32767;
+                  view.setInt16(44 + i * 2, Math.floor(sample), true);
+                }
+
+                const start = performance.now();
+                const text = await transcriber.transcribe(buffer, {
+                  mimeType: "audio/wav",
+                  fileName: "test.wav",
+                });
+                const latencyMs = Math.round(performance.now() - start);
+
+                return Response.json({
+                  success: true,
+                  latencyMs,
+                  text: text || "(測試連線成功)",
+                  message: `連線驗證成功 (延遲: ${latencyMs}ms)`,
+                });
+              } catch (err) {
+                return Response.json(
+                  {
+                    success: false,
+                    error: err instanceof Error ? err.message : "連線驗證失敗",
+                  },
+                  { status: 400 },
+                );
+              }
+            })();
           }
 
           if (url.pathname === "/v1/api/dashboard/dispatch") {
