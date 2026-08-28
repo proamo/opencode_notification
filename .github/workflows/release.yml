@@ -34,8 +34,14 @@ jobs:
       - name: Verify release artifact
         run: bun run release:check
 
-      - name: Publish to npm
-        if: github.event_name == 'release'
-        run: npm publish --provenance --access public
+      - name: Determine dist-tag and publish
+        if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        run: |
+          DIST_TAG="latest"
+          if [ "${{ github.event.release.prerelease }}" = "true" ] || grep -q '"version": ".*-.*"' package.json; then
+            DIST_TAG="next"
+          fi
+          echo "Publishing to npm with --tag ${DIST_TAG}"
+          npm publish --provenance --access public --tag ${DIST_TAG}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
