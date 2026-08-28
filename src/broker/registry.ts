@@ -286,8 +286,7 @@ export class RouteRegistry {
         }
       }
 
-      const finalProjectLabel =
-        primaryProjectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
+      const finalProjectLabel = primaryProjectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
 
       const firstSession = activeSessions[0];
       if (firstSession) {
