@@ -269,21 +269,37 @@ export class RouteRegistry {
         machine.hostLabel = conn.hostLabel;
       }
 
-      if (conn.routeKeys.size > 0) {
-        for (const routeKey of conn.routeKeys) {
-          const reg = this.#routes.get(routeKey);
-          if (reg) {
-            machine.projects.push({
-              projectLabel: reg.projectLabel,
-              sessionLabel: reg.sessionLabel,
-              sessionId: reg.route.sessionId,
-            });
+      // Collect all active routes belonging to this connection
+      let primaryProjectLabel = conn.projectLabel;
+      const activeSessions: Array<{ sessionId: string; sessionLabel: string }> = [];
+
+      for (const routeKey of conn.routeKeys) {
+        const reg = this.#routes.get(routeKey);
+        if (reg) {
+          if (!primaryProjectLabel) {
+            primaryProjectLabel = reg.projectLabel;
           }
+          activeSessions.push({
+            sessionId: reg.route.sessionId,
+            sessionLabel: reg.sessionLabel,
+          });
         }
-      } else {
-        const label = conn.projectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
+      }
+
+      const finalProjectLabel =
+        primaryProjectLabel || `專案視窗 (${conn.instanceId.slice(0, 6)})`;
+
+      if (activeSessions.length > 0) {
+        const sessionCountSuffix =
+          activeSessions.length > 1 ? ` (+${activeSessions.length - 1} 個任務)` : "";
         machine.projects.push({
-          projectLabel: label,
+          projectLabel: finalProjectLabel,
+          sessionLabel: `${activeSessions[0].sessionLabel}${sessionCountSuffix}`,
+          sessionId: activeSessions[0].sessionId,
+        });
+      } else {
+        machine.projects.push({
+          projectLabel: finalProjectLabel,
         });
       }
     }

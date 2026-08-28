@@ -614,9 +614,14 @@ export function renderDashboardHtml(): string {
         // Populate dispatch target dropdown
         const currentTarget = targetSelect.value;
         let options = '<option value="">-- 自動偵測 / 唯一在線專案 --</option>';
+        const seenOptions = new Set();
         data.machines.forEach(m => {
           (m.projects || []).forEach(p => {
-            options += \`<option value="\${p.projectLabel}">[\${m.hostLabel || 'Host'}] \${p.projectLabel}</option>\`;
+            const key = `[${m.hostLabel || 'Host'}] ${p.projectLabel}`;
+            if (!seenOptions.has(key)) {
+              seenOptions.add(key);
+              options += `<option value="${p.projectLabel}">${key}</option>`;
+            }
           });
         });
         targetSelect.innerHTML = options;
