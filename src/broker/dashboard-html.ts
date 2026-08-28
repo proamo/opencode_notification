@@ -442,6 +442,7 @@ export function renderDashboardHtml(): string {
       const resBox = document.getElementById('test-voice-result');
       resBox.className = 'test-result-box';
       resBox.style.display = 'none';
+      resBox.innerHTML = '';
     }
 
     async function fetchSummary() {
@@ -625,6 +626,7 @@ export function renderDashboardHtml(): string {
     async function testCurrentVoiceProvider() {
       const provider = document.getElementById('setting-provider').value;
       const resBox = document.getElementById('test-voice-result');
+      const testBtn = event?.target || document.querySelector('#tab-settings .btn-secondary');
       
       let apiKey = '';
       let accountId = '';
@@ -635,8 +637,10 @@ export function renderDashboardHtml(): string {
         accountId = document.getElementById('cf-account-id').value.trim();
         apiKey = document.getElementById('cf-api-token').value.trim();
         if (!accountId) {
+          resBox.style.display = 'block';
           resBox.className = 'test-result-box error';
           resBox.textContent = '❌ 請填寫 Cloudflare Account ID！';
+          showToast('請填寫 Cloudflare Account ID', 'error');
           return;
         }
       } else if (provider === 'groq') {
@@ -649,8 +653,10 @@ export function renderDashboardHtml(): string {
         model = document.getElementById('custom-model').value.trim();
       }
 
+      resBox.style.display = 'block';
       resBox.className = 'test-result-box testing';
       resBox.textContent = '🔄 正在向 ' + provider + ' 發送音訊進行真實連線與權限驗證...';
+      showToast('🔄 正在連線驗證...', 'info');
 
       try {
         const res = await fetch('/v1/api/dashboard/test-voice', {
@@ -666,19 +672,24 @@ export function renderDashboardHtml(): string {
         });
 
         const data = await res.json();
+        resBox.style.display = 'block';
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
           resBox.innerHTML = '✔ <b>連線測試成功！</b> (' + data.message + ')<br>已確認此金鑰可正常轉譯語音，您可以點擊下方儲存並啟用。';
+          showToast('✔ 連線測試成功！', 'success');
         } else {
           testedVerifiedProvider = null;
           resBox.className = 'test-result-box error';
           resBox.textContent = '❌ 驗證失敗：' + (data.error || '無法連線至語音服務');
+          showToast('❌ 驗證失敗：' + (data.error || ''), 'error');
         }
       } catch (err) {
         testedVerifiedProvider = null;
+        resBox.style.display = 'block';
         resBox.className = 'test-result-box error';
         resBox.textContent = '❌ 測試請求出錯：' + err.message;
+        showToast('❌ 測試請求出錯：' + err.message, 'error');
       }
     }
 
