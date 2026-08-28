@@ -259,8 +259,9 @@ export function renderDashboardHtml(): string {
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="live-dot"></span>
         <span id="gateway-status-text">Gateway Online</span>
+        <span id="uptime-text">Uptime: 0m</span>
       </div>
-      <span id="uptime-text">Uptime: 0m</span>
+      <button class="btn btn-secondary" onclick="logout()" style="padding: 4px 10px; font-size: 12px; border-radius: 6px;">🔒 登出 (Logout)</button>
     </div>
   </header>
 
@@ -467,12 +468,19 @@ export function renderDashboardHtml(): string {
         .replace(/'/g, '&#39;');
     }
 
-    function getAuthToken() {
-      const urlToken = new URLSearchParams(window.location.search).get('token');
+    // Clean up sensitive token query param from browser address bar and history immediately upon page load
+    (function cleanUrlToken() {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
       if (urlToken) {
         sessionStorage.setItem('opencode_token', urlToken.trim());
-        return urlToken.trim();
+        params.delete('token');
+        const newSearch = params.toString() ? '?' + params.toString() : '';
+        history.replaceState({}, document.title, window.location.pathname + newSearch);
       }
+    })();
+
+    function getAuthToken() {
       return sessionStorage.getItem('opencode_token') || '';
     }
 
@@ -489,13 +497,42 @@ export function renderDashboardHtml(): string {
       return res;
     }
 
-    function promptAuthToken() {
+    async function promptAuthToken() {
       const currentToken = sessionStorage.getItem('opencode_token') || '';
       const input = prompt('🔒 請輸入 Gateway 存取金鑰 (Broker Secret) 以解鎖控制台：', currentToken);
       if (input != null && input.trim() !== '') {
-        sessionStorage.setItem('opencode_token', input.trim());
-        fetchSummary();
+        const secret = input.trim();
+        try {
+          const res = await fetch('/v1/api/dashboard/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: secret })
+          });
+          const data = await res.json();
+          if (data.success) {
+            sessionStorage.setItem('opencode_token', secret);
+            showToast('✔ 登入成功！', 'success');
+            fetchSummary();
+          } else {
+            showToast('❌ 金鑰驗證失敗', 'error');
+          }
+        } catch {
+          sessionStorage.setItem('opencode_token', secret);
+          fetchSummary();
+        }
       }
+    }
+
+    async function logout() {
+      if (!confirm('確定要登出並清除目前的控制台授權嗎？')) return;
+      try {
+        await fetch('/v1/api/dashboard/logout', { method: 'POST' });
+      } catch {}
+      sessionStorage.removeItem('opencode_token');
+      showToast('已登出', 'info');
+      setTimeout(() => {
+        window.location.reload();
+      }, 300);
     }
 
     function showToast(msg, type = 'info') {

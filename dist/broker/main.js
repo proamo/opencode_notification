@@ -17514,31 +17514,66 @@ class RouteRegistry {
     }
     return;
   }
-  resolveBySessionId(sessionId, target) {
-    const matches = [];
+  lookupSession(sessionIdOrPrefix, target) {
+    const trimmed = sessionIdOrPrefix.trim();
+    if (!trimmed)
+      return { status: "not_found" };
+    const lowerQuery = trimmed.toLowerCase();
+    const isPrefixSearch = trimmed.length >= 6;
+    const exactMatches = [];
+    const prefixMatches = [];
     for (const registered of this.#routes.values()) {
-      if (registered.route.sessionId === sessionId) {
-        if (target) {
-          const conn = this.#connections.get(registered.connectionId);
-          if (registered.route.machineId === target || registered.route.instanceId === target || registered.route.projectId === target || conn?.hostLabel === target || conn?.projectLabel === target || registered.projectLabel === target) {
-            matches.push(registered);
-          }
-        } else {
-          matches.push(registered);
-        }
+      const sid = registered.route.sessionId;
+      const lowerSid = sid.toLowerCase();
+      let targetMatched = true;
+      if (target) {
+        const conn = this.#connections.get(registered.connectionId);
+        targetMatched = Boolean(registered.route.machineId === target || registered.route.instanceId === target || registered.route.projectId === target || conn?.hostLabel === target || conn?.projectLabel === target || registered.projectLabel === target);
+      }
+      if (!targetMatched)
+        continue;
+      if (sid === trimmed || lowerSid === lowerQuery) {
+        exactMatches.push(registered);
+      } else if (isPrefixSearch && lowerSid.startsWith(lowerQuery)) {
+        prefixMatches.push(registered);
       }
     }
-    const first = matches[0];
-    if (!first)
-      return;
-    if (matches.length === 1)
-      return first.route;
-    const allSameInstance = matches.every((m) => m.route.machineId === first.route.machineId && m.route.instanceId === first.route.instanceId && m.route.projectId === first.route.projectId);
-    if (allSameInstance) {
-      const last = matches[matches.length - 1];
-      return last ? last.route : first.route;
+    const candidateMatches = exactMatches.length > 0 ? exactMatches : prefixMatches;
+    if (candidateMatches.length === 0) {
+      return { status: "not_found" };
     }
-    return;
+    const first = candidateMatches[0];
+    if (!first)
+      return { status: "not_found" };
+    const allSameInstance = candidateMatches.every((m) => m.route.machineId === first.route.machineId && m.route.instanceId === first.route.instanceId && m.route.projectId === first.route.projectId && m.route.sessionId === first.route.sessionId);
+    if (allSameInstance) {
+      const last = candidateMatches[candidateMatches.length - 1] ?? first;
+      const conn = this.#connections.get(last.connectionId);
+      return {
+        status: "found",
+        route: last.route,
+        projectLabel: last.projectLabel ?? conn?.projectLabel,
+        sessionLabel: last.sessionLabel,
+        hostLabel: conn?.hostLabel
+      };
+    }
+    const matchesSummary = candidateMatches.map((m) => {
+      const conn = this.#connections.get(m.connectionId);
+      return {
+        sessionId: m.route.sessionId,
+        projectLabel: m.projectLabel ?? conn?.projectLabel,
+        hostLabel: conn?.hostLabel,
+        instanceId: m.route.instanceId
+      };
+    });
+    return {
+      status: "ambiguous",
+      matches: matchesSummary
+    };
+  }
+  resolveBySessionId(sessionId, target) {
+    const result = this.lookupSession(sessionId, target);
+    return result.status === "found" ? result.route : undefined;
   }
   owner(route) {
     const registered = this.resolve(route);
@@ -17759,10 +17794,12 @@ var en = {
   "cmd.cancel.success": "\uD83D\uDED1 Task canceled successfully.",
   "cmd.cancel.failed": "\u274C Failed to cancel task.",
   "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
+  "cmd.cancel.ambiguous": "\u26A0\uFE0F Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "\uD83D\uDE80 Task dispatched successfully to",
   "cmd.run.failed": "\u274C Failed to dispatch task",
   "cmd.run.notFound": "\u26A0\uFE0F Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.ambiguous": "\u26A0\uFE0F Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.run.usage": `\u2139\uFE0F Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>
 Example: <code>/run adspower-farm check crawling logs</code>`,
   "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
@@ -17817,10 +17854,12 @@ var zhTW = {
   "cmd.cancel.success": "\uD83D\uDED1 \u4EFB\u52D9\u5DF2\u6210\u529F\u4E2D\u6B62\u3002",
   "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
   "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
+  "cmd.cancel.ambiguous": "\u26A0\uFE0F \u76EE\u6A19 Session \u4E0D\u660E\u78BA\uFF1A\u591A\u500B\u5DE5\u4F5C\u968E\u6BB5\u5339\u914D\u6B64 ID \u6216\u524D\u7DB4\u3002\u8ACB\u63D0\u4F9B\u5B8C\u6574 Session ID \u6216\u6307\u5B9A\u5C08\u6848\u540D\u7A31\u3002",
   "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "\uD83D\uDE80 \u4EFB\u52D9\u5DF2\u6210\u529F\u6307\u6D3E\u81F3",
   "cmd.run.failed": "\u274C \u4EFB\u52D9\u6307\u6D3E\u5931\u6557",
   "cmd.run.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A\u7684\u76EE\u6A19\u4E3B\u6A5F\u6216\u5C08\u6848\u3002\u8ACB\u5148\u8F38\u5165 /nodes \u78BA\u8A8D\u3002",
+  "cmd.run.ambiguous": "\u26A0\uFE0F \u76EE\u6A19 Session \u4E0D\u660E\u78BA\uFF1A\u591A\u500B\u5DE5\u4F5C\u968E\u6BB5\u5339\u914D\u6B64 ID \u6216\u524D\u7DB4\u3002\u8ACB\u63D0\u4F9B\u5B8C\u6574 Session ID \u6216\u6307\u5B9A\u5C08\u6848\u540D\u7A31\u3002",
   "cmd.run.usage": `\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/run &lt;\u4E3B\u6A5F\u6216\u5C08\u6848&gt; &lt;\u4EFB\u52D9\u6307\u4EE4&gt;</code>
 \u4F8B\u5982\uFF1A<code>/run adspower-farm \u8ACB\u6AA2\u67E5\u722C\u87F2\u65E5\u8A8C</code>`,
   "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
@@ -18072,30 +18111,18 @@ async function handleCancelCommand(args, context, locale) {
   if (!sessionId) {
     return translate(locale, "cmd.cancel.usage");
   }
-  const activeSessions = context.registry.listActiveSessions();
-  const target = activeSessions.find((s) => s.route.sessionId === sessionId || s.route.sessionId.startsWith(sessionId));
-  let targetRoute = target?.route;
-  if (!targetRoute) {
-    const dummyRoute = {
-      machineId: "00000000-0000-0000-0000-000000000000",
-      instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown-project-placeholder",
-      sessionId,
-      routeGeneration: "00000000-0000-0000-0000-000000000000"
-    };
-    const resolved = context.registry.resolve(dummyRoute);
-    if (resolved) {
-      targetRoute = resolved.route;
-    }
+  const lookup = context.registry.lookupSession(sessionId);
+  if (lookup.status === "ambiguous") {
+    return translate(locale, "cmd.cancel.ambiguous");
   }
-  if (!targetRoute) {
+  if (lookup.status === "not_found") {
     return translate(locale, "cmd.cancel.notFound");
   }
   const commandId = randomUUID4();
   const result = await context.dispatcher.sendCommand({
     type: "session.cancel",
     commandId,
-    route: targetRoute,
+    route: lookup.route,
     reason: "canceled via Telegram /cancel command"
   });
   if (result.status === "accepted") {
@@ -18109,51 +18136,36 @@ async function handleRunCommand(args, context, locale) {
   }
   const targetArg = args[0] ?? "";
   let prompt = args.slice(1).join(" ").trim();
-  const activeSessions = context.registry.listActiveSessions();
-  const sessionMatch = activeSessions.find((s) => s.route.sessionId.toLowerCase() === targetArg.toLowerCase() || targetArg.startsWith("ses_") && s.route.sessionId.toLowerCase().startsWith(targetArg.toLowerCase()));
-  let sessionRoute = sessionMatch?.route;
-  let sessionProjectLabel = sessionMatch?.projectLabel;
-  let sessionTitle = sessionMatch?.sessionLabel;
-  let sessionHost = sessionMatch?.hostLabel;
-  if (!sessionRoute && targetArg.startsWith("ses_")) {
-    const dummyRoute = {
-      machineId: "00000000-0000-0000-0000-000000000000",
-      instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown-project-placeholder",
-      sessionId: targetArg,
-      routeGeneration: "00000000-0000-0000-0000-000000000000"
-    };
-    const resolved = context.registry.resolve(dummyRoute);
-    if (resolved) {
-      sessionRoute = resolved.route;
-      sessionProjectLabel = resolved.projectLabel;
-      sessionTitle = resolved.sessionLabel;
-      sessionHost = resolved.hostLabel;
+  const isSessionCandidate = targetArg.startsWith("ses_") || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i.test(targetArg) || targetArg.length >= 6 && prompt.length > 0;
+  if (isSessionCandidate && prompt) {
+    const lookup = context.registry.lookupSession(targetArg);
+    if (lookup.status === "ambiguous") {
+      return translate(locale, "cmd.run.ambiguous");
     }
-  }
-  if (sessionRoute && prompt) {
-    const commandId2 = randomUUID4();
-    const result2 = await context.dispatcher.sendCommand({
-      type: "session.prompt",
-      commandId: commandId2,
-      route: sessionRoute,
-      text: prompt
-    });
-    if (result2.status === "accepted") {
-      const hostTag = sessionHost ? `[${sessionHost}] ` : "";
-      const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
-      const lines = [
-        locale === "zh-TW" ? `\uD83D\uDD04 <b>\u5DF2\u6210\u529F\u63A5\u7E8C\u81F3\u6B77\u53F2\u5DE5\u4F5C\u968E\u6BB5\uFF1A${hostTag}${sessionProjectLabel ?? "\u5C08\u6848"}</b>` : `\uD83D\uDD04 <b>Resumed session: ${hostTag}${sessionProjectLabel ?? "project"}</b>`,
-        "",
-        `\uD83D\uDCDD <b>Session:</b> <i>${sessionTitle ?? "\u4EFB\u52D9"}</i> (<code>${sessionRoute.sessionId}</code>)`,
-        `\uD83D\uDCAC <b>\u6307\u4EE4\uFF1A</b> <i>${promptDisplay}</i>`,
-        "",
-        locale === "zh-TW" ? "\u23F3 \u6B63\u5728\u8A72 Session \u4E0A\u4E0B\u6587\u4E2D\u57F7\u884C\uFF0C\u5B8C\u6210\u5F8C\u5C07\u81EA\u52D5\u63A8\u64AD\u7D50\u8AD6\uFF01" : "\u23F3 Running in existing session context, a notification will arrive upon completion."
-      ];
-      return lines.join(`
+    if (lookup.status === "found") {
+      const commandId2 = randomUUID4();
+      const result2 = await context.dispatcher.sendCommand({
+        type: "session.prompt",
+        commandId: commandId2,
+        route: lookup.route,
+        text: prompt
+      });
+      if (result2.status === "accepted") {
+        const hostTag = lookup.hostLabel ? `[${lookup.hostLabel}] ` : "";
+        const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+        const lines = [
+          locale === "zh-TW" ? `\uD83D\uDD04 <b>\u5DF2\u6210\u529F\u63A5\u7E8C\u81F3\u6B77\u53F2\u5DE5\u4F5C\u968E\u6BB5\uFF1A${hostTag}${lookup.projectLabel ?? "\u5C08\u6848"}</b>` : `\uD83D\uDD04 <b>Resumed session: ${hostTag}${lookup.projectLabel ?? "project"}</b>`,
+          "",
+          `\uD83D\uDCDD <b>Session:</b> <i>${lookup.sessionLabel ?? "\u4EFB\u52D9"}</i> (<code>${lookup.route.sessionId}</code>)`,
+          `\uD83D\uDCAC <b>\u6307\u4EE4\uFF1A</b> <i>${promptDisplay}</i>`,
+          "",
+          locale === "zh-TW" ? "\u23F3 \u6B63\u5728\u8A72 Session \u4E0A\u4E0B\u6587\u4E2D\u57F7\u884C\uFF0C\u5B8C\u6210\u5F8C\u5C07\u81EA\u52D5\u63A8\u64AD\u7D50\u8AD6\uFF01" : "\u23F3 Running in existing session context, a notification will arrive upon completion."
+        ];
+        return lines.join(`
 `);
+      }
+      return `${translate(locale, "cmd.run.failed")}: ${result2.reason ?? result2.status}`;
     }
-    return `${translate(locale, "cmd.run.failed")}: ${result2.reason ?? result2.status}`;
   }
   let targetConn = context.registry.findConnection(targetArg);
   if (!targetConn && args.length >= 3) {
@@ -18937,8 +18949,14 @@ class VoiceTranscriber {
       this.#endpoint = options.endpoint ?? "https://api.openai.com/v1/audio/transcriptions";
       this.#model = options.model ?? "whisper-1";
     } else if (this.#provider === "cloudflare") {
-      const accountId = this.#accountId ?? "2fa0dd0cbd72565d704fb330d85ad604";
-      this.#endpoint = options.endpoint ?? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/openai/whisper`;
+      if (options.endpoint) {
+        this.#endpoint = options.endpoint.trim();
+      } else {
+        if (!this.#accountId) {
+          throw new Error("Cloudflare voice provider requires accountId when using standard endpoint");
+        }
+        this.#endpoint = `https://api.cloudflare.com/client/v4/accounts/${this.#accountId}/ai/run/@cf/openai/whisper`;
+      }
       this.#model = options.model ?? "@cf/openai/whisper";
     } else {
       this.#endpoint = options.endpoint ?? "https://api.groq.com/openai/v1/audio/transcriptions";
@@ -19259,8 +19277,9 @@ function renderDashboardHtml() {
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="live-dot"></span>
         <span id="gateway-status-text">Gateway Online</span>
+        <span id="uptime-text">Uptime: 0m</span>
       </div>
-      <span id="uptime-text">Uptime: 0m</span>
+      <button class="btn btn-secondary" onclick="logout()" style="padding: 4px 10px; font-size: 12px; border-radius: 6px;">\uD83D\uDD12 \u767B\u51FA (Logout)</button>
     </div>
   </header>
 
@@ -19467,12 +19486,19 @@ function renderDashboardHtml() {
         .replace(/'/g, '&#39;');
     }
 
-    function getAuthToken() {
-      const urlToken = new URLSearchParams(window.location.search).get('token');
+    // Clean up sensitive token query param from browser address bar and history immediately upon page load
+    (function cleanUrlToken() {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
       if (urlToken) {
         sessionStorage.setItem('opencode_token', urlToken.trim());
-        return urlToken.trim();
+        params.delete('token');
+        const newSearch = params.toString() ? '?' + params.toString() : '';
+        history.replaceState({}, document.title, window.location.pathname + newSearch);
       }
+    })();
+
+    function getAuthToken() {
       return sessionStorage.getItem('opencode_token') || '';
     }
 
@@ -19489,13 +19515,42 @@ function renderDashboardHtml() {
       return res;
     }
 
-    function promptAuthToken() {
+    async function promptAuthToken() {
       const currentToken = sessionStorage.getItem('opencode_token') || '';
       const input = prompt('\uD83D\uDD12 \u8ACB\u8F38\u5165 Gateway \u5B58\u53D6\u91D1\u9470 (Broker Secret) \u4EE5\u89E3\u9396\u63A7\u5236\u53F0\uFF1A', currentToken);
       if (input != null && input.trim() !== '') {
-        sessionStorage.setItem('opencode_token', input.trim());
-        fetchSummary();
+        const secret = input.trim();
+        try {
+          const res = await fetch('/v1/api/dashboard/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: secret })
+          });
+          const data = await res.json();
+          if (data.success) {
+            sessionStorage.setItem('opencode_token', secret);
+            showToast('\u2714 \u767B\u5165\u6210\u529F\uFF01', 'success');
+            fetchSummary();
+          } else {
+            showToast('\u274C \u91D1\u9470\u9A57\u8B49\u5931\u6557', 'error');
+          }
+        } catch {
+          sessionStorage.setItem('opencode_token', secret);
+          fetchSummary();
+        }
       }
+    }
+
+    async function logout() {
+      if (!confirm('\u78BA\u5B9A\u8981\u767B\u51FA\u4E26\u6E05\u9664\u76EE\u524D\u7684\u63A7\u5236\u53F0\u6388\u6B0A\u55CE\uFF1F')) return;
+      try {
+        await fetch('/v1/api/dashboard/logout', { method: 'POST' });
+      } catch {}
+      sessionStorage.removeItem('opencode_token');
+      showToast('\u5DF2\u767B\u51FA', 'info');
+      setTimeout(() => {
+        window.location.reload();
+      }, 300);
     }
 
     function showToast(msg, type = 'info') {
@@ -20169,6 +20224,35 @@ async function startBroker(options = {}) {
               headers["Set-Cookie"] = `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`;
             }
             return new Response(renderDashboardHtml(), { headers });
+          }
+          if (url2.pathname === "/v1/api/dashboard/login") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = await readJsonBody(request);
+                const token = body.token?.trim();
+                if (!token || !isAuthorized(null, state.brokerSecret, token)) {
+                  return Response.json({ success: false, error: "Invalid dashboard token" }, { status: 401 });
+                }
+                const headers = {
+                  "Set-Cookie": `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`
+                };
+                return Response.json({ success: true }, { headers });
+              } catch (err) {
+                return Response.json({ success: false, error: err.message }, { status: 400 });
+              }
+            })();
+          }
+          if (url2.pathname === "/v1/api/dashboard/logout") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            const headers = {
+              "Set-Cookie": "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0"
+            };
+            return Response.json({ success: true }, { headers });
           }
           if (url2.pathname.startsWith("/v1/api/dashboard/")) {
             if (!verifyDashboardAuth(request, state.brokerSecret)) {
@@ -21169,7 +21253,7 @@ function isAddressInUseError(error51) {
 }
 // src/broker/commands.ts
 import { chmod as chmod4, mkdir as mkdir4, open as open3, readFile as readFile7, rename as rename5, rm as rm3 } from "fs/promises";
-import { join as join7 } from "path";
+import { dirname as dirname3, join as join7 } from "path";
 
 // src/doctor.ts
 async function runDoctor(options = {}) {
@@ -21530,7 +21614,7 @@ async function readSecretToken(env) {
   throw new ConfigValidationError("TOKEN_MISSING", "set OPENCODE_TELEGRAM_BOT_TOKEN_FILE or OPENCODE_TELEGRAM_BOT_TOKEN");
 }
 async function writePrivateTokenFile2(path, token) {
-  const directory = path.slice(0, path.lastIndexOf("/")) || ".";
+  const directory = dirname3(path);
   await mkdir4(directory, { recursive: true, mode: 448 });
   const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const handle = await open3(temporaryPath, "wx", 384);
@@ -21804,4 +21888,4 @@ export {
   runBroker
 };
 
-//# debugId=3201CF2416DFF39264756E2164756E21
+//# debugId=AF1C15E05DD330BF64756E2164756E21

@@ -50,11 +50,15 @@ export const en = {
   "cmd.cancel.success": "🛑 Task canceled successfully.",
   "cmd.cancel.failed": "❌ Failed to cancel task.",
   "cmd.cancel.notFound": "⚠️ Session not found or target host is offline.",
+  "cmd.cancel.ambiguous":
+    "⚠️ Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "🚀 Task dispatched successfully to",
   "cmd.run.failed": "❌ Failed to dispatch task",
   "cmd.run.notFound":
     "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.ambiguous":
+    "⚠️ Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.run.usage":
     "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>",
   "cmd.unknown": "❓ Unknown command. Type /help to view available commands.",
@@ -112,10 +116,14 @@ export const zhTW = {
   "cmd.cancel.success": "🛑 任務已成功中止。",
   "cmd.cancel.failed": "❌ 任務中止失敗。",
   "cmd.cancel.notFound": "⚠️ 找不到指定 Session 或目標主機已離線。",
+  "cmd.cancel.ambiguous":
+    "⚠️ 目標 Session 不明確：多個工作階段匹配此 ID 或前綴。請提供完整 Session ID 或指定專案名稱。",
   "cmd.cancel.usage": "ℹ️ 使用方式：<code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "🚀 任務已成功指派至",
   "cmd.run.failed": "❌ 任務指派失敗",
   "cmd.run.notFound": "⚠️ 找不到指定的目標主機或專案。請先輸入 /nodes 確認。",
+  "cmd.run.ambiguous":
+    "⚠️ 目標 Session 不明確：多個工作階段匹配此 ID 或前綴。請提供完整 Session ID 或指定專案名稱。",
   "cmd.run.usage":
     "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>",
   "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。",

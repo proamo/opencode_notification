@@ -45,10 +45,16 @@ export class VoiceTranscriber {
       this.#endpoint = options.endpoint ?? "https://api.openai.com/v1/audio/transcriptions";
       this.#model = options.model ?? "whisper-1";
     } else if (this.#provider === "cloudflare") {
-      const accountId = this.#accountId ?? "2fa0dd0cbd72565d704fb330d85ad604";
-      this.#endpoint =
-        options.endpoint ??
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/openai/whisper`;
+      if (options.endpoint) {
+        this.#endpoint = options.endpoint.trim();
+      } else {
+        if (!this.#accountId) {
+          throw new Error(
+            "Cloudflare voice provider requires accountId when using standard endpoint",
+          );
+        }
+        this.#endpoint = `https://api.cloudflare.com/client/v4/accounts/${this.#accountId}/ai/run/@cf/openai/whisper`;
+      }
       this.#model = options.model ?? "@cf/openai/whisper";
     } else {
       this.#endpoint = options.endpoint ?? "https://api.groq.com/openai/v1/audio/transcriptions";

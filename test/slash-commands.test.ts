@@ -262,4 +262,123 @@ describe("Slash Commands System", () => {
       text: "fix reported bug",
     });
   });
+
+  test("handleCancelCommand fails closed when duplicate sessionId exists across instances without dispatching", async () => {
+    const registry = new RouteRegistry();
+    let commandDispatched = false;
+    const dispatcher = {
+      sendCommand: async (cmd: BrokerCommand): Promise<CommandResult> => {
+        commandDispatched = true;
+        return { commandId: cmd.commandId, status: "accepted" };
+      },
+    };
+
+    const machineId = crypto.randomUUID();
+    const instA = crypto.randomUUID();
+    const instB = crypto.randomUUID();
+    const sharedSessionId = "ses_duplicate_111222";
+
+    const socketA = {
+      data: { connectionId: "conn-a" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
+    const socketB = {
+      data: { connectionId: "conn-b" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
+
+    registry.registerConnection(socketA, instA, machineId, "HostA", "ProjectA");
+    registry.registerConnection(socketB, instB, machineId, "HostB", "ProjectB");
+
+    registry.registerRoute("conn-a", {
+      route: {
+        machineId,
+        instanceId: instA,
+        projectId: "project-a-12345678",
+        sessionId: sharedSessionId,
+        routeGeneration: crypto.randomUUID(),
+      },
+      projectLabel: "ProjectA",
+      sessionLabel: "Task A",
+    });
+
+    registry.registerRoute("conn-b", {
+      route: {
+        machineId,
+        instanceId: instB,
+        projectId: "project-b-12345678",
+        sessionId: sharedSessionId,
+        routeGeneration: crypto.randomUUID(),
+      },
+      projectLabel: "ProjectB",
+      sessionLabel: "Task B",
+    });
+
+    const cancelResult = await executeSlashCommand({
+      text: `/cancel ${sharedSessionId}`,
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+
+    // Must fail closed with ambiguous error and NEVER dispatch to the first instance!
+    expect(cancelResult).toContain("目標 Session 不明確");
+    expect(commandDispatched).toBe(false);
+  });
+
+  test("handleRunCommand fails closed when prefix matches multiple different sessions without dispatching", async () => {
+    const registry = new RouteRegistry();
+    let commandDispatched = false;
+    const dispatcher = {
+      sendCommand: async (cmd: BrokerCommand): Promise<CommandResult> => {
+        commandDispatched = true;
+        return { commandId: cmd.commandId, status: "accepted" };
+      },
+    };
+
+    const machineId = crypto.randomUUID();
+    const instA = crypto.randomUUID();
+    const socketA = {
+      data: { connectionId: "conn-a" },
+      close: () => {},
+    } as unknown as ServerWebSocket<BrokerConnectionData>;
+
+    registry.registerConnection(socketA, instA, machineId, "HostA", "ProjectA");
+
+    // Register two sessions with the same prefix "ses_prefix_"
+    registry.registerRoute("conn-a", {
+      route: {
+        machineId,
+        instanceId: instA,
+        projectId: "project-a-12345678",
+        sessionId: "ses_prefix_alpha_111",
+        routeGeneration: crypto.randomUUID(),
+      },
+      projectLabel: "ProjectA",
+      sessionLabel: "Task 1",
+    });
+
+    registry.registerRoute("conn-a", {
+      route: {
+        machineId,
+        instanceId: instA,
+        projectId: "project-a-12345678",
+        sessionId: "ses_prefix_beta_222",
+        routeGeneration: crypto.randomUUID(),
+      },
+      projectLabel: "ProjectA",
+      sessionLabel: "Task 2",
+    });
+
+    const runResult = await executeSlashCommand({
+      text: "/run ses_prefix_ continue testing",
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+
+    // Must fail closed with ambiguous error and NEVER dispatch to the first match!
+    expect(runResult).toContain("目標 Session 不明確");
+    expect(commandDispatched).toBe(false);
+  });
 });

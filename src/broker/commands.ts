@@ -1,5 +1,5 @@
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { assertSecureTokenFile, ConfigValidationError, redactSensitiveText } from "../config";
 import { formatDoctorReport, runDoctor } from "../doctor";
 import { loadOrCreateStateIdentity, StateDatabase } from "../state";
@@ -243,7 +243,7 @@ async function readSecretToken(env: NodeJS.ProcessEnv): Promise<string> {
 }
 
 async function writePrivateTokenFile(path: string, token: string): Promise<void> {
-  const directory = path.slice(0, path.lastIndexOf("/")) || ".";
+  const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);

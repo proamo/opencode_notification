@@ -114,4 +114,23 @@ describe("VoiceTranscriber", () => {
       "Voice transcription failed (401)",
     );
   });
+
+  test("throws error when provider is cloudflare and accountId is omitted without custom endpoint", () => {
+    expect(
+      () =>
+        new VoiceTranscriber({
+          apiKey: "cfut_token",
+          provider: "cloudflare",
+        }),
+    ).toThrow("Cloudflare voice provider requires accountId when using standard endpoint");
+  });
+
+  test("allows omitting accountId when custom endpoint is provided for cloudflare provider", () => {
+    const transcriber = new VoiceTranscriber({
+      apiKey: "cfut_token",
+      provider: "cloudflare",
+      endpoint: "https://custom.cf.worker/ai/transcribe",
+    });
+    expect(transcriber).toBeDefined();
+  });
 });

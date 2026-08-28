@@ -48,10 +48,12 @@ export declare const en: {
     readonly "cmd.cancel.success": "🛑 Task canceled successfully.";
     readonly "cmd.cancel.failed": "❌ Failed to cancel task.";
     readonly "cmd.cancel.notFound": "⚠️ Session not found or target host is offline.";
+    readonly "cmd.cancel.ambiguous": "⚠️ Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.";
     readonly "cmd.cancel.usage": "ℹ️ Usage: <code>/cancel &lt;session_id&gt;</code>";
     readonly "cmd.run.spawned": "🚀 Task dispatched successfully to";
     readonly "cmd.run.failed": "❌ Failed to dispatch task";
     readonly "cmd.run.notFound": "⚠️ Target machine or project not found. Type /nodes to inspect connected machines.";
+    readonly "cmd.run.ambiguous": "⚠️ Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.";
     readonly "cmd.run.usage": "ℹ️ Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>\nExample: <code>/run adspower-farm check crawling logs</code>";
     readonly "cmd.unknown": "❓ Unknown command. Type /help to view available commands.";
 };
@@ -106,10 +108,12 @@ export declare const zhTW: {
     readonly "cmd.cancel.success": "🛑 任務已成功中止。";
     readonly "cmd.cancel.failed": "❌ 任務中止失敗。";
     readonly "cmd.cancel.notFound": "⚠️ 找不到指定 Session 或目標主機已離線。";
+    readonly "cmd.cancel.ambiguous": "⚠️ 目標 Session 不明確：多個工作階段匹配此 ID 或前綴。請提供完整 Session ID 或指定專案名稱。";
     readonly "cmd.cancel.usage": "ℹ️ 使用方式：<code>/cancel &lt;session_id&gt;</code>";
     readonly "cmd.run.spawned": "🚀 任務已成功指派至";
     readonly "cmd.run.failed": "❌ 任務指派失敗";
     readonly "cmd.run.notFound": "⚠️ 找不到指定的目標主機或專案。請先輸入 /nodes 確認。";
+    readonly "cmd.run.ambiguous": "⚠️ 目標 Session 不明確：多個工作階段匹配此 ID 或前綴。請提供完整 Session ID 或指定專案名稱。";
     readonly "cmd.run.usage": "ℹ️ 使用方式：<code>/run &lt;主機或專案&gt; &lt;任務指令&gt;</code>\n例如：<code>/run adspower-farm 請檢查爬蟲日誌</code>";
     readonly "cmd.unknown": "❓ 未知指令。請輸入 /help 查看可用指令列表。";
 };

@@ -531,7 +531,6 @@ export function brokerRuntimeCommand(): { command: string; args: string[] } {
   const home = homedir();
   const candidateBunPaths = [
     join(home, ".bun", "bin", "bun"),
-    join(home, ".nvm", "versions", "node", "v24.18.0", "bin", "bun"),
     join(home, ".local", "bin", "bun"),
     "/usr/local/bin/bun",
     "/usr/bin/bun",

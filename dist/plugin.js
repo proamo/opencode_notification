@@ -14748,10 +14748,12 @@ var en = {
   "cmd.cancel.success": "\uD83D\uDED1 Task canceled successfully.",
   "cmd.cancel.failed": "\u274C Failed to cancel task.",
   "cmd.cancel.notFound": "\u26A0\uFE0F Session not found or target host is offline.",
+  "cmd.cancel.ambiguous": "\u26A0\uFE0F Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.cancel.usage": "\u2139\uFE0F Usage: <code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "\uD83D\uDE80 Task dispatched successfully to",
   "cmd.run.failed": "\u274C Failed to dispatch task",
   "cmd.run.notFound": "\u26A0\uFE0F Target machine or project not found. Type /nodes to inspect connected machines.",
+  "cmd.run.ambiguous": "\u26A0\uFE0F Ambiguous session target: multiple sessions matched this ID or prefix. Please provide the exact full Session ID or specify the target project.",
   "cmd.run.usage": `\u2139\uFE0F Usage: <code>/run &lt;project_or_host&gt; &lt;prompt&gt;</code>
 Example: <code>/run adspower-farm check crawling logs</code>`,
   "cmd.unknown": "\u2753 Unknown command. Type /help to view available commands."
@@ -14806,10 +14808,12 @@ var zhTW = {
   "cmd.cancel.success": "\uD83D\uDED1 \u4EFB\u52D9\u5DF2\u6210\u529F\u4E2D\u6B62\u3002",
   "cmd.cancel.failed": "\u274C \u4EFB\u52D9\u4E2D\u6B62\u5931\u6557\u3002",
   "cmd.cancel.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A Session \u6216\u76EE\u6A19\u4E3B\u6A5F\u5DF2\u96E2\u7DDA\u3002",
+  "cmd.cancel.ambiguous": "\u26A0\uFE0F \u76EE\u6A19 Session \u4E0D\u660E\u78BA\uFF1A\u591A\u500B\u5DE5\u4F5C\u968E\u6BB5\u5339\u914D\u6B64 ID \u6216\u524D\u7DB4\u3002\u8ACB\u63D0\u4F9B\u5B8C\u6574 Session ID \u6216\u6307\u5B9A\u5C08\u6848\u540D\u7A31\u3002",
   "cmd.cancel.usage": "\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/cancel &lt;session_id&gt;</code>",
   "cmd.run.spawned": "\uD83D\uDE80 \u4EFB\u52D9\u5DF2\u6210\u529F\u6307\u6D3E\u81F3",
   "cmd.run.failed": "\u274C \u4EFB\u52D9\u6307\u6D3E\u5931\u6557",
   "cmd.run.notFound": "\u26A0\uFE0F \u627E\u4E0D\u5230\u6307\u5B9A\u7684\u76EE\u6A19\u4E3B\u6A5F\u6216\u5C08\u6848\u3002\u8ACB\u5148\u8F38\u5165 /nodes \u78BA\u8A8D\u3002",
+  "cmd.run.ambiguous": "\u26A0\uFE0F \u76EE\u6A19 Session \u4E0D\u660E\u78BA\uFF1A\u591A\u500B\u5DE5\u4F5C\u968E\u6BB5\u5339\u914D\u6B64 ID \u6216\u524D\u7DB4\u3002\u8ACB\u63D0\u4F9B\u5B8C\u6574 Session ID \u6216\u6307\u5B9A\u5C08\u6848\u540D\u7A31\u3002",
   "cmd.run.usage": `\u2139\uFE0F \u4F7F\u7528\u65B9\u5F0F\uFF1A<code>/run &lt;\u4E3B\u6A5F\u6216\u5C08\u6848&gt; &lt;\u4EFB\u52D9\u6307\u4EE4&gt;</code>
 \u4F8B\u5982\uFF1A<code>/run adspower-farm \u8ACB\u6AA2\u67E5\u722C\u87F2\u65E5\u8A8C</code>`,
   "cmd.unknown": "\u2753 \u672A\u77E5\u6307\u4EE4\u3002\u8ACB\u8F38\u5165 /help \u67E5\u770B\u53EF\u7528\u6307\u4EE4\u5217\u8868\u3002"
@@ -16447,7 +16451,6 @@ function brokerRuntimeCommand() {
   const home = homedir3();
   const candidateBunPaths = [
     join3(home, ".bun", "bin", "bun"),
-    join3(home, ".nvm", "versions", "node", "v24.18.0", "bin", "bun"),
     join3(home, ".local", "bin", "bun"),
     "/usr/local/bin/bun",
     "/usr/bin/bun"
@@ -16904,4 +16907,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=21BF11356AD5B96664756E2164756E21
+//# debugId=3A68B7B0F682895B64756E2164756E21

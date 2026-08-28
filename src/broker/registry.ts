@@ -25,6 +25,27 @@ type OwnedConnection = {
   routeKeys: Set<string>;
 };
 
+export type SessionLookupResult =
+  | {
+      status: "found";
+      route: RouteKey;
+      projectLabel?: string | undefined;
+      sessionLabel?: string | undefined;
+      hostLabel?: string | undefined;
+    }
+  | {
+      status: "ambiguous";
+      matches: Array<{
+        sessionId: string;
+        projectLabel?: string | undefined;
+        hostLabel?: string | undefined;
+        instanceId: string;
+      }>;
+    }
+  | {
+      status: "not_found";
+    };
+
 export class RouteRegistry {
   readonly #connections = new Map<string, OwnedConnection>();
   readonly #instances = new Map<string, string>();
@@ -151,46 +172,91 @@ export class RouteRegistry {
     return undefined;
   }
 
-  resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined {
-    const matches: RegisteredRoute[] = [];
+  lookupSession(sessionIdOrPrefix: string, target?: string): SessionLookupResult {
+    const trimmed = sessionIdOrPrefix.trim();
+    if (!trimmed) return { status: "not_found" };
+
+    const lowerQuery = trimmed.toLowerCase();
+    const isPrefixSearch = trimmed.length >= 6;
+
+    const exactMatches: RegisteredRoute[] = [];
+    const prefixMatches: RegisteredRoute[] = [];
+
     for (const registered of this.#routes.values()) {
-      if (registered.route.sessionId === sessionId) {
-        if (target) {
-          const conn = this.#connections.get(registered.connectionId);
-          if (
-            registered.route.machineId === target ||
+      const sid = registered.route.sessionId;
+      const lowerSid = sid.toLowerCase();
+
+      let targetMatched = true;
+      if (target) {
+        const conn = this.#connections.get(registered.connectionId);
+        targetMatched = Boolean(
+          registered.route.machineId === target ||
             registered.route.instanceId === target ||
             registered.route.projectId === target ||
             conn?.hostLabel === target ||
             conn?.projectLabel === target ||
-            registered.projectLabel === target
-          ) {
-            matches.push(registered);
-          }
-        } else {
-          matches.push(registered);
-        }
+            registered.projectLabel === target,
+        );
+      }
+
+      if (!targetMatched) continue;
+
+      if (sid === trimmed || lowerSid === lowerQuery) {
+        exactMatches.push(registered);
+      } else if (isPrefixSearch && lowerSid.startsWith(lowerQuery)) {
+        prefixMatches.push(registered);
       }
     }
 
-    const first = matches[0];
-    if (!first) return undefined;
-    if (matches.length === 1) return first.route;
+    const candidateMatches = exactMatches.length > 0 ? exactMatches : prefixMatches;
+    if (candidateMatches.length === 0) {
+      return { status: "not_found" };
+    }
 
-    // If all matches belong to the same instance & project (e.g. newer route generations), return latest
-    const allSameInstance = matches.every(
+    const first = candidateMatches[0];
+    if (!first) return { status: "not_found" };
+
+    // All matches must belong to the same machine + instance + project + sessionId
+    const allSameInstance = candidateMatches.every(
       (m) =>
         m.route.machineId === first.route.machineId &&
         m.route.instanceId === first.route.instanceId &&
-        m.route.projectId === first.route.projectId,
+        m.route.projectId === first.route.projectId &&
+        m.route.sessionId === first.route.sessionId,
     );
+
     if (allSameInstance) {
-      const last = matches[matches.length - 1];
-      return last ? last.route : first.route;
+      const last = candidateMatches[candidateMatches.length - 1] ?? first;
+      const conn = this.#connections.get(last.connectionId);
+      return {
+        status: "found",
+        route: last.route,
+        projectLabel: last.projectLabel ?? conn?.projectLabel,
+        sessionLabel: last.sessionLabel,
+        hostLabel: conn?.hostLabel,
+      };
     }
 
-    // Fail closed if ambiguous (multiple different instances/projects registered the same sessionId)
-    return undefined;
+    // Multiple different instances/projects/sessions matched -> fail closed with ambiguous status!
+    const matchesSummary = candidateMatches.map((m) => {
+      const conn = this.#connections.get(m.connectionId);
+      return {
+        sessionId: m.route.sessionId,
+        projectLabel: m.projectLabel ?? conn?.projectLabel,
+        hostLabel: conn?.hostLabel,
+        instanceId: m.route.instanceId,
+      };
+    });
+
+    return {
+      status: "ambiguous",
+      matches: matchesSummary,
+    };
+  }
+
+  resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined {
+    const result = this.lookupSession(sessionId, target);
+    return result.status === "found" ? result.route : undefined;
   }
 
   owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined {

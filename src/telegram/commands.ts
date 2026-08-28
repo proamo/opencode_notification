@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { RouteRegistry } from "../broker/registry";
 import { type SupportedLocale, translate } from "../i18n";
-import type { BrokerCommand, CommandResult, RouteKey } from "../protocol";
+import type { BrokerCommand, CommandResult } from "../protocol";
 
 export type SlashCommandContext = {
   text: string;
@@ -175,30 +175,11 @@ async function handleCancelCommand(
     return translate(locale, "cmd.cancel.usage");
   }
 
-  // Find the route for this session ID
-  const activeSessions = context.registry.listActiveSessions();
-  const target = activeSessions.find(
-    (s) => s.route.sessionId === sessionId || s.route.sessionId.startsWith(sessionId),
-  );
-
-  let targetRoute: RouteKey | undefined = target?.route;
-
-  if (!targetRoute) {
-    // Attempt to match by exact sessionId in registry.resolve
-    const dummyRoute: RouteKey = {
-      machineId: "00000000-0000-0000-0000-000000000000",
-      instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown-project-placeholder",
-      sessionId,
-      routeGeneration: "00000000-0000-0000-0000-000000000000",
-    };
-    const resolved = context.registry.resolve(dummyRoute);
-    if (resolved) {
-      targetRoute = resolved.route;
-    }
+  const lookup = context.registry.lookupSession(sessionId);
+  if (lookup.status === "ambiguous") {
+    return translate(locale, "cmd.cancel.ambiguous");
   }
-
-  if (!targetRoute) {
+  if (lookup.status === "not_found") {
     return translate(locale, "cmd.cancel.notFound");
   }
 
@@ -206,7 +187,7 @@ async function handleCancelCommand(
   const result = await context.dispatcher.sendCommand({
     type: "session.cancel",
     commandId,
-    route: targetRoute,
+    route: lookup.route,
     reason: "canceled via Telegram /cancel command",
   });
 
@@ -226,68 +207,49 @@ async function handleRunCommand(
     return translate(locale, "cmd.run.usage");
   }
 
-  // 1. Check if targetArg is an existing Session ID (e.g. /run ses_4a8b... fix login bug)
+  // 1. Check if targetArg is an existing Session ID / prefix (e.g. /run ses_4a8b... fix login bug)
   const targetArg = args[0] ?? "";
   let prompt = args.slice(1).join(" ").trim();
 
-  const activeSessions = context.registry.listActiveSessions();
-  const sessionMatch = activeSessions.find(
-    (s) =>
-      s.route.sessionId.toLowerCase() === targetArg.toLowerCase() ||
-      (targetArg.startsWith("ses_") &&
-        s.route.sessionId.toLowerCase().startsWith(targetArg.toLowerCase())),
-  );
+  const isSessionCandidate =
+    targetArg.startsWith("ses_") ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i.test(targetArg) ||
+    (targetArg.length >= 6 && prompt.length > 0);
 
-  let sessionRoute: RouteKey | undefined = sessionMatch?.route;
-  let sessionProjectLabel = sessionMatch?.projectLabel;
-  let sessionTitle = sessionMatch?.sessionLabel;
-  let sessionHost = sessionMatch?.hostLabel;
-
-  if (!sessionRoute && targetArg.startsWith("ses_")) {
-    const dummyRoute: RouteKey = {
-      machineId: "00000000-0000-0000-0000-000000000000",
-      instanceId: "00000000-0000-0000-0000-000000000000",
-      projectId: "unknown-project-placeholder",
-      sessionId: targetArg,
-      routeGeneration: "00000000-0000-0000-0000-000000000000",
-    };
-    const resolved = context.registry.resolve(dummyRoute);
-    if (resolved) {
-      sessionRoute = resolved.route;
-      sessionProjectLabel = resolved.projectLabel;
-      sessionTitle = resolved.sessionLabel;
-      sessionHost = resolved.hostLabel;
+  if (isSessionCandidate && prompt) {
+    const lookup = context.registry.lookupSession(targetArg);
+    if (lookup.status === "ambiguous") {
+      return translate(locale, "cmd.run.ambiguous");
     }
-  }
+    if (lookup.status === "found") {
+      const commandId = randomUUID();
+      const result = await context.dispatcher.sendCommand({
+        type: "session.prompt",
+        commandId,
+        route: lookup.route,
+        text: prompt,
+      });
 
-  if (sessionRoute && prompt) {
-    const commandId = randomUUID();
-    const result = await context.dispatcher.sendCommand({
-      type: "session.prompt",
-      commandId,
-      route: sessionRoute,
-      text: prompt,
-    });
+      if (result.status === "accepted") {
+        const hostTag = lookup.hostLabel ? `[${lookup.hostLabel}] ` : "";
+        const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
+        const lines = [
+          locale === "zh-TW"
+            ? `🔄 <b>已成功接續至歷史工作階段：${hostTag}${lookup.projectLabel ?? "專案"}</b>`
+            : `🔄 <b>Resumed session: ${hostTag}${lookup.projectLabel ?? "project"}</b>`,
+          "",
+          `📝 <b>Session:</b> <i>${lookup.sessionLabel ?? "任務"}</i> (<code>${lookup.route.sessionId}</code>)`,
+          `💬 <b>指令：</b> <i>${promptDisplay}</i>`,
+          "",
+          locale === "zh-TW"
+            ? "⏳ 正在該 Session 上下文中執行，完成後將自動推播結論！"
+            : "⏳ Running in existing session context, a notification will arrive upon completion.",
+        ];
+        return lines.join("\n");
+      }
 
-    if (result.status === "accepted") {
-      const hostTag = sessionHost ? `[${sessionHost}] ` : "";
-      const promptDisplay = prompt.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
-      const lines = [
-        locale === "zh-TW"
-          ? `🔄 <b>已成功接續至歷史工作階段：${hostTag}${sessionProjectLabel ?? "專案"}</b>`
-          : `🔄 <b>Resumed session: ${hostTag}${sessionProjectLabel ?? "project"}</b>`,
-        "",
-        `📝 <b>Session:</b> <i>${sessionTitle ?? "任務"}</i> (<code>${sessionRoute.sessionId}</code>)`,
-        `💬 <b>指令：</b> <i>${promptDisplay}</i>`,
-        "",
-        locale === "zh-TW"
-          ? "⏳ 正在該 Session 上下文中執行，完成後將自動推播結論！"
-          : "⏳ Running in existing session context, a notification will arrive upon completion.",
-      ];
-      return lines.join("\n");
+      return `${translate(locale, "cmd.run.failed")}: ${result.reason ?? result.status}`;
     }
-
-    return `${translate(locale, "cmd.run.failed")}: ${result.reason ?? result.status}`;
   }
 
   // 2. Try matching targetArg as project or host name (spawn new session)

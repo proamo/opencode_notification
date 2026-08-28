@@ -207,4 +207,51 @@ describe("Web Dashboard", () => {
       }
     }
   });
+
+  test("handles dashboard login and logout with HttpOnly cookie", async () => {
+    // 1. Failed login with bad token
+    const badLoginRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "wrong_secret_123" }),
+    });
+    expect(badLoginRes.status).toBe(401);
+
+    // 2. Successful login with valid secret
+    const loginRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: brokerSecret }),
+    });
+    expect(loginRes.status).toBe(200);
+    const setCookie = loginRes.headers.get("set-cookie");
+    expect(setCookie).toBeDefined();
+    expect(setCookie).toContain("opencode_token=");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+
+    // 3. Extract cookie and access protected summary without Authorization header
+    const cookie = setCookie?.split(";")[0] ?? "";
+    const summaryRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`, {
+      headers: { Cookie: cookie },
+    });
+    expect(summaryRes.status).toBe(200);
+
+    // 4. Logout clears the cookie
+    const logoutRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/logout`, {
+      method: "POST",
+    });
+    expect(logoutRes.status).toBe(200);
+    const logoutCookie = logoutRes.headers.get("set-cookie");
+    expect(logoutCookie).toContain("Max-Age=0");
+  });
+
+  test("dashboard HTML contains cleanUrlToken and logout button", async () => {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/dashboard`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("cleanUrlToken");
+    expect(html).toContain("logout()");
+    expect(html).toContain("history.replaceState");
+  });
 });

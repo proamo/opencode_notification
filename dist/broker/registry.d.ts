@@ -21,6 +21,23 @@ type OwnedConnection = {
     projectLabel?: string | undefined;
     routeKeys: Set<string>;
 };
+export type SessionLookupResult = {
+    status: "found";
+    route: RouteKey;
+    projectLabel?: string | undefined;
+    sessionLabel?: string | undefined;
+    hostLabel?: string | undefined;
+} | {
+    status: "ambiguous";
+    matches: Array<{
+        sessionId: string;
+        projectLabel?: string | undefined;
+        hostLabel?: string | undefined;
+        instanceId: string;
+    }>;
+} | {
+    status: "not_found";
+};
 export declare class RouteRegistry {
     #private;
     registerConnection(socket: ServerWebSocket<BrokerConnectionData>, instanceId: string, machineId: string, hostLabel?: string, projectLabel?: string): void;
@@ -32,6 +49,7 @@ export declare class RouteRegistry {
     }): RegisteredRoute;
     unregisterRoute(connectionId: string, route: RouteKey): boolean;
     resolve(route: RouteKey): RegisteredRoute | undefined;
+    lookupSession(sessionIdOrPrefix: string, target?: string): SessionLookupResult;
     resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined;
     owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined;
     ownerByInstance(instanceId: string): ServerWebSocket<BrokerConnectionData> | undefined;

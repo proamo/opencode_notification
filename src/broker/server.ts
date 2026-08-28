@@ -436,6 +436,43 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             return new Response(renderDashboardHtml(), { headers });
           }
 
+          if (url.pathname === "/v1/api/dashboard/login") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            return (async () => {
+              try {
+                const body = await readJsonBody<{ token?: string }>(request);
+                const token = body.token?.trim();
+                if (!token || !isAuthorized(null, state.brokerSecret, token)) {
+                  return Response.json(
+                    { success: false, error: "Invalid dashboard token" },
+                    { status: 401 },
+                  );
+                }
+                const headers = {
+                  "Set-Cookie": `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`,
+                };
+                return Response.json({ success: true }, { headers });
+              } catch (err) {
+                return Response.json(
+                  { success: false, error: (err as Error).message },
+                  { status: 400 },
+                );
+              }
+            })();
+          }
+
+          if (url.pathname === "/v1/api/dashboard/logout") {
+            if (request.method !== "POST") {
+              return new Response("Method not allowed", { status: 405 });
+            }
+            const headers = {
+              "Set-Cookie": "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0",
+            };
+            return Response.json({ success: true }, { headers });
+          }
+
           // Protected Dashboard API Endpoints
           if (url.pathname.startsWith("/v1/api/dashboard/")) {
             if (!verifyDashboardAuth(request, state.brokerSecret)) {
