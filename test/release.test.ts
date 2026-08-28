@@ -10,7 +10,13 @@ describe("release configuration", () => {
     const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
     expect(packageJson.publishConfig).toEqual({ access: "public", provenance: true });
-    expect(packageJson.files).toEqual(["dist", "README.md", "LICENSE"]);
+    expect(packageJson.files).toEqual([
+      "dist",
+      "container",
+      "docker-compose.yml",
+      "README.md",
+      "LICENSE",
+    ]);
     expect(packageJson.scripts.prepack).toBe("bun run build");
     expect(packageJson.scripts["release:check"]).toContain("release:smoke");
     expect(packageJson.scripts["release:check"]).toContain("npm pack --dry-run");

@@ -286,6 +286,41 @@ export class StateDatabase {
     return row ? callbackTokenFromRow(row) : undefined;
   }
 
+  consumeCallbackToken(token: string, now: number): boolean {
+    this.#assertOpen();
+    return this.#database.transaction(() => {
+      const result = this.#database
+        .query(
+          "UPDATE callback_tokens SET consumed_at = ? WHERE token = ? AND consumed_at IS NULL AND expires_at > ?",
+        )
+        .run(now, token, now);
+      return result.changes > 0;
+    })();
+  }
+
+  consumeCallbackTokenAndRoute(input: {
+    token: string;
+    chatId: string;
+    messageId: number;
+    now: number;
+  }): boolean {
+    this.#assertOpen();
+    return this.#database.transaction(() => {
+      const result = this.#database
+        .query(
+          "UPDATE callback_tokens SET consumed_at = ? WHERE token = ? AND consumed_at IS NULL AND expires_at > ?",
+        )
+        .run(input.now, input.token, input.now);
+      if (result.changes === 0) return false;
+
+      this.#database
+        .query("UPDATE message_routes SET status = 'consumed' WHERE chat_id = ? AND message_id = ?")
+        .run(input.chatId, input.messageId);
+
+      return true;
+    })();
+  }
+
   enqueueOutbox(input: {
     idempotencyKey: string;
     chatId: string;

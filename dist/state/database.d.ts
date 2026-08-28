@@ -98,6 +98,13 @@ export declare class StateDatabase {
     setMessageRouteStatus(chatId: string, messageId: number, status: MessageRouteStatus): boolean;
     saveCallbackToken(record: CallbackTokenRecord): void;
     getCallbackToken(token: string): CallbackTokenRecord | undefined;
+    consumeCallbackToken(token: string, now: number): boolean;
+    consumeCallbackTokenAndRoute(input: {
+        token: string;
+        chatId: string;
+        messageId: number;
+        now: number;
+    }): boolean;
     enqueueOutbox(input: {
         idempotencyKey: string;
         chatId: string;

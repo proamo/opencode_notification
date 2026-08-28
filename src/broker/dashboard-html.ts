@@ -457,6 +457,47 @@ export function renderDashboardHtml(): string {
     let summaryData = null;
     let testedVerifiedProvider = null;
 
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getAuthToken() {
+      const urlToken = new URLSearchParams(window.location.search).get('token');
+      if (urlToken) {
+        sessionStorage.setItem('opencode_token', urlToken.trim());
+        return urlToken.trim();
+      }
+      return sessionStorage.getItem('opencode_token') || '';
+    }
+
+    async function authFetch(url, options = {}) {
+      const token = getAuthToken();
+      const headers = Object.assign({}, options.headers || {});
+      if (token && !headers['Authorization']) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+      const res = await fetch(url, Object.assign({}, options, { headers }));
+      if (res.status === 401) {
+        promptAuthToken();
+      }
+      return res;
+    }
+
+    function promptAuthToken() {
+      const currentToken = sessionStorage.getItem('opencode_token') || '';
+      const input = prompt('🔒 請輸入 Gateway 存取金鑰 (Broker Secret) 以解鎖控制台：', currentToken);
+      if (input != null && input.trim() !== '') {
+        sessionStorage.setItem('opencode_token', input.trim());
+        fetchSummary();
+      }
+    }
+
     function showToast(msg, type = 'info') {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -468,7 +509,10 @@ export function renderDashboardHtml(): string {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       
-      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => {
+        const attr = b.getAttribute('onclick') || '';
+        return attr.includes(tabId);
+      });
       if (activeBtn) activeBtn.classList.add('active');
       const targetContent = document.getElementById('tab-' + tabId);
       if (targetContent) targetContent.classList.add('active');
@@ -490,7 +534,7 @@ export function renderDashboardHtml(): string {
 
     async function fetchSummary() {
       try {
-        const res = await fetch('/v1/api/dashboard/summary');
+        const res = await authFetch('/v1/api/dashboard/summary');
         if (!res.ok) return;
         const data = await res.json();
         summaryData = data;
@@ -544,22 +588,22 @@ export function renderDashboardHtml(): string {
             if (data.voice.cloudflare.accountId) {
               document.getElementById('cf-account-id').value = data.voice.cloudflare.accountId;
             }
-            if (data.voice.cloudflare.apiToken) {
-              document.getElementById('cf-api-token').value = data.voice.cloudflare.apiToken;
+            if (data.voice.cloudflare.hasApiToken) {
+              document.getElementById('cf-api-token').placeholder = '已儲存: ' + (data.voice.cloudflare.maskedToken || '••••••••');
             }
           }
-          if (data.voice.groq && data.voice.groq.apiKey) {
-            document.getElementById('groq-api-key').value = data.voice.groq.apiKey;
+          if (data.voice.groq && data.voice.groq.hasApiKey) {
+            document.getElementById('groq-api-key').placeholder = '已儲存: ' + (data.voice.groq.maskedKey || '••••••••');
           }
-          if (data.voice.openai && data.voice.openai.apiKey) {
-            document.getElementById('openai-api-key').value = data.voice.openai.apiKey;
+          if (data.voice.openai && data.voice.openai.hasApiKey) {
+            document.getElementById('openai-api-key').placeholder = '已儲存: ' + (data.voice.openai.maskedKey || '••••••••');
           }
           if (data.voice.custom) {
             if (data.voice.custom.endpoint) {
               document.getElementById('custom-endpoint').value = data.voice.custom.endpoint;
             }
-            if (data.voice.custom.apiKey) {
-              document.getElementById('custom-api-key').value = data.voice.custom.apiKey;
+            if (data.voice.custom.hasApiKey) {
+              document.getElementById('custom-api-key').placeholder = '已儲存: ' + (data.voice.custom.maskedKey || '••••••••');
             }
             if (data.voice.custom.model) {
               document.getElementById('custom-model').value = data.voice.custom.model;
@@ -577,38 +621,38 @@ export function renderDashboardHtml(): string {
         container.innerHTML = data.machines.map(m => {
           const projectCards = (m.projects || []).map(p => {
             const hasSession = p.sessionId;
-            return \`
-              <div class="project-card">
-                <div class="project-name">
-                  <span>📂</span> \${p.projectLabel}
-                </div>
-                <div class="project-session">
-                  \${hasSession ? '⚡ 正在執行：<b>' + (p.sessionLabel || p.sessionId) + '</b>' : '🟢 待命中 (0 活躍 Session)'}
-                </div>
-                <div class="project-actions">
-                  <button class="btn btn-primary" onclick="quickDispatch('\${p.projectLabel}')" style="padding: 4px 10px; font-size: 12px;">
-                    🚀 派工
-                  </button>
-                  \${hasSession ? \`<button class="btn btn-danger" onclick="cancelSession('\${p.sessionId}')" style="padding: 4px 10px; font-size: 12px;">🛑 中止</button>\` : ''}
-                </div>
-              </div>
-            \`;
+            const safeProjectLabel = escapeHtml(p.projectLabel);
+            const safeSessionLabel = escapeHtml(p.sessionLabel || p.sessionId || '');
+            const safeSessionId = escapeHtml(p.sessionId || '');
+            return '<div class="project-card">' +
+              '<div class="project-name">' +
+                '<span>📂</span> ' + safeProjectLabel +
+              '</div>' +
+              '<div class="project-session">' +
+                (hasSession ? '⚡ 正在執行：<b>' + safeSessionLabel + '</b>' : '🟢 待命中 (0 活躍 Session)') +
+              '</div>' +
+              '<div class="project-actions">' +
+                '<button class="btn btn-primary btn-dispatch-quick" data-target="' + safeProjectLabel + '" style="padding: 4px 10px; font-size: 12px;">🚀 派工</button>' +
+                (hasSession ? '<button class="btn btn-danger btn-cancel-session" data-session-id="' + safeSessionId + '" style="padding: 4px 10px; font-size: 12px;">🛑 中止</button>' : '') +
+              '</div>' +
+            '</div>';
           }).join('');
 
-          return \`
-            <div class="machine-card">
-              <div class="machine-header">
-                <div class="machine-title">
-                  <span>💻</span> \${m.hostLabel || 'codeCenter'}
-                  <span style="font-size: 12px; font-weight: normal; color: var(--text-muted);">(\${m.machineId.slice(0, 8)}...)</span>
-                </div>
-                <span class="machine-badge">\${m.connectionsCount} 個專案連線中</span>
-              </div>
-              <div class="project-grid">
-                \${projectCards || '<div style="color: var(--text-muted); font-size: 13px;">無專案</div>'}
-              </div>
-            </div>
-          \`;
+          const safeHostLabel = escapeHtml(m.hostLabel || 'codeCenter');
+          const safeMachineId = escapeHtml(m.machineId ? m.machineId.slice(0, 8) : '');
+
+          return '<div class="machine-card">' +
+            '<div class="machine-header">' +
+              '<div class="machine-title">' +
+                '<span>💻</span> ' + safeHostLabel + ' ' +
+                '<span style="font-size: 12px; font-weight: normal; color: var(--text-muted);">(' + safeMachineId + '...)</span>' +
+              '</div>' +
+              '<span class="machine-badge">' + escapeHtml(String(m.connectionsCount || 0)) + ' 個專案連線中</span>' +
+            '</div>' +
+            '<div class="project-grid">' +
+              (projectCards || '<div style="color: var(--text-muted); font-size: 13px;">無專案</div>') +
+            '</div>' +
+          '</div>';
         }).join('');
 
         // Populate dispatch target dropdown
@@ -617,10 +661,12 @@ export function renderDashboardHtml(): string {
         const seenOptions = new Set();
         data.machines.forEach(m => {
           (m.projects || []).forEach(p => {
-            const key = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
-            if (!seenOptions.has(key)) {
-              seenOptions.add(key);
-              options += '<option value="' + p.projectLabel + '">' + key + '</option>';
+            const rawKey = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
+            if (!seenOptions.has(rawKey)) {
+              seenOptions.add(rawKey);
+              const safeKey = escapeHtml(rawKey);
+              const safeVal = escapeHtml(p.projectLabel);
+              options += '<option value="' + safeVal + '">' + safeKey + '</option>';
             }
           });
         });
@@ -633,23 +679,39 @@ export function renderDashboardHtml(): string {
       // Render Active Sessions Table
       const tbody = document.getElementById('sessions-tbody');
       if (data.activeSessions && data.activeSessions.length > 0) {
-        tbody.innerHTML = data.activeSessions.map(s => \`
-          <tr>
-            <td><b>\${s.hostLabel || 'codeCenter'}</b></td>
-            <td>📂 \${s.projectLabel}</td>
-            <td>\${s.sessionLabel || '任務執行中'}</td>
-            <td><code>\${s.route.sessionId}</code></td>
-            <td>
-              <button class="btn btn-danger" onclick="cancelSession('\${s.route.sessionId}')">
-                🛑 中止 (Cancel)
-              </button>
-            </td>
-          </tr>
-        \`).join('');
+        tbody.innerHTML = data.activeSessions.map(s => {
+          const safeHost = escapeHtml(s.hostLabel || 'codeCenter');
+          const safeProject = escapeHtml(s.projectLabel);
+          const safeSession = escapeHtml(s.sessionLabel || '任務執行中');
+          const safeSessionId = escapeHtml(s.route ? s.route.sessionId : '');
+          return '<tr>' +
+            '<td><b>' + safeHost + '</b></td>' +
+            '<td>📂 ' + safeProject + '</td>' +
+            '<td>' + safeSession + '</td>' +
+            '<td><code>' + safeSessionId + '</code></td>' +
+            '<td>' +
+              '<button class="btn btn-danger btn-cancel-session" data-session-id="' + safeSessionId + '">🛑 中止 (Cancel)</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
       } else {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">目前沒有任何執行中的工作階段。</td></tr>';
       }
     }
+
+    // Delegated click listeners for safe event handling
+    document.addEventListener('click', (e) => {
+      const dispatchBtn = e.target.closest('.btn-dispatch-quick');
+      if (dispatchBtn) {
+        const target = dispatchBtn.getAttribute('data-target');
+        if (target) quickDispatch(target);
+      }
+      const cancelBtn = e.target.closest('.btn-cancel-session');
+      if (cancelBtn) {
+        const sessionId = cancelBtn.getAttribute('data-session-id');
+        if (sessionId) cancelSession(sessionId);
+      }
+    });
 
     function quickDispatch(projectName) {
       switchTab('dispatch');
@@ -667,7 +729,7 @@ export function renderDashboardHtml(): string {
       }
 
       try {
-        const res = await fetch('/v1/api/dashboard/dispatch', {
+        const res = await authFetch('/v1/api/dashboard/dispatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ target, prompt })
@@ -688,7 +750,7 @@ export function renderDashboardHtml(): string {
     async function cancelSession(sessionId) {
       if (!confirm('確定要中止此任務工作階段嗎 (' + sessionId + ')？')) return;
       try {
-        const res = await fetch('/v1/api/dashboard/cancel', {
+        const res = await authFetch('/v1/api/dashboard/cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId })
@@ -708,7 +770,6 @@ export function renderDashboardHtml(): string {
     async function testCurrentVoiceProvider() {
       const provider = document.getElementById('setting-provider').value;
       const resBox = document.getElementById('test-voice-result');
-      const testBtn = event?.target || document.querySelector('#tab-settings .btn-secondary');
       
       let apiKey = '';
       let accountId = '';
@@ -718,7 +779,7 @@ export function renderDashboardHtml(): string {
       if (provider === 'cloudflare') {
         accountId = document.getElementById('cf-account-id').value.trim();
         apiKey = document.getElementById('cf-api-token').value.trim();
-        if (!accountId) {
+        if (!accountId && (!summaryData?.voice?.cloudflare?.hasAccountId)) {
           resBox.style.display = 'block';
           resBox.className = 'test-result-box error';
           resBox.textContent = '❌ 請填寫 Cloudflare Account ID！';
@@ -741,7 +802,7 @@ export function renderDashboardHtml(): string {
       showToast('🔄 正在連線驗證...', 'info');
 
       try {
-        const res = await fetch('/v1/api/dashboard/test-voice', {
+        const res = await authFetch('/v1/api/dashboard/test-voice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -758,7 +819,7 @@ export function renderDashboardHtml(): string {
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
-          resBox.innerHTML = '✔ <b>連線測試成功！</b> (' + data.message + ')<br><span style="color: #fff; font-weight: bold;">👉 請務必點擊下方「💾 儲存並套用設定」按鈕以永久啟用此引擎！</span>';
+          resBox.innerHTML = '✔ <b>連線測試成功！</b> (' + escapeHtml(data.message) + ')<br><span style="color: #fff; font-weight: bold;">👉 請務必點擊下方「💾 儲存並套用設定」按鈕以永久啟用此引擎！</span>';
           showToast('✔ 連線測試成功！請點擊儲存', 'success');
         } else {
           testedVerifiedProvider = null;
@@ -787,27 +848,16 @@ export function renderDashboardHtml(): string {
       const customApiKey = document.getElementById('custom-api-key').value.trim();
       const customModel = document.getElementById('custom-model').value.trim();
 
-      let activeKey = '';
-      if (provider === 'cloudflare') activeKey = cfApiToken;
-      else if (provider === 'groq') activeKey = groqApiKey;
-      else if (provider === 'openai') activeKey = openaiApiKey;
-      else if (provider === 'custom') activeKey = customApiKey;
-
-      if (activeKey && testedVerifiedProvider !== provider) {
-        const proceed = confirm('此引擎尚未完成「🧪 測試連線驗證」，確定要直接儲存嗎？建議先點擊測試確認可用。');
-        if (!proceed) return;
-      }
-
       try {
-        const res = await fetch('/v1/api/dashboard/settings', {
+        const res = await authFetch('/v1/api/dashboard/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             activeProvider: provider,
-            cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
-            groq: { apiKey: groqApiKey },
-            openai: { apiKey: openaiApiKey },
-            custom: { endpoint: customEndpoint, apiKey: customApiKey, model: customModel },
+            cloudflare: { accountId: cfAccountId || undefined, apiToken: cfApiToken || undefined },
+            groq: { apiKey: groqApiKey || undefined },
+            openai: { apiKey: openaiApiKey || undefined },
+            custom: { endpoint: customEndpoint || undefined, apiKey: customApiKey || undefined, model: customModel || undefined },
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });
@@ -816,7 +866,7 @@ export function renderDashboardHtml(): string {
           showToast('💾 設定已成功儲存並生效！', 'success');
           fetchSummary();
         } else {
-          showToast('儲存失敗：' + data.message, 'error');
+          showToast('儲存失敗：' + (data.reason || data.message || '未知錯誤'), 'error');
         }
       } catch (err) {
         showToast('儲存失敗：' + err.message, 'error');

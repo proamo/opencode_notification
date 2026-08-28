@@ -314,7 +314,9 @@ export class BrokerClient {
     this.#socket = socket;
 
     const disconnected = new Promise<void>((resolve) => {
-      socket.addEventListener("message", (event) => this.#handleMessage(String(event.data)));
+      socket.addEventListener("message", (event) =>
+        this.#handleMessage(decodeMessageData(event.data)),
+      );
       socket.addEventListener("close", () => resolve(), { once: true });
       socket.addEventListener("error", () => resolve(), { once: true });
     });
@@ -462,10 +464,18 @@ export class BrokerClient {
 
   #startHeartbeat(): void {
     this.#clearHeartbeat();
+    let missedHeartbeats = 0;
     this.#heartbeatTimer = setInterval(() => {
-      void this.#request({ type: "heartbeat", payload: {} }).catch(() => {
-        closeSocket(this.#socket);
-      });
+      void this.#request({ type: "heartbeat", payload: {} })
+        .then(() => {
+          missedHeartbeats = 0;
+        })
+        .catch(() => {
+          missedHeartbeats += 1;
+          if (missedHeartbeats >= 3) {
+            closeSocket(this.#socket);
+          }
+        });
     }, this.#options.heartbeatIntervalMs);
     this.#heartbeatTimer.unref();
   }
@@ -504,7 +514,8 @@ export function spawnDetachedBroker(input: { stateDirectory: string; port: numbe
       ...process.env,
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
-      OPENCODE_TELEGRAM_BROKER_BIND_HOST: "0.0.0.0",
+      OPENCODE_TELEGRAM_BROKER_BIND_HOST:
+        process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "127.0.0.1",
     },
   });
   child.unref();
@@ -578,4 +589,18 @@ function closeSocket(socket?: WebSocket | null): void {
       socket.close();
     }
   } catch {}
+}
+
+function decodeMessageData(data: unknown): string {
+  if (typeof data === "string") return data;
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(data.buffer);
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+  return String(data);
 }

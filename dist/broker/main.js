@@ -15492,13 +15492,53 @@ function isAlreadyExistsError(error51) {
 }
 
 // src/opencode/config-helper.ts
-function parseJsonc(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const stripped = raw.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1").replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(stripped);
+function parseJsonc(content) {
+  let insideString = false;
+  let stringChar = "";
+  let isEscaped = false;
+  let result = "";
+  for (let i = 0;i < content.length; i++) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+    if (insideString) {
+      result += char;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === "\\") {
+        isEscaped = true;
+      } else if (char === stringChar) {
+        insideString = false;
+      }
+    } else {
+      if (char === '"' || char === "'") {
+        insideString = true;
+        stringChar = char;
+        result += char;
+      } else if (char === "/" && nextChar === "/") {
+        while (i < content.length && content[i] !== `
+` && content[i] !== "\r") {
+          i++;
+        }
+        if (i < content.length) {
+          result += content[i];
+        }
+      } else if (char === "/" && nextChar === "*") {
+        i += 2;
+        while (i < content.length && !(content[i] === "*" && content[i + 1] === "/")) {
+          if (content[i] === `
+`)
+            result += `
+`;
+          i++;
+        }
+        i++;
+      } else {
+        result += char;
+      }
+    }
   }
+  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
+  return JSON.parse(cleaned);
 }
 function getCandidateConfigPaths(cwd = process.cwd()) {
   const home = homedir2();
@@ -15673,14 +15713,18 @@ async function injectOpenCodeConfig(targetPath, config2) {
   try {
     const existingContent = await readFile3(targetPath, "utf8");
     try {
-      existingJson = JSON.parse(existingContent);
-    } catch {
-      existingJson = {};
+      existingJson = parseJsonc(existingContent);
+    } catch (parseErr) {
+      throw new Error(`Failed to parse existing OpenCode config at ${targetPath}: ${parseErr.message}. Preserving file to prevent data loss.`);
     }
     backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
-  } catch {
-    await mkdir2(dirname(targetPath), { recursive: true });
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      await mkdir2(dirname(targetPath), { recursive: true });
+    } else {
+      throw err;
+    }
   }
   const pluginConfig = {
     mode: config2.mode,
@@ -15706,19 +15750,34 @@ async function injectOpenCodeConfig(targetPath, config2) {
       chatId: config2.telegram.chatId
     };
   }
+  const isMatch = (entry) => {
+    if (typeof entry === "string") {
+      return entry === "opencode-telegram-link" || entry.endsWith("opencode-telegram-link");
+    }
+    if (Array.isArray(entry) && typeof entry[0] === "string") {
+      return entry[0] === "opencode-telegram-link" || entry[0].endsWith("opencode-telegram-link");
+    }
+    return false;
+  };
   if (Array.isArray(existingJson.plugin)) {
-    if (!existingJson.plugin.includes("opencode-telegram-link")) {
-      existingJson.plugin.push("opencode-telegram-link");
+    const tuple2 = ["opencode-telegram-link", pluginConfig];
+    const index = existingJson.plugin.findIndex(isMatch);
+    if (index >= 0) {
+      existingJson.plugin[index] = tuple2;
+    } else {
+      existingJson.plugin.push(tuple2);
     }
-  } else {
-    const existingPlugins = Array.isArray(existingJson.plugins) ? existingJson.plugins : [];
-    if (!existingPlugins.includes("opencode-telegram-link")) {
-      existingPlugins.push("opencode-telegram-link");
+  } else if (Array.isArray(existingJson.plugins)) {
+    if (!existingJson.plugins.includes("opencode-telegram-link")) {
+      existingJson.plugins.push("opencode-telegram-link");
     }
-    existingJson.plugins = existingPlugins;
     const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
     existingPluginMap["opencode-telegram-link"] = pluginConfig;
     existingJson.plugin = existingPluginMap;
+  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
+    existingJson.plugin["opencode-telegram-link"] = pluginConfig;
+  } else {
+    existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
   }
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
@@ -15729,7 +15788,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
 async function removeOpenCodeConfig(targetPath) {
   try {
     const existingContent = await readFile3(targetPath, "utf8");
-    const existingJson = JSON.parse(existingContent);
+    const existingJson = parseJsonc(existingContent);
     let modified = false;
     const isPluginMatch = (entry) => {
       if (typeof entry === "string") {
@@ -15910,6 +15969,23 @@ class StateDatabase {
     this.#assertOpen();
     const row = this.#database.query("SELECT * FROM callback_tokens WHERE token = ?").get(token);
     return row ? callbackTokenFromRow(row) : undefined;
+  }
+  consumeCallbackToken(token, now) {
+    this.#assertOpen();
+    return this.#database.transaction(() => {
+      const result = this.#database.query("UPDATE callback_tokens SET consumed_at = ? WHERE token = ? AND consumed_at IS NULL AND expires_at > ?").run(now, token, now);
+      return result.changes > 0;
+    })();
+  }
+  consumeCallbackTokenAndRoute(input) {
+    this.#assertOpen();
+    return this.#database.transaction(() => {
+      const result = this.#database.query("UPDATE callback_tokens SET consumed_at = ? WHERE token = ? AND consumed_at IS NULL AND expires_at > ?").run(input.now, input.token, input.now);
+      if (result.changes === 0)
+        return false;
+      this.#database.query("UPDATE message_routes SET status = 'consumed' WHERE chat_id = ? AND message_id = ?").run(input.chatId, input.messageId);
+      return true;
+    })();
   }
   enqueueOutbox(input) {
     this.#assertOpen();
@@ -17315,11 +17391,6 @@ class RouteRegistry {
         return registered;
       }
     }
-    for (const registered of this.#routes.values()) {
-      if (registered.route.machineId === parsed.machineId && registered.route.sessionId === parsed.sessionId) {
-        return registered;
-      }
-    }
     return;
   }
   resolveBySessionId(sessionId) {
@@ -18163,12 +18234,18 @@ function callbackBinding(update, subject, database, now) {
   if (token.chatId !== subject.chatId || token.messageId !== callback.message.message_id) {
     return { accepted: false, reason: "CALLBACK_TOKEN_MESSAGE_MISMATCH" };
   }
-  if (token.expiresAt <= now || token.consumedAt) {
+  if (token.consumedAt) {
+    return { accepted: false, reason: "ALREADY_HANDLED" };
+  }
+  if (token.expiresAt <= now) {
     return { accepted: false, reason: "CALLBACK_TOKEN_EXPIRED" };
   }
   const route = database.getMessageRoute(token.chatId, token.messageId);
   if (!route)
     return { accepted: false, reason: "MESSAGE_BINDING_NOT_FOUND" };
+  if (route.status === "consumed") {
+    return { accepted: false, reason: "ALREADY_HANDLED" };
+  }
   return {
     accepted: true,
     route,
@@ -18642,8 +18719,6 @@ class TelegramPoller {
         if (isTerminalTelegramError(error51))
           throw error51;
         failures += 1;
-        if (failures >= this.#maxConsecutiveFailures)
-          throw error51;
         await abortableDelay(this.#retryDelay(error51, failures), signal);
       }
     }
@@ -18676,11 +18751,11 @@ function isTerminalTelegramError(error51) {
 }
 async function abortableDelay(milliseconds, signal) {
   if (signal.aborted)
-    throw signal.reason;
-  await new Promise((resolve2, reject) => {
+    return;
+  await new Promise((resolve2) => {
     const onAbort = () => {
       clearTimeout(timeout);
-      reject(signal.reason);
+      resolve2();
     };
     const timeout = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
@@ -19243,6 +19318,47 @@ function renderDashboardHtml() {
     let summaryData = null;
     let testedVerifiedProvider = null;
 
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getAuthToken() {
+      const urlToken = new URLSearchParams(window.location.search).get('token');
+      if (urlToken) {
+        sessionStorage.setItem('opencode_token', urlToken.trim());
+        return urlToken.trim();
+      }
+      return sessionStorage.getItem('opencode_token') || '';
+    }
+
+    async function authFetch(url, options = {}) {
+      const token = getAuthToken();
+      const headers = Object.assign({}, options.headers || {});
+      if (token && !headers['Authorization']) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+      const res = await fetch(url, Object.assign({}, options, { headers }));
+      if (res.status === 401) {
+        promptAuthToken();
+      }
+      return res;
+    }
+
+    function promptAuthToken() {
+      const currentToken = sessionStorage.getItem('opencode_token') || '';
+      const input = prompt('\uD83D\uDD12 \u8ACB\u8F38\u5165 Gateway \u5B58\u53D6\u91D1\u9470 (Broker Secret) \u4EE5\u89E3\u9396\u63A7\u5236\u53F0\uFF1A', currentToken);
+      if (input != null && input.trim() !== '') {
+        sessionStorage.setItem('opencode_token', input.trim());
+        fetchSummary();
+      }
+    }
+
     function showToast(msg, type = 'info') {
       const t = document.getElementById('toast');
       t.textContent = msg;
@@ -19254,7 +19370,10 @@ function renderDashboardHtml() {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       
-      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => {
+        const attr = b.getAttribute('onclick') || '';
+        return attr.includes(tabId);
+      });
       if (activeBtn) activeBtn.classList.add('active');
       const targetContent = document.getElementById('tab-' + tabId);
       if (targetContent) targetContent.classList.add('active');
@@ -19276,7 +19395,7 @@ function renderDashboardHtml() {
 
     async function fetchSummary() {
       try {
-        const res = await fetch('/v1/api/dashboard/summary');
+        const res = await authFetch('/v1/api/dashboard/summary');
         if (!res.ok) return;
         const data = await res.json();
         summaryData = data;
@@ -19330,22 +19449,22 @@ function renderDashboardHtml() {
             if (data.voice.cloudflare.accountId) {
               document.getElementById('cf-account-id').value = data.voice.cloudflare.accountId;
             }
-            if (data.voice.cloudflare.apiToken) {
-              document.getElementById('cf-api-token').value = data.voice.cloudflare.apiToken;
+            if (data.voice.cloudflare.hasApiToken) {
+              document.getElementById('cf-api-token').placeholder = '\u5DF2\u5132\u5B58: ' + (data.voice.cloudflare.maskedToken || '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022');
             }
           }
-          if (data.voice.groq && data.voice.groq.apiKey) {
-            document.getElementById('groq-api-key').value = data.voice.groq.apiKey;
+          if (data.voice.groq && data.voice.groq.hasApiKey) {
+            document.getElementById('groq-api-key').placeholder = '\u5DF2\u5132\u5B58: ' + (data.voice.groq.maskedKey || '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022');
           }
-          if (data.voice.openai && data.voice.openai.apiKey) {
-            document.getElementById('openai-api-key').value = data.voice.openai.apiKey;
+          if (data.voice.openai && data.voice.openai.hasApiKey) {
+            document.getElementById('openai-api-key').placeholder = '\u5DF2\u5132\u5B58: ' + (data.voice.openai.maskedKey || '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022');
           }
           if (data.voice.custom) {
             if (data.voice.custom.endpoint) {
               document.getElementById('custom-endpoint').value = data.voice.custom.endpoint;
             }
-            if (data.voice.custom.apiKey) {
-              document.getElementById('custom-api-key').value = data.voice.custom.apiKey;
+            if (data.voice.custom.hasApiKey) {
+              document.getElementById('custom-api-key').placeholder = '\u5DF2\u5132\u5B58: ' + (data.voice.custom.maskedKey || '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022');
             }
             if (data.voice.custom.model) {
               document.getElementById('custom-model').value = data.voice.custom.model;
@@ -19363,38 +19482,38 @@ function renderDashboardHtml() {
         container.innerHTML = data.machines.map(m => {
           const projectCards = (m.projects || []).map(p => {
             const hasSession = p.sessionId;
-            return \`
-              <div class="project-card">
-                <div class="project-name">
-                  <span>\uD83D\uDCC2</span> \${p.projectLabel}
-                </div>
-                <div class="project-session">
-                  \${hasSession ? '\u26A1 \u6B63\u5728\u57F7\u884C\uFF1A<b>' + (p.sessionLabel || p.sessionId) + '</b>' : '\uD83D\uDFE2 \u5F85\u547D\u4E2D (0 \u6D3B\u8E8D Session)'}
-                </div>
-                <div class="project-actions">
-                  <button class="btn btn-primary" onclick="quickDispatch('\${p.projectLabel}')" style="padding: 4px 10px; font-size: 12px;">
-                    \uD83D\uDE80 \u6D3E\u5DE5
-                  </button>
-                  \${hasSession ? \`<button class="btn btn-danger" onclick="cancelSession('\${p.sessionId}')" style="padding: 4px 10px; font-size: 12px;">\uD83D\uDED1 \u4E2D\u6B62</button>\` : ''}
-                </div>
-              </div>
-            \`;
+            const safeProjectLabel = escapeHtml(p.projectLabel);
+            const safeSessionLabel = escapeHtml(p.sessionLabel || p.sessionId || '');
+            const safeSessionId = escapeHtml(p.sessionId || '');
+            return '<div class="project-card">' +
+              '<div class="project-name">' +
+                '<span>\uD83D\uDCC2</span> ' + safeProjectLabel +
+              '</div>' +
+              '<div class="project-session">' +
+                (hasSession ? '\u26A1 \u6B63\u5728\u57F7\u884C\uFF1A<b>' + safeSessionLabel + '</b>' : '\uD83D\uDFE2 \u5F85\u547D\u4E2D (0 \u6D3B\u8E8D Session)') +
+              '</div>' +
+              '<div class="project-actions">' +
+                '<button class="btn btn-primary btn-dispatch-quick" data-target="' + safeProjectLabel + '" style="padding: 4px 10px; font-size: 12px;">\uD83D\uDE80 \u6D3E\u5DE5</button>' +
+                (hasSession ? '<button class="btn btn-danger btn-cancel-session" data-session-id="' + safeSessionId + '" style="padding: 4px 10px; font-size: 12px;">\uD83D\uDED1 \u4E2D\u6B62</button>' : '') +
+              '</div>' +
+            '</div>';
           }).join('');
 
-          return \`
-            <div class="machine-card">
-              <div class="machine-header">
-                <div class="machine-title">
-                  <span>\uD83D\uDCBB</span> \${m.hostLabel || 'codeCenter'}
-                  <span style="font-size: 12px; font-weight: normal; color: var(--text-muted);">(\${m.machineId.slice(0, 8)}...)</span>
-                </div>
-                <span class="machine-badge">\${m.connectionsCount} \u500B\u5C08\u6848\u9023\u7DDA\u4E2D</span>
-              </div>
-              <div class="project-grid">
-                \${projectCards || '<div style="color: var(--text-muted); font-size: 13px;">\u7121\u5C08\u6848</div>'}
-              </div>
-            </div>
-          \`;
+          const safeHostLabel = escapeHtml(m.hostLabel || 'codeCenter');
+          const safeMachineId = escapeHtml(m.machineId ? m.machineId.slice(0, 8) : '');
+
+          return '<div class="machine-card">' +
+            '<div class="machine-header">' +
+              '<div class="machine-title">' +
+                '<span>\uD83D\uDCBB</span> ' + safeHostLabel + ' ' +
+                '<span style="font-size: 12px; font-weight: normal; color: var(--text-muted);">(' + safeMachineId + '...)</span>' +
+              '</div>' +
+              '<span class="machine-badge">' + escapeHtml(String(m.connectionsCount || 0)) + ' \u500B\u5C08\u6848\u9023\u7DDA\u4E2D</span>' +
+            '</div>' +
+            '<div class="project-grid">' +
+              (projectCards || '<div style="color: var(--text-muted); font-size: 13px;">\u7121\u5C08\u6848</div>') +
+            '</div>' +
+          '</div>';
         }).join('');
 
         // Populate dispatch target dropdown
@@ -19403,10 +19522,12 @@ function renderDashboardHtml() {
         const seenOptions = new Set();
         data.machines.forEach(m => {
           (m.projects || []).forEach(p => {
-            const key = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
-            if (!seenOptions.has(key)) {
-              seenOptions.add(key);
-              options += '<option value="' + p.projectLabel + '">' + key + '</option>';
+            const rawKey = '[' + (m.hostLabel || 'Host') + '] ' + p.projectLabel;
+            if (!seenOptions.has(rawKey)) {
+              seenOptions.add(rawKey);
+              const safeKey = escapeHtml(rawKey);
+              const safeVal = escapeHtml(p.projectLabel);
+              options += '<option value="' + safeVal + '">' + safeKey + '</option>';
             }
           });
         });
@@ -19419,23 +19540,39 @@ function renderDashboardHtml() {
       // Render Active Sessions Table
       const tbody = document.getElementById('sessions-tbody');
       if (data.activeSessions && data.activeSessions.length > 0) {
-        tbody.innerHTML = data.activeSessions.map(s => \`
-          <tr>
-            <td><b>\${s.hostLabel || 'codeCenter'}</b></td>
-            <td>\uD83D\uDCC2 \${s.projectLabel}</td>
-            <td>\${s.sessionLabel || '\u4EFB\u52D9\u57F7\u884C\u4E2D'}</td>
-            <td><code>\${s.route.sessionId}</code></td>
-            <td>
-              <button class="btn btn-danger" onclick="cancelSession('\${s.route.sessionId}')">
-                \uD83D\uDED1 \u4E2D\u6B62 (Cancel)
-              </button>
-            </td>
-          </tr>
-        \`).join('');
+        tbody.innerHTML = data.activeSessions.map(s => {
+          const safeHost = escapeHtml(s.hostLabel || 'codeCenter');
+          const safeProject = escapeHtml(s.projectLabel);
+          const safeSession = escapeHtml(s.sessionLabel || '\u4EFB\u52D9\u57F7\u884C\u4E2D');
+          const safeSessionId = escapeHtml(s.route ? s.route.sessionId : '');
+          return '<tr>' +
+            '<td><b>' + safeHost + '</b></td>' +
+            '<td>\uD83D\uDCC2 ' + safeProject + '</td>' +
+            '<td>' + safeSession + '</td>' +
+            '<td><code>' + safeSessionId + '</code></td>' +
+            '<td>' +
+              '<button class="btn btn-danger btn-cancel-session" data-session-id="' + safeSessionId + '">\uD83D\uDED1 \u4E2D\u6B62 (Cancel)</button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
       } else {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">\u76EE\u524D\u6C92\u6709\u4EFB\u4F55\u57F7\u884C\u4E2D\u7684\u5DE5\u4F5C\u968E\u6BB5\u3002</td></tr>';
       }
     }
+
+    // Delegated click listeners for safe event handling
+    document.addEventListener('click', (e) => {
+      const dispatchBtn = e.target.closest('.btn-dispatch-quick');
+      if (dispatchBtn) {
+        const target = dispatchBtn.getAttribute('data-target');
+        if (target) quickDispatch(target);
+      }
+      const cancelBtn = e.target.closest('.btn-cancel-session');
+      if (cancelBtn) {
+        const sessionId = cancelBtn.getAttribute('data-session-id');
+        if (sessionId) cancelSession(sessionId);
+      }
+    });
 
     function quickDispatch(projectName) {
       switchTab('dispatch');
@@ -19453,7 +19590,7 @@ function renderDashboardHtml() {
       }
 
       try {
-        const res = await fetch('/v1/api/dashboard/dispatch', {
+        const res = await authFetch('/v1/api/dashboard/dispatch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ target, prompt })
@@ -19474,7 +19611,7 @@ function renderDashboardHtml() {
     async function cancelSession(sessionId) {
       if (!confirm('\u78BA\u5B9A\u8981\u4E2D\u6B62\u6B64\u4EFB\u52D9\u5DE5\u4F5C\u968E\u6BB5\u55CE (' + sessionId + ')\uFF1F')) return;
       try {
-        const res = await fetch('/v1/api/dashboard/cancel', {
+        const res = await authFetch('/v1/api/dashboard/cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId })
@@ -19494,7 +19631,6 @@ function renderDashboardHtml() {
     async function testCurrentVoiceProvider() {
       const provider = document.getElementById('setting-provider').value;
       const resBox = document.getElementById('test-voice-result');
-      const testBtn = event?.target || document.querySelector('#tab-settings .btn-secondary');
       
       let apiKey = '';
       let accountId = '';
@@ -19504,7 +19640,7 @@ function renderDashboardHtml() {
       if (provider === 'cloudflare') {
         accountId = document.getElementById('cf-account-id').value.trim();
         apiKey = document.getElementById('cf-api-token').value.trim();
-        if (!accountId) {
+        if (!accountId && (!summaryData?.voice?.cloudflare?.hasAccountId)) {
           resBox.style.display = 'block';
           resBox.className = 'test-result-box error';
           resBox.textContent = '\u274C \u8ACB\u586B\u5BEB Cloudflare Account ID\uFF01';
@@ -19527,7 +19663,7 @@ function renderDashboardHtml() {
       showToast('\uD83D\uDD04 \u6B63\u5728\u9023\u7DDA\u9A57\u8B49...', 'info');
 
       try {
-        const res = await fetch('/v1/api/dashboard/test-voice', {
+        const res = await authFetch('/v1/api/dashboard/test-voice', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -19544,7 +19680,7 @@ function renderDashboardHtml() {
         if (data.success) {
           testedVerifiedProvider = provider;
           resBox.className = 'test-result-box success';
-          resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + data.message + ')<br><span style="color: #fff; font-weight: bold;">\uD83D\uDC49 \u8ACB\u52D9\u5FC5\u9EDE\u64CA\u4E0B\u65B9\u300C\uD83D\uDCBE \u5132\u5B58\u4E26\u5957\u7528\u8A2D\u5B9A\u300D\u6309\u9215\u4EE5\u6C38\u4E45\u555F\u7528\u6B64\u5F15\u64CE\uFF01</span>';
+          resBox.innerHTML = '\u2714 <b>\u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01</b> (' + escapeHtml(data.message) + ')<br><span style="color: #fff; font-weight: bold;">\uD83D\uDC49 \u8ACB\u52D9\u5FC5\u9EDE\u64CA\u4E0B\u65B9\u300C\uD83D\uDCBE \u5132\u5B58\u4E26\u5957\u7528\u8A2D\u5B9A\u300D\u6309\u9215\u4EE5\u6C38\u4E45\u555F\u7528\u6B64\u5F15\u64CE\uFF01</span>';
           showToast('\u2714 \u9023\u7DDA\u6E2C\u8A66\u6210\u529F\uFF01\u8ACB\u9EDE\u64CA\u5132\u5B58', 'success');
         } else {
           testedVerifiedProvider = null;
@@ -19573,27 +19709,16 @@ function renderDashboardHtml() {
       const customApiKey = document.getElementById('custom-api-key').value.trim();
       const customModel = document.getElementById('custom-model').value.trim();
 
-      let activeKey = '';
-      if (provider === 'cloudflare') activeKey = cfApiToken;
-      else if (provider === 'groq') activeKey = groqApiKey;
-      else if (provider === 'openai') activeKey = openaiApiKey;
-      else if (provider === 'custom') activeKey = customApiKey;
-
-      if (activeKey && testedVerifiedProvider !== provider) {
-        const proceed = confirm('\u6B64\u5F15\u64CE\u5C1A\u672A\u5B8C\u6210\u300C\uD83E\uDDEA \u6E2C\u8A66\u9023\u7DDA\u9A57\u8B49\u300D\uFF0C\u78BA\u5B9A\u8981\u76F4\u63A5\u5132\u5B58\u55CE\uFF1F\u5EFA\u8B70\u5148\u9EDE\u64CA\u6E2C\u8A66\u78BA\u8A8D\u53EF\u7528\u3002');
-        if (!proceed) return;
-      }
-
       try {
-        const res = await fetch('/v1/api/dashboard/settings', {
+        const res = await authFetch('/v1/api/dashboard/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             activeProvider: provider,
-            cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
-            groq: { apiKey: groqApiKey },
-            openai: { apiKey: openaiApiKey },
-            custom: { endpoint: customEndpoint, apiKey: customApiKey, model: customModel },
+            cloudflare: { accountId: cfAccountId || undefined, apiToken: cfApiToken || undefined },
+            groq: { apiKey: groqApiKey || undefined },
+            openai: { apiKey: openaiApiKey || undefined },
+            custom: { endpoint: customEndpoint || undefined, apiKey: customApiKey || undefined, model: customModel || undefined },
             sessionPromptTtlMinutes: ttlDays * 24 * 60
           })
         });
@@ -19602,7 +19727,7 @@ function renderDashboardHtml() {
           showToast('\uD83D\uDCBE \u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\u4E26\u751F\u6548\uFF01', 'success');
           fetchSummary();
         } else {
-          showToast('\u5132\u5B58\u5931\u6557\uFF1A' + data.message, 'error');
+          showToast('\u5132\u5B58\u5931\u6557\uFF1A' + (data.reason || data.message || '\u672A\u77E5\u932F\u8AA4'), 'error');
         }
       } catch (err) {
         showToast('\u5132\u5B58\u5931\u6557\uFF1A' + err.message, 'error');
@@ -19649,6 +19774,20 @@ function normalizeSettings(s) {
     custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
     sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200
   };
+}
+function maskSecret(val) {
+  if (!val)
+    return;
+  const trimmed = val.trim();
+  if (trimmed.length <= 8)
+    return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+  return `${trimmed.slice(0, 4)}\u2022\u2022\u2022\u2022${trimmed.slice(-4)}`;
+}
+function isMaskedOrEmpty(val) {
+  if (!val)
+    return true;
+  const trimmed = val.trim();
+  return !trimmed || trimmed.includes("\u2022\u2022") || trimmed.includes("\u25CF\u25CF") || trimmed.includes("****");
 }
 async function loadDashboardSettings(stateDirectory) {
   const filePath = join6(stateDirectory, "dashboard-settings.json");
@@ -19743,7 +19882,7 @@ class BrokerServer {
     } else {
       const registered = this.registry.resolve(command.route);
       socket = registered ? this.registry.owner(registered.route) : undefined;
-      if (!registered || !socket) {
+      if (!registered || !socket || socket.readyState !== 1) {
         return { commandId: command.commandId, status: "stale", reason: "route is offline" };
       }
       payloadCommand = {
@@ -19769,48 +19908,57 @@ class BrokerServer {
         timeout
       });
     });
-    send(socket, {
-      protocol: PROTOCOL_VERSION,
-      type: "command",
-      requestId,
-      sentAt: new Date().toISOString(),
-      payload: payloadCommand
-    });
+    try {
+      send(socket, {
+        protocol: PROTOCOL_VERSION,
+        type: "command",
+        requestId,
+        sentAt: new Date().toISOString(),
+        payload: payloadCommand
+      });
+    } catch (err) {
+      this.#pendingCommands.delete(requestId);
+      return {
+        commandId: command.commandId,
+        status: "stale",
+        reason: err instanceof Error ? err.message : "failed to send command"
+      };
+    }
     return await result;
   }
 }
 async function startBroker(options = {}) {
-  const state = await loadOrCreateStateIdentity(options.stateDirectory ?? defaultStateDirectory());
+  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+  const state = await loadOrCreateStateIdentity(stateDirectory);
+  const database = await StateDatabase.open({ stateDirectory, machineId: state.machineId });
   const registry2 = new RouteRegistry;
-  const database = await StateDatabase.open({
-    stateDirectory: state.stateDirectory,
-    machineId: state.machineId
-  });
-  const connections = new Set;
-  const pendingCommands = new Map;
+  const deliveryIntervalMs = options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
+  const now = options.now ?? (() => Date.now());
+  const startedAt = Date.now();
+  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const activeConfigFingerprint = { value: undefined };
+  const telegramRuntimeRef = { value: undefined };
+  const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
   const registrationTimeoutMs = options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const maintenanceIntervalMs = options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
-  const deliveryIntervalMs = options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
-  const now = options.now ?? Date.now;
   let lastNonIdleAt = Date.now();
-  const startedAt = Date.now();
-  let broker;
-  const telegramRuntimeRef = { value: undefined };
-  const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
-  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
+  const pendingCommands = new Map;
+  const connections = new Set;
   const dispatcher = {
     sendCommand: async (command) => {
       if (!broker) {
-        return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
+        throw new Error("broker is not initialized");
       }
       return await broker.sendCommand(command);
     }
   };
   const ensureTelegramRuntime = (config2) => {
-    telegramRuntimeRef.value ??= new BrokerTelegramRuntime({
+    if (telegramRuntimeRef.value) {
+      return telegramRuntimeRef.value;
+    }
+    telegramRuntimeRef.value = new BrokerTelegramRuntime({
       config: config2,
       database,
       registry: registry2,
@@ -19823,6 +19971,7 @@ async function startBroker(options = {}) {
     telegramRuntimeRef.value.start();
     return telegramRuntimeRef.value;
   };
+  let broker;
   const server = (() => {
     try {
       return Bun.serve({
@@ -19831,9 +19980,21 @@ async function startBroker(options = {}) {
         fetch(request, bunServer) {
           const url2 = new URL(request.url);
           if (url2.pathname === "/" || url2.pathname === "/dashboard") {
-            return new Response(renderDashboardHtml(), {
-              headers: { "Content-Type": "text/html; charset=utf-8" }
-            });
+            const isAuthed = verifyDashboardAuth(request, state.brokerSecret);
+            const tokenParam = url2.searchParams.get("token");
+            const headers = { "Content-Type": "text/html; charset=utf-8" };
+            if (tokenParam && isAuthed) {
+              headers["Set-Cookie"] = `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`;
+            }
+            return new Response(renderDashboardHtml(), { headers });
+          }
+          if (url2.pathname.startsWith("/v1/api/dashboard/")) {
+            if (!verifyDashboardAuth(request, state.brokerSecret)) {
+              return Response.json({
+                error: "Unauthorized",
+                reason: "Invalid or missing dashboard authentication token"
+              }, { status: 401 });
+            }
           }
           if (url2.pathname === "/v1/api/dashboard/summary") {
             const machines = registry2.listMachines();
@@ -19868,33 +20029,60 @@ async function startBroker(options = {}) {
                 provider: activeKey ? normalized.activeProvider : "none",
                 activeProvider: normalized.activeProvider ?? "cloudflare",
                 hasApiKey: Boolean(activeKey),
-                cloudflare: normalized.cloudflare,
-                groq: normalized.groq,
-                openai: normalized.openai,
-                custom: normalized.custom
+                cloudflare: {
+                  accountId: normalized.cloudflare?.accountId ?? "",
+                  hasAccountId: Boolean(normalized.cloudflare?.accountId),
+                  hasApiToken: Boolean(normalized.cloudflare?.apiToken),
+                  maskedToken: maskSecret(normalized.cloudflare?.apiToken)
+                },
+                groq: {
+                  hasApiKey: Boolean(normalized.groq?.apiKey),
+                  maskedKey: maskSecret(normalized.groq?.apiKey)
+                },
+                openai: {
+                  hasApiKey: Boolean(normalized.openai?.apiKey),
+                  maskedKey: maskSecret(normalized.openai?.apiKey)
+                },
+                custom: {
+                  endpoint: normalized.custom?.endpoint ?? "",
+                  hasApiKey: Boolean(normalized.custom?.apiKey),
+                  maskedKey: maskSecret(normalized.custom?.apiKey),
+                  model: normalized.custom?.model ?? "whisper-large-v3-turbo"
+                }
               }
             });
           }
           if (url2.pathname === "/v1/api/dashboard/test-voice") {
-            if (request.method !== "POST") {
+            if (request.method !== "POST")
               return new Response("Method not allowed", { status: 405 });
-            }
             return (async () => {
               try {
                 const body = await readJsonBody(request);
-                const apiKey = body.apiKey?.trim() || (body.provider === "groq" ? process.env.GROQ_API_KEY : body.provider === "cloudflare" ? process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN : body.provider === "openai" ? process.env.OPENAI_API_KEY : undefined);
+                let apiKey = !isMaskedOrEmpty(body.apiKey) ? body.apiKey?.trim() : undefined;
+                if (!apiKey) {
+                  if (body.provider === "groq") {
+                    apiKey = persistedSettings.groq?.apiKey || process.env.GROQ_API_KEY;
+                  } else if (body.provider === "cloudflare") {
+                    apiKey = persistedSettings.cloudflare?.apiToken || process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN;
+                  } else if (body.provider === "openai") {
+                    apiKey = persistedSettings.openai?.apiKey || process.env.OPENAI_API_KEY;
+                  } else if (body.provider === "custom") {
+                    apiKey = persistedSettings.custom?.apiKey || "custom";
+                  }
+                }
                 if (!apiKey) {
                   return Response.json({ success: false, error: "\u8ACB\u586B\u5BEB API \u91D1\u9470 / Token" }, { status: 400 });
                 }
+                let accountId;
                 if (body.provider === "cloudflare") {
-                  const accountId = body.accountId?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
+                  accountId = !isMaskedOrEmpty(body.accountId) ? body.accountId?.trim() : persistedSettings.cloudflare?.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || process.env.CF_ACCOUNT_ID;
                   if (!accountId) {
                     return Response.json({ success: false, error: "Cloudflare \u5FC5\u9808\u63D0\u4F9B Account ID" }, { status: 400 });
                   }
                 }
                 const transcriber = new VoiceTranscriber({
                   apiKey,
-                  ...body.accountId ? { accountId: body.accountId.trim() } : {},
+                  ...accountId ? { accountId } : {},
                   provider: body.provider,
                   ...body.endpoint ? { endpoint: body.endpoint.trim() } : {},
                   ...body.model ? { model: body.model.trim() } : {}
@@ -19966,28 +20154,17 @@ async function startBroker(options = {}) {
                   });
                   return Response.json({ success: result2.status === "accepted", result: result2 });
                 }
-                const machines = registry2.listMachines();
-                const allProjects = [];
-                for (const m of machines) {
-                  for (const p of m.projects) {
-                    allProjects.push({
-                      machineId: m.machineId,
-                      projectLabel: p.projectLabel,
-                      ...m.hostLabel ? { hostLabel: m.hostLabel } : {},
-                      ...p.sessionId ? { sessionId: p.sessionId } : {}
-                    });
-                  }
-                }
-                const selected = target ? allProjects.find((p) => p.projectLabel.toLowerCase() === target.toLowerCase() || p.hostLabel?.toLowerCase() === target.toLowerCase()) : allProjects.length === 1 ? allProjects[0] : undefined;
-                if (!selected) {
+                const targetConn = registry2.findConnection(target);
+                if (!targetConn) {
                   return Response.json({
                     success: false,
-                    reason: target ? `Target project "${target}" not found` : "Multiple projects online, please specify target project"
+                    reason: target ? `Target project or machine "${target}" not found or offline` : "No online connection found to dispatch task"
                   }, { status: 400 });
                 }
                 const result = await dispatcher.sendCommand({
                   commandId: randomUUID6(),
                   type: "session.spawn",
+                  instanceId: targetConn.instanceId,
                   title: prompt.slice(0, 30),
                   prompt
                 });
@@ -20029,31 +20206,31 @@ async function startBroker(options = {}) {
             return (async () => {
               try {
                 const body = await readJsonBody(request);
+                const currentCf = persistedSettings.cloudflare || {};
+                const currentGroq = persistedSettings.groq || {};
+                const currentOpenAi = persistedSettings.openai || {};
+                const currentCustom = persistedSettings.custom || {};
+                const updatedCfAccountId = !isMaskedOrEmpty(body.cloudflare?.accountId) ? body.cloudflare?.accountId?.trim() : body.voiceAccountId && !isMaskedOrEmpty(body.voiceAccountId) ? body.voiceAccountId.trim() : currentCf.accountId;
+                const updatedCfApiToken = !isMaskedOrEmpty(body.cloudflare?.apiToken) ? body.cloudflare?.apiToken?.trim() : body.voiceProvider === "cloudflare" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentCf.apiToken;
+                const updatedGroqApiKey = !isMaskedOrEmpty(body.groq?.apiKey) ? body.groq?.apiKey?.trim() : body.voiceProvider === "groq" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentGroq.apiKey;
+                const updatedOpenAiApiKey = !isMaskedOrEmpty(body.openai?.apiKey) ? body.openai?.apiKey?.trim() : body.voiceProvider === "openai" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentOpenAi.apiKey;
+                const updatedCustomApiKey = !isMaskedOrEmpty(body.custom?.apiKey) ? body.custom?.apiKey?.trim() : body.voiceProvider === "custom" && !isMaskedOrEmpty(body.voiceApiKey) ? body.voiceApiKey?.trim() : currentCustom.apiKey;
                 persistedSettings = normalizeSettings({
-                  ...persistedSettings,
                   activeProvider: body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
                   cloudflare: {
-                    ...persistedSettings.cloudflare,
-                    ...body.cloudflare || {},
-                    ...body.voiceAccountId ? { accountId: body.voiceAccountId } : {},
-                    ...body.voiceProvider === "cloudflare" && body.voiceApiKey ? { apiToken: body.voiceApiKey } : {}
+                    accountId: updatedCfAccountId,
+                    apiToken: updatedCfApiToken
                   },
                   groq: {
-                    ...persistedSettings.groq,
-                    ...body.groq || {},
-                    ...body.voiceProvider === "groq" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                    apiKey: updatedGroqApiKey
                   },
                   openai: {
-                    ...persistedSettings.openai,
-                    ...body.openai || {},
-                    ...body.voiceProvider === "openai" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                    apiKey: updatedOpenAiApiKey
                   },
                   custom: {
-                    ...persistedSettings.custom,
-                    ...body.custom || {},
-                    ...body.voiceEndpoint ? { endpoint: body.voiceEndpoint } : {},
-                    ...body.voiceModel ? { model: body.voiceModel } : {},
-                    ...body.voiceProvider === "custom" && body.voiceApiKey ? { apiKey: body.voiceApiKey } : {}
+                    endpoint: body.custom?.endpoint?.trim() ?? currentCustom.endpoint,
+                    apiKey: updatedCustomApiKey,
+                    model: body.custom?.model?.trim() ?? currentCustom.model
                   },
                   sessionPromptTtlMinutes: body.sessionPromptTtlMinutes ?? persistedSettings.sessionPromptTtlMinutes
                 });
@@ -20071,28 +20248,24 @@ async function startBroker(options = {}) {
                 } else if (activeProvider === "openai") {
                   activeKey = persistedSettings.openai?.apiKey;
                 } else if (activeProvider === "custom") {
-                  activeKey = persistedSettings.custom?.apiKey || "custom";
+                  activeKey = persistedSettings.custom?.apiKey;
                   activeEndpoint = persistedSettings.custom?.endpoint;
                   activeModel = persistedSettings.custom?.model;
                 }
                 if (activeKey) {
-                  const newTranscriber = new VoiceTranscriber({
+                  telegramRuntimeRef.value?.setTranscriber(new VoiceTranscriber({
                     apiKey: activeKey,
-                    accountId: activeAccountId,
+                    ...activeAccountId ? { accountId: activeAccountId } : {},
                     provider: activeProvider,
-                    endpoint: activeEndpoint,
-                    model: activeModel
-                  });
-                  telegramRuntimeRef.value?.setTranscriber(newTranscriber);
+                    ...activeEndpoint ? { endpoint: activeEndpoint } : {},
+                    ...activeModel ? { model: activeModel } : {}
+                  }));
                 }
-                return Response.json({ success: true, message: "\u8A2D\u5B9A\u5DF2\u6210\u529F\u5132\u5B58\u4E26\u5373\u6642\u751F\u6548" });
+                return Response.json({ success: true, settings: persistedSettings });
               } catch (err) {
-                return Response.json({ success: false, message: err.message }, { status: 500 });
+                return Response.json({ success: false, reason: err.message }, { status: 500 });
               }
             })();
-          }
-          if (url2.pathname !== "/v1/health" && url2.pathname !== "/v1/status" && url2.pathname !== "/v1/connect" && url2.pathname !== "/v1/control/stop") {
-            return new Response("Not found", { status: 404 });
           }
           if (!isAuthorized(request.headers.get("authorization"), state.brokerSecret, url2.searchParams.get("token"))) {
             return new Response("Unauthorized", { status: 401 });
@@ -20307,6 +20480,22 @@ class BrokerTelegramRuntime {
         input.api.answerCallbackQuery({
           callbackQueryId: update.callback_query.id
         }).catch(() => {});
+      }
+      if (interaction.callbackToken) {
+        const consumed = input.database.consumeCallbackTokenAndRoute({
+          token: interaction.callbackToken,
+          chatId: interaction.chatId,
+          messageId: interaction.messageId,
+          now: input.now()
+        });
+        if (!consumed) {
+          await this.#sendInteractionFeedback(interaction.chatId, "already_handled");
+          return {
+            disposition: "rejected",
+            actionId: "ALREADY_HANDLED",
+            payloadHash: createHash5("sha256").update(`${update.update_id}:ALREADY_HANDLED`).digest("hex")
+          };
+        }
       }
       const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
       await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
@@ -20704,7 +20893,7 @@ function handleMessage(socket, message, machineId, registry2, pendingCommands, a
       }
       case "command.result": {
         const pending = pendingCommands.get(envelope.requestId);
-        if (!pending || pending.connectionId !== socket.data.connectionId)
+        if (!pending)
           return;
         pendingCommands.delete(envelope.requestId);
         clearTimeout(pending.timeout);
@@ -20767,6 +20956,28 @@ function isAuthorized(authorization, brokerSecret, urlToken) {
   const expected = createHash5("sha256").update(brokerSecret).digest();
   return timingSafeEqual(supplied, expected);
 }
+function verifyDashboardAuth(request, brokerSecret) {
+  const authHeader = request.headers.get("authorization");
+  const cookieHeader = request.headers.get("cookie");
+  const url2 = new URL(request.url);
+  const tokenParam = url2.searchParams.get("token");
+  if (authHeader && isAuthorized(authHeader, brokerSecret)) {
+    return true;
+  }
+  if (tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
+    return true;
+  }
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:^|;\s*)opencode_token=([^;]+)/);
+    if (match?.[1]) {
+      const cookieVal = decodeURIComponent(match[1]).trim();
+      if (cookieVal && isAuthorized(null, brokerSecret, cookieVal)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 function isAddressInUseError(error51) {
   return error51 instanceof Error && "code" in error51 && error51.code === "EADDRINUSE";
 }
@@ -20782,7 +20993,8 @@ async function runDoctor(options = {}) {
   if (options.rawConfig !== undefined) {
     configInput = options.rawConfig;
   } else {
-    configInput = await loadResolvedNotifierConfig(undefined, process.cwd()) ?? configFromEnvironment(env);
+    const envConfig = configFromEnvironment(env);
+    configInput = envConfig ?? await loadResolvedNotifierConfig(undefined, process.cwd());
   }
   const configResult = parseDoctorConfig(configInput);
   checks3.push(configResult.check);
@@ -21406,4 +21618,4 @@ export {
   runBroker
 };
 
-//# debugId=5A5D62702B521C5A64756E2164756E21
+//# debugId=16B4D0F53010435164756E2164756E21

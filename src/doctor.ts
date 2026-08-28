@@ -40,8 +40,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
   if (options.rawConfig !== undefined) {
     configInput = options.rawConfig;
   } else {
-    configInput =
-      (await loadResolvedNotifierConfig(undefined, process.cwd())) ?? configFromEnvironment(env);
+    const envConfig = configFromEnvironment(env);
+    configInput = envConfig ?? (await loadResolvedNotifierConfig(undefined, process.cwd()));
   }
   const configResult = parseDoctorConfig(configInput);
   checks.push(configResult.check);

@@ -3,13 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, startBroker } from "../src/broker/server";
+import { loadOrCreateStateIdentity } from "../src/state";
 
 describe("Web Dashboard", () => {
   let stateDirectory: string;
   let broker: BrokerServer;
+  let brokerSecret: string;
 
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "opencode-dashboard-test-"));
+    const state = await loadOrCreateStateIdentity(stateDirectory);
+    brokerSecret = state.brokerSecret;
     broker = await startBroker({
       stateDirectory,
       port: 0,
@@ -38,8 +42,17 @@ describe("Web Dashboard", () => {
     expect(dashHtml).toContain("拓撲總覽");
   });
 
-  test("returns cluster summary via /v1/api/dashboard/summary", async () => {
+  test("rejects unauthenticated requests to /v1/api/dashboard/* with 401", async () => {
     const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`);
+    expect(res.status).toBe(401);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe("Unauthorized");
+  });
+
+  test("returns cluster summary via /v1/api/dashboard/summary when authenticated", async () => {
+    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`, {
+      headers: { Authorization: `Bearer ${brokerSecret}` },
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       service: string;
@@ -47,7 +60,12 @@ describe("Web Dashboard", () => {
       connectionsCount: number;
       machines: unknown[];
       activeSessions: unknown[];
-      voice?: { provider: string };
+      voice?: {
+        provider: string;
+        hasApiKey: boolean;
+        groq?: { hasApiKey: boolean; maskedKey?: string; apiKey?: string };
+        cloudflare?: { hasApiToken: boolean; maskedToken?: string; apiToken?: string };
+      };
     };
     expect(data.service).toBe("opencode-telegram-link");
     expect(data.version).toBe("3.0.0");
@@ -55,12 +73,23 @@ describe("Web Dashboard", () => {
     expect(Array.isArray(data.machines)).toBe(true);
     expect(Array.isArray(data.activeSessions)).toBe(true);
     expect(data.voice).toBeDefined();
+
+    // Verify secrets are masked and plaintext is never leaked
+    if (data.voice?.groq) {
+      expect(data.voice.groq.apiKey).toBeUndefined();
+    }
+    if (data.voice?.cloudflare) {
+      expect(data.voice.cloudflare.apiToken).toBeUndefined();
+    }
   });
 
   test("handles dispatch validation when no targets are online", async () => {
     const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/dispatch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${brokerSecret}`,
+      },
       body: JSON.stringify({
         prompt: "test dispatch prompt",
       }),
@@ -74,7 +103,10 @@ describe("Web Dashboard", () => {
   test("handles cancel validation when session is not found", async () => {
     const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/cancel`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${brokerSecret}`,
+      },
       body: JSON.stringify({
         sessionId: "ses_nonexistent_123",
       }),
@@ -89,7 +121,10 @@ describe("Web Dashboard", () => {
   test("handles test-voice missing credentials validation", async () => {
     const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/test-voice`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${brokerSecret}`,
+      },
       body: JSON.stringify({
         provider: "cloudflare",
         apiKey: "cfut_test",
@@ -105,7 +140,10 @@ describe("Web Dashboard", () => {
   test("saves settings via /v1/api/dashboard/settings", async () => {
     const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/settings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${brokerSecret}`,
+      },
       body: JSON.stringify({
         voiceProvider: "groq",
         voiceApiKey: "gsk_test123",
@@ -115,5 +153,16 @@ describe("Web Dashboard", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { success: boolean };
     expect(data.success).toBe(true);
+
+    // Verify summary returns masked key, not plaintext
+    const summaryRes = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/summary`, {
+      headers: { Authorization: `Bearer ${brokerSecret}` },
+    });
+    const summaryData = (await summaryRes.json()) as {
+      voice?: { groq?: { hasApiKey: boolean; maskedKey?: string; apiKey?: string } };
+    };
+    expect(summaryData.voice?.groq?.hasApiKey).toBe(true);
+    expect(summaryData.voice?.groq?.maskedKey).toContain("••••");
+    expect(summaryData.voice?.groq?.apiKey).toBeUndefined();
   });
 });

@@ -38,15 +38,14 @@ afterEach(async () => {
 });
 
 async function safeRemove(directory: string): Promise<void> {
-  for (let attempt = 0; attempt < 15; attempt++) {
+  for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  await rm(directory, { recursive: true, force: true });
 }
 
 describe("local broker", () => {

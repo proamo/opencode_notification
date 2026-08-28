@@ -24,6 +24,8 @@
   },
   "files": [
     "dist",
+    "container",
+    "docker-compose.yml",
     "README.md",
     "LICENSE"
   ],

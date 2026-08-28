@@ -127,6 +127,19 @@ function normalizeSettings(s: DashboardSettings): DashboardSettings {
   };
 }
 
+function maskSecret(val?: string | null): string | undefined {
+  if (!val) return undefined;
+  const trimmed = val.trim();
+  if (trimmed.length <= 8) return "••••••••";
+  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
+}
+
+function isMaskedOrEmpty(val?: string | null): boolean {
+  if (!val) return true;
+  const trimmed = val.trim();
+  return !trimmed || trimmed.includes("••") || trimmed.includes("●●") || trimmed.includes("****");
+}
+
 async function loadDashboardSettings(stateDirectory: string): Promise<DashboardSettings> {
   const filePath = join(stateDirectory, "dashboard-settings.json");
   try {
@@ -263,7 +276,7 @@ export class BrokerServer {
     } else {
       const registered = this.registry.resolve(command.route);
       socket = registered ? this.registry.owner(registered.route) : undefined;
-      if (!registered || !socket) {
+      if (!registered || !socket || socket.readyState !== 1) {
         return { commandId: command.commandId, status: "stale", reason: "route is offline" };
       }
       payloadCommand = {
@@ -290,52 +303,63 @@ export class BrokerServer {
         timeout,
       });
     });
-    send(socket, {
-      protocol: PROTOCOL_VERSION,
-      type: "command",
-      requestId,
-      sentAt: new Date().toISOString(),
-      payload: payloadCommand,
-    });
+
+    try {
+      send(socket, {
+        protocol: PROTOCOL_VERSION,
+        type: "command",
+        requestId,
+        sentAt: new Date().toISOString(),
+        payload: payloadCommand,
+      });
+    } catch (err) {
+      this.#pendingCommands.delete(requestId);
+      return {
+        commandId: command.commandId,
+        status: "stale",
+        reason: err instanceof Error ? err.message : "failed to send command",
+      };
+    }
+
     return await result;
   }
 }
 
 export async function startBroker(options: StartBrokerOptions = {}): Promise<BrokerServer> {
-  const state = await loadOrCreateStateIdentity(options.stateDirectory ?? defaultStateDirectory());
+  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+  const state = await loadOrCreateStateIdentity(stateDirectory);
+  const database = await StateDatabase.open({ stateDirectory, machineId: state.machineId });
   const registry = new RouteRegistry();
-  const database = await StateDatabase.open({
-    stateDirectory: state.stateDirectory,
-    machineId: state.machineId,
-  });
-  const connections = new Set<Bun.ServerWebSocket<BrokerConnectionData>>();
-  const pendingCommands = new Map<string, PendingBrokerCommand>();
+  const deliveryIntervalMs =
+    options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
+  const now = options.now ?? (() => Date.now());
+  const startedAt = Date.now();
+  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const activeConfigFingerprint: { value: string | undefined } = { value: undefined };
+  const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
+  const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
   const registrationTimeoutMs = options.registrationTimeoutMs ?? DEFAULT_REGISTRATION_TIMEOUT_MS;
   const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? DEFAULT_HEARTBEAT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const maintenanceIntervalMs = options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
-  const deliveryIntervalMs =
-    options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
-  const now = options.now ?? Date.now;
   let lastNonIdleAt = Date.now();
-  const startedAt = Date.now();
-  let broker: BrokerServer | undefined;
-  const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
-  const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
-  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
+  const pendingCommands = new Map<string, PendingBrokerCommand>();
+  const connections = new Set<Bun.ServerWebSocket<BrokerConnectionData>>();
 
   const dispatcher = {
     sendCommand: async (command: BrokerCommand): Promise<CommandResult> => {
       if (!broker) {
-        return { commandId: command.commandId, status: "stale", reason: "broker is starting" };
+        throw new Error("broker is not initialized");
       }
       return await broker.sendCommand(command);
     },
   };
 
   const ensureTelegramRuntime = (config: TelegramRuntimeConfig): BrokerTelegramRuntime => {
-    telegramRuntimeRef.value ??= new BrokerTelegramRuntime({
+    if (telegramRuntimeRef.value) {
+      return telegramRuntimeRef.value;
+    }
+    telegramRuntimeRef.value = new BrokerTelegramRuntime({
       config,
       database,
       registry,
@@ -353,6 +377,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
     return telegramRuntimeRef.value;
   };
 
+  let broker: BrokerServer | undefined;
   const server = (() => {
     try {
       return Bun.serve<BrokerConnectionData>({
@@ -361,11 +386,29 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
         fetch(request, bunServer) {
           const url = new URL(request.url);
 
-          // Web Dashboard endpoints
+          // Web Dashboard static HTML entrypoint
           if (url.pathname === "/" || url.pathname === "/dashboard") {
-            return new Response(renderDashboardHtml(), {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
+            const isAuthed = verifyDashboardAuth(request, state.brokerSecret);
+            const tokenParam = url.searchParams.get("token");
+            const headers: Record<string, string> = { "Content-Type": "text/html; charset=utf-8" };
+            if (tokenParam && isAuthed) {
+              headers["Set-Cookie"] =
+                `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`;
+            }
+            return new Response(renderDashboardHtml(), { headers });
+          }
+
+          // Protected Dashboard API Endpoints
+          if (url.pathname.startsWith("/v1/api/dashboard/")) {
+            if (!verifyDashboardAuth(request, state.brokerSecret)) {
+              return Response.json(
+                {
+                  error: "Unauthorized",
+                  reason: "Invalid or missing dashboard authentication token",
+                },
+                { status: 401 },
+              );
+            }
           }
 
           if (url.pathname === "/v1/api/dashboard/summary") {
@@ -404,18 +447,33 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 provider: activeKey ? normalized.activeProvider : "none",
                 activeProvider: normalized.activeProvider ?? "cloudflare",
                 hasApiKey: Boolean(activeKey),
-                cloudflare: normalized.cloudflare,
-                groq: normalized.groq,
-                openai: normalized.openai,
-                custom: normalized.custom,
+                cloudflare: {
+                  accountId: normalized.cloudflare?.accountId ?? "",
+                  hasAccountId: Boolean(normalized.cloudflare?.accountId),
+                  hasApiToken: Boolean(normalized.cloudflare?.apiToken),
+                  maskedToken: maskSecret(normalized.cloudflare?.apiToken),
+                },
+                groq: {
+                  hasApiKey: Boolean(normalized.groq?.apiKey),
+                  maskedKey: maskSecret(normalized.groq?.apiKey),
+                },
+                openai: {
+                  hasApiKey: Boolean(normalized.openai?.apiKey),
+                  maskedKey: maskSecret(normalized.openai?.apiKey),
+                },
+                custom: {
+                  endpoint: normalized.custom?.endpoint ?? "",
+                  hasApiKey: Boolean(normalized.custom?.apiKey),
+                  maskedKey: maskSecret(normalized.custom?.apiKey),
+                  model: normalized.custom?.model ?? "whisper-large-v3-turbo",
+                },
               },
             });
           }
 
           if (url.pathname === "/v1/api/dashboard/test-voice") {
-            if (request.method !== "POST") {
+            if (request.method !== "POST")
               return new Response("Method not allowed", { status: 405 });
-            }
             return (async () => {
               try {
                 const body = await readJsonBody<{
@@ -426,15 +484,21 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                   model?: string;
                 }>(request);
 
-                const apiKey =
-                  body.apiKey?.trim() ||
-                  (body.provider === "groq"
-                    ? process.env.GROQ_API_KEY
-                    : body.provider === "cloudflare"
-                      ? (process.env.CLOUDFLARE_API_TOKEN ?? process.env.CF_API_TOKEN)
-                      : body.provider === "openai"
-                        ? process.env.OPENAI_API_KEY
-                        : undefined);
+                let apiKey = !isMaskedOrEmpty(body.apiKey) ? body.apiKey?.trim() : undefined;
+                if (!apiKey) {
+                  if (body.provider === "groq") {
+                    apiKey = persistedSettings.groq?.apiKey || process.env.GROQ_API_KEY;
+                  } else if (body.provider === "cloudflare") {
+                    apiKey =
+                      persistedSettings.cloudflare?.apiToken ||
+                      process.env.CLOUDFLARE_API_TOKEN ||
+                      process.env.CF_API_TOKEN;
+                  } else if (body.provider === "openai") {
+                    apiKey = persistedSettings.openai?.apiKey || process.env.OPENAI_API_KEY;
+                  } else if (body.provider === "custom") {
+                    apiKey = persistedSettings.custom?.apiKey || "custom";
+                  }
+                }
 
                 if (!apiKey) {
                   return Response.json(
@@ -443,11 +507,13 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                   );
                 }
 
+                let accountId: string | undefined;
                 if (body.provider === "cloudflare") {
-                  const accountId =
-                    body.accountId?.trim() ||
-                    process.env.CLOUDFLARE_ACCOUNT_ID ||
-                    process.env.CF_ACCOUNT_ID;
+                  accountId = !isMaskedOrEmpty(body.accountId)
+                    ? body.accountId?.trim()
+                    : persistedSettings.cloudflare?.accountId ||
+                      process.env.CLOUDFLARE_ACCOUNT_ID ||
+                      process.env.CF_ACCOUNT_ID;
                   if (!accountId) {
                     return Response.json(
                       { success: false, error: "Cloudflare 必須提供 Account ID" },
@@ -458,7 +524,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
                 const transcriber = new VoiceTranscriber({
                   apiKey,
-                  ...(body.accountId ? { accountId: body.accountId.trim() } : {}),
+                  ...(accountId ? { accountId } : {}),
                   provider: body.provider,
                   ...(body.endpoint ? { endpoint: body.endpoint.trim() } : {}),
                   ...(body.model ? { model: body.model.trim() } : {}),
@@ -551,41 +617,14 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                   return Response.json({ success: result.status === "accepted", result });
                 }
 
-                const machines = registry.listMachines();
-                const allProjects: {
-                  machineId: string;
-                  projectLabel: string;
-                  hostLabel?: string | undefined;
-                  sessionId?: string | undefined;
-                }[] = [];
-                for (const m of machines) {
-                  for (const p of m.projects) {
-                    allProjects.push({
-                      machineId: m.machineId,
-                      projectLabel: p.projectLabel,
-                      ...(m.hostLabel ? { hostLabel: m.hostLabel } : {}),
-                      ...(p.sessionId ? { sessionId: p.sessionId } : {}),
-                    });
-                  }
-                }
-
-                const selected = target
-                  ? allProjects.find(
-                      (p) =>
-                        p.projectLabel.toLowerCase() === target.toLowerCase() ||
-                        p.hostLabel?.toLowerCase() === target.toLowerCase(),
-                    )
-                  : allProjects.length === 1
-                    ? allProjects[0]
-                    : undefined;
-
-                if (!selected) {
+                const targetConn = registry.findConnection(target);
+                if (!targetConn) {
                   return Response.json(
                     {
                       success: false,
                       reason: target
-                        ? `Target project "${target}" not found`
-                        : "Multiple projects online, please specify target project",
+                        ? `Target project or machine "${target}" not found or offline`
+                        : "No online connection found to dispatch task",
                     },
                     { status: 400 },
                   );
@@ -594,6 +633,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const result = await dispatcher.sendCommand({
                   commandId: randomUUID(),
                   type: "session.spawn",
+                  instanceId: targetConn.instanceId,
                   title: prompt.slice(0, 30),
                   prompt,
                 });
@@ -650,40 +690,58 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             return (async () => {
               try {
                 const body = await readJsonBody<DashboardSettings>(request);
+                const currentCf = persistedSettings.cloudflare || {};
+                const currentGroq = persistedSettings.groq || {};
+                const currentOpenAi = persistedSettings.openai || {};
+                const currentCustom = persistedSettings.custom || {};
+
+                const updatedCfAccountId = !isMaskedOrEmpty(body.cloudflare?.accountId)
+                  ? body.cloudflare?.accountId?.trim()
+                  : body.voiceAccountId && !isMaskedOrEmpty(body.voiceAccountId)
+                    ? body.voiceAccountId.trim()
+                    : currentCf.accountId;
+
+                const updatedCfApiToken = !isMaskedOrEmpty(body.cloudflare?.apiToken)
+                  ? body.cloudflare?.apiToken?.trim()
+                  : body.voiceProvider === "cloudflare" && !isMaskedOrEmpty(body.voiceApiKey)
+                    ? body.voiceApiKey?.trim()
+                    : currentCf.apiToken;
+
+                const updatedGroqApiKey = !isMaskedOrEmpty(body.groq?.apiKey)
+                  ? body.groq?.apiKey?.trim()
+                  : body.voiceProvider === "groq" && !isMaskedOrEmpty(body.voiceApiKey)
+                    ? body.voiceApiKey?.trim()
+                    : currentGroq.apiKey;
+
+                const updatedOpenAiApiKey = !isMaskedOrEmpty(body.openai?.apiKey)
+                  ? body.openai?.apiKey?.trim()
+                  : body.voiceProvider === "openai" && !isMaskedOrEmpty(body.voiceApiKey)
+                    ? body.voiceApiKey?.trim()
+                    : currentOpenAi.apiKey;
+
+                const updatedCustomApiKey = !isMaskedOrEmpty(body.custom?.apiKey)
+                  ? body.custom?.apiKey?.trim()
+                  : body.voiceProvider === "custom" && !isMaskedOrEmpty(body.voiceApiKey)
+                    ? body.voiceApiKey?.trim()
+                    : currentCustom.apiKey;
+
                 persistedSettings = normalizeSettings({
-                  ...persistedSettings,
                   activeProvider:
                     body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
                   cloudflare: {
-                    ...persistedSettings.cloudflare,
-                    ...(body.cloudflare || {}),
-                    ...(body.voiceAccountId ? { accountId: body.voiceAccountId } : {}),
-                    ...(body.voiceProvider === "cloudflare" && body.voiceApiKey
-                      ? { apiToken: body.voiceApiKey }
-                      : {}),
+                    accountId: updatedCfAccountId,
+                    apiToken: updatedCfApiToken,
                   },
                   groq: {
-                    ...persistedSettings.groq,
-                    ...(body.groq || {}),
-                    ...(body.voiceProvider === "groq" && body.voiceApiKey
-                      ? { apiKey: body.voiceApiKey }
-                      : {}),
+                    apiKey: updatedGroqApiKey,
                   },
                   openai: {
-                    ...persistedSettings.openai,
-                    ...(body.openai || {}),
-                    ...(body.voiceProvider === "openai" && body.voiceApiKey
-                      ? { apiKey: body.voiceApiKey }
-                      : {}),
+                    apiKey: updatedOpenAiApiKey,
                   },
                   custom: {
-                    ...persistedSettings.custom,
-                    ...(body.custom || {}),
-                    ...(body.voiceEndpoint ? { endpoint: body.voiceEndpoint } : {}),
-                    ...(body.voiceModel ? { model: body.voiceModel } : {}),
-                    ...(body.voiceProvider === "custom" && body.voiceApiKey
-                      ? { apiKey: body.voiceApiKey }
-                      : {}),
+                    endpoint: body.custom?.endpoint?.trim() ?? currentCustom.endpoint,
+                    apiKey: updatedCustomApiKey,
+                    model: body.custom?.model?.trim() ?? currentCustom.model,
                   },
                   sessionPromptTtlMinutes:
                     body.sessionPromptTtlMinutes ?? persistedSettings.sessionPromptTtlMinutes,
@@ -704,39 +762,31 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 } else if (activeProvider === "openai") {
                   activeKey = persistedSettings.openai?.apiKey;
                 } else if (activeProvider === "custom") {
-                  activeKey = persistedSettings.custom?.apiKey || "custom";
+                  activeKey = persistedSettings.custom?.apiKey;
                   activeEndpoint = persistedSettings.custom?.endpoint;
                   activeModel = persistedSettings.custom?.model;
                 }
 
                 if (activeKey) {
-                  const newTranscriber = new VoiceTranscriber({
-                    apiKey: activeKey,
-                    accountId: activeAccountId,
-                    provider: activeProvider,
-                    endpoint: activeEndpoint,
-                    model: activeModel,
-                  });
-                  telegramRuntimeRef.value?.setTranscriber(newTranscriber);
+                  telegramRuntimeRef.value?.setTranscriber(
+                    new VoiceTranscriber({
+                      apiKey: activeKey,
+                      ...(activeAccountId ? { accountId: activeAccountId } : {}),
+                      provider: activeProvider,
+                      ...(activeEndpoint ? { endpoint: activeEndpoint } : {}),
+                      ...(activeModel ? { model: activeModel } : {}),
+                    }),
+                  );
                 }
 
-                return Response.json({ success: true, message: "設定已成功儲存並即時生效" });
+                return Response.json({ success: true, settings: persistedSettings });
               } catch (err) {
                 return Response.json(
-                  { success: false, message: (err as Error).message },
+                  { success: false, reason: (err as Error).message },
                   { status: 500 },
                 );
               }
             })();
-          }
-
-          if (
-            url.pathname !== "/v1/health" &&
-            url.pathname !== "/v1/status" &&
-            url.pathname !== "/v1/connect" &&
-            url.pathname !== "/v1/control/stop"
-          ) {
-            return new Response("Not found", { status: 404 });
           }
           if (
             !isAuthorized(
@@ -1006,6 +1056,24 @@ class BrokerTelegramRuntime {
               callbackQueryId: update.callback_query.id,
             })
             .catch(() => {});
+        }
+        if (interaction.callbackToken) {
+          const consumed = input.database.consumeCallbackTokenAndRoute({
+            token: interaction.callbackToken,
+            chatId: interaction.chatId,
+            messageId: interaction.messageId,
+            now: input.now(),
+          });
+          if (!consumed) {
+            await this.#sendInteractionFeedback(interaction.chatId, "already_handled");
+            return {
+              disposition: "rejected",
+              actionId: "ALREADY_HANDLED",
+              payloadHash: createHash("sha256")
+                .update(`${update.update_id}:ALREADY_HANDLED`)
+                .digest("hex"),
+            } satisfies UpdateDisposition;
+          }
         }
         const outcome = await submitTelegramInteraction(input.dispatcher, interaction);
         await this.#sendInteractionFeedback(interaction.chatId, outcome.feedback);
@@ -1492,7 +1560,7 @@ function handleMessage(
       }
       case "command.result": {
         const pending = pendingCommands.get(envelope.requestId);
-        if (!pending || pending.connectionId !== socket.data.connectionId) return;
+        if (!pending) return;
         pendingCommands.delete(envelope.requestId);
         clearTimeout(pending.timeout);
         pending.resolve(
@@ -1582,6 +1650,33 @@ function isAuthorized(
   const supplied = createHash("sha256").update(authorization.slice(7)).digest();
   const expected = createHash("sha256").update(brokerSecret).digest();
   return timingSafeEqual(supplied, expected);
+}
+
+function verifyDashboardAuth(request: Request, brokerSecret: string): boolean {
+  const authHeader = request.headers.get("authorization");
+  const cookieHeader = request.headers.get("cookie");
+  const url = new URL(request.url);
+  const tokenParam = url.searchParams.get("token");
+
+  if (authHeader && isAuthorized(authHeader, brokerSecret)) {
+    return true;
+  }
+
+  if (tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
+    return true;
+  }
+
+  if (cookieHeader) {
+    const match = cookieHeader.match(/(?:^|;\s*)opencode_token=([^;]+)/);
+    if (match?.[1]) {
+      const cookieVal = decodeURIComponent(match[1]).trim();
+      if (cookieVal && isAuthorized(null, brokerSecret, cookieVal)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function isAddressInUseError(error: unknown): error is NodeJS.ErrnoException {

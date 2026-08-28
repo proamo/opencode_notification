@@ -280,16 +280,18 @@ describe("interactive setup wizard", () => {
     expect(await readFile(tokenFile, "utf8")).toBe(`${TOKEN}\n`);
 
     // Verify opencode.json
-    const updatedConfig = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
-    expect(updatedConfig.plugins).toContain("opencode-telegram-link");
-    expect(updatedConfig.plugin).toMatchObject({
-      "opencode-telegram-link": {
-        locale: "zh-TW",
-        telegram: {
-          tokenFile,
-          userId: "987654321",
-          chatId: "987654321",
-        },
+    const updatedConfig = JSON.parse(await readFile(configFile, "utf8")) as {
+      plugin?: [string, Record<string, unknown>][];
+    };
+    expect(Array.isArray(updatedConfig.plugin)).toBe(true);
+    const entry = updatedConfig.plugin?.find((p) => p[0] === "opencode-telegram-link");
+    expect(entry).toBeDefined();
+    expect(entry?.[1]).toMatchObject({
+      locale: "zh-TW",
+      telegram: {
+        tokenFile,
+        userId: "987654321",
+        chatId: "987654321",
       },
     });
 
@@ -400,14 +402,17 @@ describe("OpenCode config helper", () => {
     expect(result.targetPath).toBe(configFile);
     expect(result.backupPath).toBe(`${configFile}.bak`);
 
-    const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
+    const parsed = JSON.parse(await readFile(configFile, "utf8")) as {
+      existingSetting?: boolean;
+      plugin?: [string, Record<string, unknown>][];
+    };
     expect(parsed.existingSetting).toBe(true);
-    expect(parsed.plugins).toEqual(["opencode-telegram-link"]);
-    expect(parsed.plugin).toMatchObject({
-      "opencode-telegram-link": {
-        locale: "zh-TW",
-        telegram: { userId: "123", chatId: "123" },
-      },
+    expect(Array.isArray(parsed.plugin)).toBe(true);
+    const entry = parsed.plugin?.find((p) => p[0] === "opencode-telegram-link");
+    expect(entry).toBeDefined();
+    expect(entry?.[1]).toMatchObject({
+      locale: "zh-TW",
+      telegram: { userId: "123", chatId: "123" },
     });
   });
 

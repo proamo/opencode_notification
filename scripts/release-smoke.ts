@@ -76,8 +76,9 @@ async function checkPackContents(): Promise<void> {
   const destination = await mkdtemp(join(tmpdir(), "opencode-telegram-pack-"));
   try {
     await mkdir(destination, { recursive: true });
+    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
     const output = run([
-      "npm",
+      npmCmd,
       "pack",
       "--json",
       "--ignore-scripts",

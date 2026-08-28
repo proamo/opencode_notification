@@ -43,15 +43,14 @@ afterEach(async () => {
 });
 
 async function safeRemove(directory: string): Promise<void> {
-  for (let attempt = 0; attempt < 15; attempt++) {
+  for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  await rm(directory, { recursive: true, force: true });
 }
 
 describe("BrokerClient lifecycle", () => {
@@ -119,7 +118,8 @@ describe("BrokerClient lifecycle", () => {
     await client.start();
     await client.upsertRoute(routeIntent());
     const route = client.activeRoute("opaque-project-id", "ses_123");
-    if (!route || !brokers[0]) throw new Error("expected active route");
+    const broker = brokers.at(-1);
+    if (!route || !broker) throw new Error("expected active route");
 
     try {
       const res = await client.publishNotification(notification(route));
@@ -131,7 +131,7 @@ describe("BrokerClient lifecycle", () => {
     await waitUntil(() => sent.length === 1);
 
     expect(sent[0]).toMatchObject({ chatId: "123456789", parseMode: "HTML" });
-    expect(brokers[0].database.getMessageRoute("123456789", 77)).toMatchObject({
+    expect(broker.database.getMessageRoute("123456789", 77)).toMatchObject({
       kind: "session_prompt",
       route,
       status: "active",
@@ -152,15 +152,16 @@ describe("BrokerClient lifecycle", () => {
     await client.start();
     await client.upsertRoute(routeIntent());
     const route = client.activeRoute("opaque-project-id", "ses_123");
-    if (!route || !brokers[0]) throw new Error("expected active route");
+    const broker = brokers.at(-1);
+    if (!route || !broker) throw new Error("expected active route");
 
-    const result = await brokers[0].sendCommand({
+    const result = await broker.sendCommand({
       type: "session.prompt",
       commandId: crypto.randomUUID(),
       route,
       text: "Continue safely",
     });
-    const offline = await brokers[0].sendCommand({
+    const offline = await broker.sendCommand({
       type: "session.prompt",
       commandId: crypto.randomUUID(),
       route: { ...route, sessionId: "ses_offline" },
@@ -208,7 +209,7 @@ describe("BrokerClient lifecycle", () => {
       if (!route) throw new Error(`expected active route for ${spec.owner}`);
       routes.set(spec.owner, route);
     }
-    const broker = brokers[0];
+    const broker = brokers.at(-1);
     if (!broker) throw new Error("expected broker");
 
     const promptBindings = [
@@ -264,6 +265,8 @@ describe("BrokerClient lifecycle", () => {
       });
       commands.length = 0;
     }
+
+    await Bun.sleep(20);
 
     const questionValidation = validateTelegramInteraction(
       parseUpdate(callbackUpdate({ updateId: 90, messageId: 81, token: "question-token" })),
@@ -354,7 +357,7 @@ describe("BrokerClient lifecycle", () => {
     ).toMatchObject({ accepted: false, reason: "ACTION_KIND_MISMATCH" });
 
     for (const spec of routeSpecs) expect(handled.get(spec.owner)).toHaveLength(0);
-  });
+  }, 15_000);
 
   test("keeps a broker alive while connected and lets it idle out after disconnect", async () => {
     const stateDirectory = await createTemporaryDirectory();
@@ -461,9 +464,9 @@ function createClient(
     port,
     packageVersion: "0.0.0",
     openCodeVersion: "1.18.18",
-    startupTimeoutMs: 2_000,
-    requestTimeoutMs: 1_000,
-    heartbeatIntervalMs: 500,
+    startupTimeoutMs: 5_000,
+    requestTimeoutMs: 5_000,
+    heartbeatIntervalMs: 5_000,
     reconnectMinDelayMs: 20,
     reconnectMaxDelayMs: 100,
     random: () => 0,

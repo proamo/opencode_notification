@@ -12,8 +12,8 @@ ENV NODE_ENV=production \
 COPY dist ./dist
 COPY package.json README.md LICENSE ./
 
-RUN addgroup --system --gid 10001 opencode \
-    && adduser --system --uid 10001 --ingroup opencode --home /nonexistent --shell /usr/sbin/nologin opencode \
+RUN groupadd -g 10001 opencode \
+    && useradd -u 10001 -g opencode -d /nonexistent -s /usr/sbin/nologin opencode \
     && mkdir -p /state \
     && chown -R opencode:opencode /app /state
 

@@ -318,11 +318,17 @@ function callbackBinding(
   if (token.chatId !== subject.chatId || token.messageId !== callback.message.message_id) {
     return { accepted: false, reason: "CALLBACK_TOKEN_MESSAGE_MISMATCH" };
   }
-  if (token.expiresAt <= now || token.consumedAt) {
+  if (token.consumedAt) {
+    return { accepted: false, reason: "ALREADY_HANDLED" };
+  }
+  if (token.expiresAt <= now) {
     return { accepted: false, reason: "CALLBACK_TOKEN_EXPIRED" };
   }
   const route = database.getMessageRoute(token.chatId, token.messageId);
   if (!route) return { accepted: false, reason: "MESSAGE_BINDING_NOT_FOUND" };
+  if (route.status === "consumed") {
+    return { accepted: false, reason: "ALREADY_HANDLED" };
+  }
   return {
     accepted: true,
     route,

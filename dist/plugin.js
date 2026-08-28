@@ -15631,13 +15631,53 @@ function isAlreadyExistsError(error51) {
 }
 
 // src/opencode/config-helper.ts
-function parseJsonc(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const stripped = raw.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1").replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(stripped);
+function parseJsonc(content) {
+  let insideString = false;
+  let stringChar = "";
+  let isEscaped = false;
+  let result = "";
+  for (let i = 0;i < content.length; i++) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+    if (insideString) {
+      result += char;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === "\\") {
+        isEscaped = true;
+      } else if (char === stringChar) {
+        insideString = false;
+      }
+    } else {
+      if (char === '"' || char === "'") {
+        insideString = true;
+        stringChar = char;
+        result += char;
+      } else if (char === "/" && nextChar === "/") {
+        while (i < content.length && content[i] !== `
+` && content[i] !== "\r") {
+          i++;
+        }
+        if (i < content.length) {
+          result += content[i];
+        }
+      } else if (char === "/" && nextChar === "*") {
+        i += 2;
+        while (i < content.length && !(content[i] === "*" && content[i + 1] === "/")) {
+          if (content[i] === `
+`)
+            result += `
+`;
+          i++;
+        }
+        i++;
+      } else {
+        result += char;
+      }
+    }
   }
+  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
+  return JSON.parse(cleaned);
 }
 function getCandidateConfigPaths(cwd = process.cwd()) {
   const home = homedir2();
@@ -15812,14 +15852,18 @@ async function injectOpenCodeConfig(targetPath, config2) {
   try {
     const existingContent = await readFile3(targetPath, "utf8");
     try {
-      existingJson = JSON.parse(existingContent);
-    } catch {
-      existingJson = {};
+      existingJson = parseJsonc(existingContent);
+    } catch (parseErr) {
+      throw new Error(`Failed to parse existing OpenCode config at ${targetPath}: ${parseErr.message}. Preserving file to prevent data loss.`);
     }
     backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
-  } catch {
-    await mkdir2(dirname(targetPath), { recursive: true });
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      await mkdir2(dirname(targetPath), { recursive: true });
+    } else {
+      throw err;
+    }
   }
   const pluginConfig = {
     mode: config2.mode,
@@ -15845,19 +15889,34 @@ async function injectOpenCodeConfig(targetPath, config2) {
       chatId: config2.telegram.chatId
     };
   }
+  const isMatch = (entry) => {
+    if (typeof entry === "string") {
+      return entry === "opencode-telegram-link" || entry.endsWith("opencode-telegram-link");
+    }
+    if (Array.isArray(entry) && typeof entry[0] === "string") {
+      return entry[0] === "opencode-telegram-link" || entry[0].endsWith("opencode-telegram-link");
+    }
+    return false;
+  };
   if (Array.isArray(existingJson.plugin)) {
-    if (!existingJson.plugin.includes("opencode-telegram-link")) {
-      existingJson.plugin.push("opencode-telegram-link");
+    const tuple2 = ["opencode-telegram-link", pluginConfig];
+    const index = existingJson.plugin.findIndex(isMatch);
+    if (index >= 0) {
+      existingJson.plugin[index] = tuple2;
+    } else {
+      existingJson.plugin.push(tuple2);
     }
-  } else {
-    const existingPlugins = Array.isArray(existingJson.plugins) ? existingJson.plugins : [];
-    if (!existingPlugins.includes("opencode-telegram-link")) {
-      existingPlugins.push("opencode-telegram-link");
+  } else if (Array.isArray(existingJson.plugins)) {
+    if (!existingJson.plugins.includes("opencode-telegram-link")) {
+      existingJson.plugins.push("opencode-telegram-link");
     }
-    existingJson.plugins = existingPlugins;
     const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
     existingPluginMap["opencode-telegram-link"] = pluginConfig;
     existingJson.plugin = existingPluginMap;
+  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
+    existingJson.plugin["opencode-telegram-link"] = pluginConfig;
+  } else {
+    existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
   }
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
@@ -15868,7 +15927,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
 async function removeOpenCodeConfig(targetPath) {
   try {
     const existingContent = await readFile3(targetPath, "utf8");
-    const existingJson = JSON.parse(existingContent);
+    const existingJson = parseJsonc(existingContent);
     let modified = false;
     const isPluginMatch = (entry) => {
       if (typeof entry === "string") {
@@ -16137,7 +16196,7 @@ class BrokerClient {
     }
     this.#socket = socket;
     const disconnected = new Promise((resolve2) => {
-      socket.addEventListener("message", (event) => this.#handleMessage(String(event.data)));
+      socket.addEventListener("message", (event) => this.#handleMessage(decodeMessageData(event.data)));
       socket.addEventListener("close", () => resolve2(), { once: true });
       socket.addEventListener("error", () => resolve2(), { once: true });
     });
@@ -16274,9 +16333,15 @@ class BrokerClient {
   }
   #startHeartbeat() {
     this.#clearHeartbeat();
+    let missedHeartbeats = 0;
     this.#heartbeatTimer = setInterval(() => {
-      this.#request({ type: "heartbeat", payload: {} }).catch(() => {
-        closeSocket(this.#socket);
+      this.#request({ type: "heartbeat", payload: {} }).then(() => {
+        missedHeartbeats = 0;
+      }).catch(() => {
+        missedHeartbeats += 1;
+        if (missedHeartbeats >= 3) {
+          closeSocket(this.#socket);
+        }
       });
     }, this.#options.heartbeatIntervalMs);
     this.#heartbeatTimer.unref();
@@ -16314,7 +16379,7 @@ function spawnDetachedBroker(input) {
       ...process.env,
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
-      OPENCODE_TELEGRAM_BROKER_BIND_HOST: "0.0.0.0"
+      OPENCODE_TELEGRAM_BROKER_BIND_HOST: process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "127.0.0.1"
     }
   });
   child.unref();
@@ -16373,6 +16438,20 @@ function closeSocket(socket) {
       socket.close();
     }
   } catch {}
+}
+function decodeMessageData(data) {
+  if (typeof data === "string")
+    return data;
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new TextDecoder().decode(data.buffer);
+  }
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+  return String(data);
 }
 
 // src/plugin/commands.ts
@@ -16772,4 +16851,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=2D8099862A913BDD64756E2164756E21
+//# debugId=841FEECAD5CDE09764756E2164756E21

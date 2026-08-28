@@ -4,6 +4,7 @@ export type DiscoveredConfigFile = {
     exists: boolean;
     isWorkspace: boolean;
 };
+export declare function parseJsonc<T = Record<string, unknown>>(content: string): T;
 export declare function getCandidateConfigPaths(cwd?: string): string[];
 export declare function discoverOpenCodeConfigFiles(cwd?: string): Promise<DiscoveredConfigFile[]>;
 export declare function generatePluginConfigSnippet(config: NotifierConfig): string;

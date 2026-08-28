@@ -97,7 +97,6 @@ export class TelegramPoller {
         if (signal.aborted) return;
         if (isTerminalTelegramError(error)) throw error;
         failures += 1;
-        if (failures >= this.#maxConsecutiveFailures) throw error;
         await abortableDelay(this.#retryDelay(error, failures), signal);
       }
     }
@@ -137,11 +136,11 @@ function isTerminalTelegramError(error: unknown): boolean {
 }
 
 async function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw signal.reason;
-  await new Promise<void>((resolve, reject) => {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
     const onAbort = () => {
       clearTimeout(timeout);
-      reject(signal.reason);
+      resolve();
     };
     const timeout = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);

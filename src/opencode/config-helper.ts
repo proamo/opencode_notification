@@ -10,15 +10,55 @@ export type DiscoveredConfigFile = {
   isWorkspace: boolean;
 };
 
-function parseJsonc(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const stripped = raw
-      .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, "$1")
-      .replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(stripped);
+export function parseJsonc<T = Record<string, unknown>>(content: string): T {
+  let insideString = false;
+  let stringChar = "";
+  let isEscaped = false;
+  let result = "";
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+
+    if (insideString) {
+      result += char;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === "\\") {
+        isEscaped = true;
+      } else if (char === stringChar) {
+        insideString = false;
+      }
+    } else {
+      if (char === '"' || char === "'") {
+        insideString = true;
+        stringChar = char;
+        result += char;
+      } else if (char === "/" && nextChar === "/") {
+        // Single-line comment: skip until newline
+        while (i < content.length && content[i] !== "\n" && content[i] !== "\r") {
+          i++;
+        }
+        if (i < content.length) {
+          result += content[i];
+        }
+      } else if (char === "/" && nextChar === "*") {
+        // Multi-line block comment: skip until */
+        i += 2;
+        while (i < content.length && !(content[i] === "*" && content[i + 1] === "/")) {
+          if (content[i] === "\n") result += "\n";
+          i++;
+        }
+        i++; // skip /
+      } else {
+        result += char;
+      }
+    }
   }
+
+  // Strip trailing commas before } or ]
+  const cleaned = result.replace(/,\s*([}\]])/g, "$1");
+  return JSON.parse(cleaned) as T;
 }
 
 export function getCandidateConfigPaths(cwd: string = process.cwd()): string[] {
@@ -236,16 +276,22 @@ export async function injectOpenCodeConfig(
   try {
     const existingContent = await readFile(targetPath, "utf8");
     try {
-      existingJson = JSON.parse(existingContent) as Record<string, unknown>;
-    } catch {
-      existingJson = {};
+      existingJson = parseJsonc<Record<string, unknown>>(existingContent);
+    } catch (parseErr) {
+      throw new Error(
+        `Failed to parse existing OpenCode config at ${targetPath}: ${(parseErr as Error).message}. Preserving file to prevent data loss.`,
+      );
     }
     // Create backup of existing file
     backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
-  } catch {
-    // File doesn't exist yet, we'll create its parent directory
-    await mkdir(dirname(targetPath), { recursive: true });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // File doesn't exist yet, create its parent directory
+      await mkdir(dirname(targetPath), { recursive: true });
+    } else {
+      throw err;
+    }
   }
 
   // Merge plugin config while preserving existing plugins
@@ -274,24 +320,39 @@ export async function injectOpenCodeConfig(
     };
   }
 
-  if (Array.isArray(existingJson.plugin)) {
-    if (!existingJson.plugin.includes("opencode-telegram-link")) {
-      existingJson.plugin.push("opencode-telegram-link");
+  const isMatch = (entry: unknown): boolean => {
+    if (typeof entry === "string") {
+      return entry === "opencode-telegram-link" || entry.endsWith("opencode-telegram-link");
     }
-  } else {
-    const existingPlugins = Array.isArray(existingJson.plugins) ? existingJson.plugins : [];
-    if (!existingPlugins.includes("opencode-telegram-link")) {
-      existingPlugins.push("opencode-telegram-link");
+    if (Array.isArray(entry) && typeof entry[0] === "string") {
+      return entry[0] === "opencode-telegram-link" || entry[0].endsWith("opencode-telegram-link");
     }
-    existingJson.plugins = existingPlugins;
+    return false;
+  };
 
+  if (Array.isArray(existingJson.plugin)) {
+    const tuple = ["opencode-telegram-link", pluginConfig];
+    const index = existingJson.plugin.findIndex(isMatch);
+    if (index >= 0) {
+      existingJson.plugin[index] = tuple;
+    } else {
+      existingJson.plugin.push(tuple);
+    }
+  } else if (Array.isArray(existingJson.plugins)) {
+    if (!existingJson.plugins.includes("opencode-telegram-link")) {
+      existingJson.plugins.push("opencode-telegram-link");
+    }
     const existingPluginMap =
       existingJson.plugin && typeof existingJson.plugin === "object"
         ? (existingJson.plugin as Record<string, unknown>)
         : {};
-
     existingPluginMap["opencode-telegram-link"] = pluginConfig;
     existingJson.plugin = existingPluginMap;
+  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
+    (existingJson.plugin as Record<string, unknown>)["opencode-telegram-link"] = pluginConfig;
+  } else {
+    // Standard array tuple format
+    existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
   }
 
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
@@ -306,7 +367,7 @@ export async function removeOpenCodeConfig(
 ): Promise<{ modified: boolean; backupPath?: string }> {
   try {
     const existingContent = await readFile(targetPath, "utf8");
-    const existingJson = JSON.parse(existingContent) as Record<string, unknown>;
+    const existingJson = parseJsonc<Record<string, unknown>>(existingContent);
 
     let modified = false;
 
