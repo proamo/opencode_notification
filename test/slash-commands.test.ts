@@ -3,6 +3,7 @@ import type { ServerWebSocket } from "bun";
 import { type BrokerConnectionData, RouteRegistry } from "../src/broker/registry";
 import type { BrokerCommand, CommandResult, RouteKey } from "../src/protocol";
 import { executeSlashCommand, isSlashCommand, parseSlashCommand } from "../src/telegram/commands";
+import { PACKAGE_VERSION } from "../src/version";
 
 describe("Slash Commands System", () => {
   test("isSlashCommand recognizes valid slash commands", () => {
@@ -68,11 +69,11 @@ describe("Slash Commands System", () => {
       registry,
       dispatcher,
       startedAt: Date.now() - 120_000,
-      packageVersion: "1.0.0-rc.1",
+      packageVersion: PACKAGE_VERSION,
     });
 
     expect(result).toContain("Gateway 系統狀態");
-    expect(result).toContain("v1.0.0-rc.1");
+    expect(result).toContain(`v${PACKAGE_VERSION}`);
     expect(result).toContain("2m");
     expect(result).toContain("Memory RSS");
   });

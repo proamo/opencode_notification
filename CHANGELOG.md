@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.2 - 2026-08-31
+
+- Fix unhandled poller rejection during shutdown to ensure complete server, database, and discovery cleanup.
+- Add repository URL and provenance metadata in package.json for OIDC Sigstore verification.
+
 ## 1.0.0-rc.1 - 2026-08-28
 
 - Add OpenCode Commander Web Dashboard with live cluster topology and metrics.

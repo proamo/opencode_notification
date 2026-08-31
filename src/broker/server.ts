@@ -286,7 +286,11 @@ export class BrokerServer {
     clearInterval(this.#livenessTimer);
     clearInterval(this.#maintenanceTimer);
     failPendingCommands(this.#pendingCommands, "broker stopped");
-    await this.#telegramRuntimeRef.value?.stop();
+    try {
+      await this.#telegramRuntimeRef.value?.stop();
+    } catch {
+      // Allow shutdown to complete even if telegram runtime failed
+    }
     await this.#server.stop(true);
     this.#connections.clear();
     await this.#removeDiscovery();
@@ -1353,7 +1357,11 @@ class BrokerTelegramRuntime {
   async stop(): Promise<void> {
     if (this.#deliveryTimer) clearInterval(this.#deliveryTimer);
     this.#deliveryTimer = undefined;
-    await this.#poller.stop();
+    try {
+      await this.#poller.stop();
+    } catch {
+      // Ignore poller failure rejections during runtime shutdown
+    }
   }
 
   publish(notification: NormalizedNotification): "queued" | "duplicate" {

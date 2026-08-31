@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, startBroker } from "../src/broker/server";
 import { loadOrCreateStateIdentity } from "../src/state";
+import { PACKAGE_VERSION } from "../src/version";
 
 describe("Web Dashboard", () => {
   let stateDirectory: string;
@@ -68,7 +69,7 @@ describe("Web Dashboard", () => {
       };
     };
     expect(data.service).toBe("opencode-telegram-link");
-    expect(data.version).toBe("1.0.0-rc.1");
+    expect(data.version).toBe(PACKAGE_VERSION);
     expect(data.connectionsCount).toBe(0);
     expect(Array.isArray(data.machines)).toBe(true);
     expect(Array.isArray(data.activeSessions)).toBe(true);

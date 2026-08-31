@@ -17975,7 +17975,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.1";
+var PACKAGE_VERSION = "1.0.0-rc.2";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -20100,7 +20100,9 @@ class BrokerServer {
     clearInterval(this.#livenessTimer);
     clearInterval(this.#maintenanceTimer);
     failPendingCommands(this.#pendingCommands, "broker stopped");
-    await this.#telegramRuntimeRef.value?.stop();
+    try {
+      await this.#telegramRuntimeRef.value?.stop();
+    } catch {}
     await this.#server.stop(true);
     this.#connections.clear();
     await this.#removeDiscovery();
@@ -20939,7 +20941,9 @@ ${replyText}`,
     if (this.#deliveryTimer)
       clearInterval(this.#deliveryTimer);
     this.#deliveryTimer = undefined;
-    await this.#poller.stop();
+    try {
+      await this.#poller.stop();
+    } catch {}
   }
   publish(notification) {
     if (!this.#registry.resolve(notification.route)) {
@@ -21893,4 +21897,4 @@ export {
   runBroker
 };
 
-//# debugId=6FD6A1E06755B2B164756E2164756E21
+//# debugId=02CC163E478BF57D64756E2164756E21
