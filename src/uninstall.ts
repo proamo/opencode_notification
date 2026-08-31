@@ -5,7 +5,11 @@ import { probeBroker } from "./broker";
 import { runStopCommand } from "./broker/commands";
 import type { SupportedLocale } from "./i18n";
 import { discoverOpenCodeConfigFiles, removeOpenCodeConfig } from "./opencode";
-import { AsyncPromptReader, type InteractiveSetupOptions } from "./setup";
+import {
+  AsyncPromptReader,
+  type InteractiveSetupOptions,
+  resolveDockerComposeContext,
+} from "./setup";
 import { defaultStateDirectory, discoveryRecordPath, loadOrCreateStateIdentity } from "./state";
 
 export async function runInteractiveUninstall(
@@ -51,18 +55,23 @@ export async function runInteractiveUninstall(
         ? "◇  [1/4] 正在檢查並停止執行中的 Broker (本機程序或 Docker 容器)...\n"
         : "◇  [1/4] Checking and stopping running Broker (native process or Docker container)...\n",
     );
-    try {
-      const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-      const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], { cwd });
-      if (dockerDown.exitCode === 0) {
-        stdout.write(
-          isZh
-            ? "│  ✔ Docker Broker 容器已停止並清理。\n"
-            : "│  ✔ Docker Broker container stopped and cleaned up.\n",
-        );
+    const composeContext = resolveDockerComposeContext(cwd);
+    if (composeContext) {
+      try {
+        const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+        const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], {
+          cwd: composeContext.projectDir,
+        });
+        if (dockerDown.exitCode === 0) {
+          stdout.write(
+            isZh
+              ? "│  ✔ Docker Broker 容器已停止並清理。\n"
+              : "│  ✔ Docker Broker container stopped and cleaned up.\n",
+          );
+        }
+      } catch {
+        // Docker not present or not running
       }
-    } catch {
-      // Docker not present or not running
     }
     try {
       const identity = await loadOrCreateStateIdentity(stateDirectory);

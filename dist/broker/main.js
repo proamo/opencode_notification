@@ -21736,15 +21736,20 @@ async function runInteractiveUninstall(options = {}) {
     stdout.write(isZh ? `\u25C7  [1/4] \u6B63\u5728\u6AA2\u67E5\u4E26\u505C\u6B62\u57F7\u884C\u4E2D\u7684 Broker (\u672C\u6A5F\u7A0B\u5E8F\u6216 Docker \u5BB9\u5668)...
 ` : `\u25C7  [1/4] Checking and stopping running Broker (native process or Docker container)...
 `);
-    try {
-      const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-      const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], { cwd });
-      if (dockerDown.exitCode === 0) {
-        stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u505C\u6B62\u4E26\u6E05\u7406\u3002
+    const composeContext = resolveDockerComposeContext(cwd);
+    if (composeContext) {
+      try {
+        const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+        const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], {
+          cwd: composeContext.projectDir
+        });
+        if (dockerDown.exitCode === 0) {
+          stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u505C\u6B62\u4E26\u6E05\u7406\u3002
 ` : `\u2502  \u2714 Docker Broker container stopped and cleaned up.
 `);
-      }
-    } catch {}
+        }
+      } catch {}
+    }
     try {
       const identity = await loadOrCreateStateIdentity(stateDirectory);
       const isRunning = await probeBroker(42617, identity.brokerSecret);
@@ -21909,4 +21914,4 @@ export {
   runBroker
 };
 
-//# debugId=4181AAA6723CCD1B64756E2164756E21
+//# debugId=81AE8738AC7A8E1264756E2164756E21
