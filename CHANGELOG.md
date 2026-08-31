@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.3 - 2026-08-31
+
+- Fix terminal hanging after interactive setup and uninstall wizards by releasing standard input streams and explicitly terminating the process on completion.
+
 ## 1.0.0-rc.2 - 2026-08-31
 
 - Fix unhandled poller rejection during shutdown to ensure complete server, database, and discovery cleanup.

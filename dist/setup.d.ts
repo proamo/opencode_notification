@@ -56,9 +56,11 @@ export declare class SetupError extends Error {
     constructor(code: string, message: string);
 }
 export declare class AsyncPromptReader {
+    private input;
     private iterator;
     private buffer;
     constructor(input: AsyncIterable<Buffer | string> | NodeJS.ReadableStream);
+    close(): void;
     readLine(): Promise<string>;
     ask(promptText: string, stdout: Pick<NodeJS.WriteStream, "write">, defaultValue?: string): Promise<string>;
 }

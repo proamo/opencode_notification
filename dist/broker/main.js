@@ -16704,10 +16704,17 @@ class SetupError extends Error {
 }
 
 class AsyncPromptReader {
+  input;
   iterator;
   buffer = "";
   constructor(input) {
+    this.input = input;
     this.iterator = input[Symbol.asyncIterator]();
+  }
+  close() {
+    if (this.input && "pause" in this.input && typeof this.input.pause === "function") {
+      this.input.pause();
+    }
   }
   async readLine() {
     while (true) {
@@ -16796,360 +16803,361 @@ async function runInteractiveSetup(options = {}) {
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
   const reader = new AsyncPromptReader(options.stdin ?? process.stdin);
-  const now = options.now ?? Date.now;
-  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
-  const cwd = options.cwd ?? process.cwd();
-  stdout.write(`
+  try {
+    const now = options.now ?? Date.now;
+    const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+    const cwd = options.cwd ?? process.cwd();
+    stdout.write(`
 \u250C  OpenCode Telegram Notifier \u2014 Setup Wizard
 \u2502
 `);
-  stdout.write(`\u25C7  Language / \u8A9E\u8A00:
+    stdout.write(`\u25C7  Language / \u8A9E\u8A00:
 `);
-  stdout.write(`\u2502  1) \u7E41\u9AD4\u4E2D\u6587 (zh-TW) [\u9810\u8A2D/Default]
+    stdout.write(`\u2502  1) \u7E41\u9AD4\u4E2D\u6587 (zh-TW) [\u9810\u8A2D/Default]
 `);
-  stdout.write(`\u2502  2) English (en)
+    stdout.write(`\u2502  2) English (en)
 `);
-  const langChoice = await reader.ask("\u2502  \u8ACB\u9078\u64C7 / Select [1]: ", stdout, "1");
-  const locale = langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
-  const isZh = locale === "zh-TW";
-  stdout.write(`\u2502
+    const langChoice = await reader.ask("\u2502  \u8ACB\u9078\u64C7 / Select [1]: ", stdout, "1");
+    const locale = langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
+    const isZh = locale === "zh-TW";
+    stdout.write(`\u2502
 `);
-  stdout.write(isZh ? `\u25C7  \u8ACB\u9078\u64C7\u6B64\u6A5F\u5668\u7684\u89D2\u8272 (Role):
+    stdout.write(isZh ? `\u25C7  \u8ACB\u9078\u64C7\u6B64\u6A5F\u5668\u7684\u89D2\u8272 (Role):
 \u2502  1) \u7368\u7ACB Gateway \u6A21\u5F0F (Gateway Mode) [\u9810\u8A2D/Default] \u2014 \u64C1\u6709\u5C08\u5C6C Telegram Bot\uFF0C\u53EF\u4F9B\u672C\u6A5F\u8207\u5176\u4ED6\u7BC0\u9EDE\u9023\u7DDA
 \u2502  2) \u7BC0\u9EDE Agent \u6A21\u5F0F (Node Agent Mode) \u2014 \u9023\u7DDA\u81F3\u73FE\u6709\u7684 Gateway\uFF0C\u5171\u7528 Telegram Bot
 ` : `\u25C7  Select machine role:
 \u2502  1) Standalone Gateway Mode [Default] \u2014 Owns a Telegram Bot, serves local and remote nodes
 \u2502  2) Node Agent Mode \u2014 Connects to an existing Gateway, shares Telegram Bot
 `);
-  const roleChoice = await reader.ask(isZh ? "\u2502  \u8ACB\u9078\u64C7 / Select [1]: " : "\u2502  Select [1]: ", stdout, "1");
-  const isNode = roleChoice === "2" || roleChoice.toLowerCase().includes("node");
-  const defaultHost = hostname3() || "host";
-  stdout.write(`\u2502
+    const roleChoice = await reader.ask(isZh ? "\u2502  \u8ACB\u9078\u64C7 / Select [1]: " : "\u2502  Select [1]: ", stdout, "1");
+    const isNode = roleChoice === "2" || roleChoice.toLowerCase().includes("node");
+    const defaultHost = hostname3() || "host";
+    stdout.write(`\u2502
 `);
-  stdout.write(isZh ? `\u25C7  \u4E3B\u6A5F\u8B58\u5225\u6A19\u7C64 (Host Label) [\u9810\u8A2D: ${defaultHost}]:
+    stdout.write(isZh ? `\u25C7  \u4E3B\u6A5F\u8B58\u5225\u6A19\u7C64 (Host Label) [\u9810\u8A2D: ${defaultHost}]:
 \u2502  (\u6B64\u6A19\u7C64\u5C07\u986F\u793A\u65BC Telegram \u901A\u77E5\u9802\u90E8\uFF0C\u4FBF\u65BC\u8B58\u5225\u4F86\u6E90\u4E3B\u6A5F)
 ` : `\u25C7  Host Label [Default: ${defaultHost}]:
 \u2502  (Shown in notification header to identify this machine)
 `);
-  const hostLabel = await reader.ask(isZh ? `\u2502  \u6A19\u7C64\u540D\u7A31 [${defaultHost}]: ` : `\u2502  Label [${defaultHost}]: `, stdout, defaultHost);
-  let configData;
-  let isDocker = false;
-  let pairing;
-  let api2;
-  let botInfo;
-  if (isNode) {
-    stdout.write(`\u2502
+    const hostLabel = await reader.ask(isZh ? `\u2502  \u6A19\u7C64\u540D\u7A31 [${defaultHost}]: ` : `\u2502  Label [${defaultHost}]: `, stdout, defaultHost);
+    let configData;
+    let isDocker = false;
+    let pairing;
+    let api2;
+    let botInfo;
+    if (isNode) {
+      stdout.write(`\u2502
 `);
-    stdout.write(isZh ? `\u25C7  \u8ACB\u8F38\u5165 Central Gateway \u7684 WebSocket \u4F4D\u5740:
+      stdout.write(isZh ? `\u25C7  \u8ACB\u8F38\u5165 Central Gateway \u7684 WebSocket \u4F4D\u5740:
 \u2502  (\u7BC4\u4F8B: ws://192.168.1.100:42617 \u6216 wss://gateway.example.com)
 ` : `\u25C7  Enter Central Gateway WebSocket URL:
 \u2502  (Example: ws://192.168.1.100:42617 or wss://gateway.example.com)
 `);
-    const gatewayUrl = await reader.ask("\u2502  Gateway URL: ", stdout);
-    if (!gatewayUrl) {
-      stderr.write(isZh ? `\u2716 Gateway URL \u4E0D\u80FD\u70BA\u7A7A\u3002
+      const gatewayUrl = await reader.ask("\u2502  Gateway URL: ", stdout);
+      if (!gatewayUrl) {
+        stderr.write(isZh ? `\u2716 Gateway URL \u4E0D\u80FD\u70BA\u7A7A\u3002
 ` : `\u2716 Gateway URL cannot be empty.
 `);
-      return 1;
-    }
-    stdout.write(`\u2502
+        return 1;
+      }
+      stdout.write(`\u2502
 `);
-    stdout.write(isZh ? `\u25C7  \u8ACB\u8F38\u5165 Gateway \u9023\u7DDA\u91D1\u9470 (Secret Token):
+      stdout.write(isZh ? `\u25C7  \u8ACB\u8F38\u5165 Gateway \u9023\u7DDA\u91D1\u9470 (Secret Token):
 \u2502  (\u82E5 Gateway \u7121\u9700\u91D1\u9470\u53EF\u76F4\u63A5\u6309 Enter)
 ` : `\u25C7  Enter Gateway Secret Token:
 \u2502  (Press Enter if no secret required)
 `);
-    const gatewaySecret = await reader.ask("\u2502  Secret: ", stdout, "");
-    configData = {
-      mode: "local",
-      role: "node",
-      hostLabel,
-      locale,
-      gateway: {
-        url: gatewayUrl,
-        secret: gatewaySecret || "default-secret"
-      },
-      notifications: {
-        completion: true,
-        error: true,
-        question: true,
-        permission: true,
-        includeChildLifecycle: false,
-        completionDebounceMs: 1500,
-        pluginBufferSize: 100
-      },
-      broker: {
-        host: "127.0.0.1",
-        port: 42617
-      },
-      interaction: {
-        sessionPromptTtlMinutes: 1440,
-        questionTtlMinutes: 30
-      }
-    };
-  } else {
-    stdout.write(`\u2502
+      const gatewaySecret = await reader.ask("\u2502  Secret: ", stdout, "");
+      configData = {
+        mode: "local",
+        role: "node",
+        hostLabel,
+        locale,
+        gateway: {
+          url: gatewayUrl,
+          secret: gatewaySecret || "default-secret"
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true,
+          includeChildLifecycle: false,
+          completionDebounceMs: 1500,
+          pluginBufferSize: 100
+        },
+        broker: {
+          host: "127.0.0.1",
+          port: 42617
+        },
+        interaction: {
+          sessionPromptTtlMinutes: 1440,
+          questionTtlMinutes: 30
+        }
+      };
+    } else {
+      stdout.write(`\u2502
 `);
-    stdout.write(isZh ? `\u25C7  \u90E8\u7F72\u6A21\u5F0F\u9078\u64C7 / Deployment Mode:
+      stdout.write(isZh ? `\u25C7  \u90E8\u7F72\u6A21\u5F0F\u9078\u64C7 / Deployment Mode:
 \u2502  1) \u672C\u6A5F\u539F\u751F\u6A21\u5F0F (Native Mode) [\u9810\u8A2D/Default] \u2014 Broker \u4F5C\u70BA\u672C\u6A5F\u5E38\u99D0\u7A0B\u5E8F\uFF0COpenCode \u81EA\u52D5\u5728\u80CC\u666F\u62C9\u8D77
 \u2502  2) Docker \u5BB9\u5668\u6A21\u5F0F (Docker Container) \u2014 Broker \u9694\u96E2\u65BC Docker \u5BB9\u5668\u4E2D\u57F7\u884C
 ` : `\u25C7  Deployment Mode:
 \u2502  1) Native Mode [Default] \u2014 Broker runs as a local background process, auto-spawned by OpenCode
 \u2502  2) Docker Container Mode \u2014 Broker runs isolated inside a Docker container
 `);
-    const modeChoice = await reader.ask(isZh ? "\u2502  \u8ACB\u9078\u64C7 / Select [1]: " : "\u2502  Select [1]: ", stdout, "1");
-    isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
-    let botToken = "";
-    let attempts = 0;
-    while (!botInfo) {
-      attempts += 1;
-      if (attempts > 5) {
-        stderr.write(isZh ? `\u2716 \u8D85\u904E\u91CD\u8A66\u6B21\u6578\uFF0C\u8A2D\u5B9A\u7D42\u6B62\u3002
+      const modeChoice = await reader.ask(isZh ? "\u2502  \u8ACB\u9078\u64C7 / Select [1]: " : "\u2502  Select [1]: ", stdout, "1");
+      isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+      let botToken = "";
+      let attempts = 0;
+      while (!botInfo) {
+        attempts += 1;
+        if (attempts > 5) {
+          stderr.write(isZh ? `\u2716 \u8D85\u904E\u91CD\u8A66\u6B21\u6578\uFF0C\u8A2D\u5B9A\u7D42\u6B62\u3002
 ` : `\u2716 Too many attempts. Aborted.
 `);
-        return 1;
+          return 1;
+        }
+        stdout.write(`\u2502
+`);
+        if (isZh) {
+          stdout.write(`\u25C7  \u8ACB\u8F38\u5165\u5411 @BotFather \u7533\u8ACB\u7684 Telegram Bot Token:
+`);
+          stdout.write(`\u2502  (\u7BC4\u4F8B: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+`);
+        } else {
+          stdout.write(`\u25C7  Enter your Telegram Bot Token from @BotFather:
+`);
+          stdout.write(`\u2502  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+`);
+        }
+        botToken = await reader.ask("\u2502  Token: ", stdout);
+        if (!botToken) {
+          stdout.write(isZh ? `\u2502  \u2716 Token \u4E0D\u80FD\u70BA\u7A7A\uFF0C\u8ACB\u91CD\u65B0\u8F38\u5165\u3002
+` : `\u2502  \u2716 Token cannot be empty.
+`);
+          continue;
+        }
+        if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
+          stdout.write(isZh ? `\u2502  \u2716 Token \u683C\u5F0F\u4E0D\u7B26\u5408 Telegram \u898F\u7BC4\uFF0C\u8ACB\u91CD\u65B0\u8F38\u5165\u3002
+` : `\u2502  \u2716 Invalid token format.
+`);
+          continue;
+        }
+        stdout.write(isZh ? `\u2502  \u280B \u6B63\u5728\u5411 Telegram \u9A57\u8B49 Bot Token...
+` : `\u2502  \u280B Verifying Bot Token with Telegram...
+`);
+        api2 = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+        try {
+          botInfo = await api2.getMe();
+          const botName2 = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
+          stdout.write(isZh ? `\u2502  \u2714 \u9023\u7DDA\u6210\u529F\uFF01\u5DF2\u8FA8\u8B58 Bot: ${botName2} (ID: ${botInfo.id})
+` : `\u2502  \u2714 Connected! Identified Bot: ${botName2} (ID: ${botInfo.id})
+`);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "connection failed";
+          stdout.write(isZh ? `\u2502  \u2716 Token \u9A57\u8B49\u5931\u6557 (${errMsg})\uFF0C\u8ACB\u78BA\u8A8D\u5F8C\u91CD\u8A66\u3002
+` : `\u2502  \u2716 Verification failed (${errMsg}). Please retry.
+`);
+        }
       }
+      api2 = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+      const nonce = createPairingNonce();
+      const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
       stdout.write(`\u2502
 `);
       if (isZh) {
-        stdout.write(`\u25C7  \u8ACB\u8F38\u5165\u5411 @BotFather \u7533\u8ACB\u7684 Telegram Bot Token:
+        stdout.write(`\u25C7  [\u8EAB\u5206\u9A57\u8B49\u914D\u5C0D]
 `);
-        stdout.write(`\u2502  (\u7BC4\u4F8B: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+        stdout.write(`\u2502  \u8ACB\u5728 Telegram \u6253\u958B\u8207 ${botName} \u7684\u79C1\u804A\u8996\u7A97\uFF0C\u4E26\u767C\u9001\u6B64\u9A57\u8B49\u78BC\uFF1A
+`);
+        stdout.write(`\u2502
+\u2502  \uD83D\uDC49  ${nonce}
+\u2502
+`);
+        stdout.write(`\u2502  \u280B \u7B49\u5F85 Telegram \u79C1\u8A0A\u4E2D...
 `);
       } else {
-        stdout.write(`\u25C7  Enter your Telegram Bot Token from @BotFather:
+        stdout.write(`\u25C7  [Identity Pairing]
 `);
-        stdout.write(`\u2502  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)
+        stdout.write(`\u2502  Open a private chat with ${botName} on Telegram and send this code:
+`);
+        stdout.write(`\u2502
+\u2502  \uD83D\uDC49  ${nonce}
+\u2502
+`);
+        stdout.write(`\u2502  \u280B Waiting for Telegram private message...
 `);
       }
-      botToken = await reader.ask("\u2502  Token: ", stdout);
-      if (!botToken) {
-        stdout.write(isZh ? `\u2502  \u2716 Token \u4E0D\u80FD\u70BA\u7A7A\uFF0C\u8ACB\u91CD\u65B0\u8F38\u5165\u3002
-` : `\u2502  \u2716 Token cannot be empty.
-`);
-        continue;
-      }
-      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
-        stdout.write(isZh ? `\u2502  \u2716 Token \u683C\u5F0F\u4E0D\u7B26\u5408 Telegram \u898F\u7BC4\uFF0C\u8ACB\u91CD\u65B0\u8F38\u5165\u3002
-` : `\u2502  \u2716 Invalid token format.
-`);
-        continue;
-      }
-      stdout.write(isZh ? `\u2502  \u280B \u6B63\u5728\u5411 Telegram \u9A57\u8B49 Bot Token...
-` : `\u2502  \u280B Verifying Bot Token with Telegram...
-`);
-      api2 = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+      const expiresAt = now() + 120000;
       try {
-        botInfo = await api2.getMe();
-        const botName2 = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
-        stdout.write(isZh ? `\u2502  \u2714 \u9023\u7DDA\u6210\u529F\uFF01\u5DF2\u8FA8\u8B58 Bot: ${botName2} (ID: ${botInfo.id})
-` : `\u2502  \u2714 Connected! Identified Bot: ${botName2} (ID: ${botInfo.id})
-`);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "connection failed";
-        stdout.write(isZh ? `\u2502  \u2716 Token \u9A57\u8B49\u5931\u6557 (${errMsg})\uFF0C\u8ACB\u78BA\u8A8D\u5F8C\u91CD\u8A66\u3002
-` : `\u2502  \u2716 Verification failed (${errMsg}). Please retry.
-`);
-      }
-    }
-    api2 = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
-    const nonce = createPairingNonce();
-    const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
-    stdout.write(`\u2502
-`);
-    if (isZh) {
-      stdout.write(`\u25C7  [\u8EAB\u5206\u9A57\u8B49\u914D\u5C0D]
-`);
-      stdout.write(`\u2502  \u8ACB\u5728 Telegram \u6253\u958B\u8207 ${botName} \u7684\u79C1\u804A\u8996\u7A97\uFF0C\u4E26\u767C\u9001\u6B64\u9A57\u8B49\u78BC\uFF1A
-`);
-      stdout.write(`\u2502
-\u2502  \uD83D\uDC49  ${nonce}
-\u2502
-`);
-      stdout.write(`\u2502  \u280B \u7B49\u5F85 Telegram \u79C1\u8A0A\u4E2D...
-`);
-    } else {
-      stdout.write(`\u25C7  [Identity Pairing]
-`);
-      stdout.write(`\u2502  Open a private chat with ${botName} on Telegram and send this code:
-`);
-      stdout.write(`\u2502
-\u2502  \uD83D\uDC49  ${nonce}
-\u2502
-`);
-      stdout.write(`\u2502  \u280B Waiting for Telegram private message...
-`);
-    }
-    const expiresAt = now() + 120000;
-    try {
-      pairing = await waitForPairingMessage(api2, {
-        nonce,
-        expiresAt,
-        now,
-        pollTimeoutSeconds: 5
-      });
-    } catch {
-      stdout.write(isZh ? `\u2502  \u2716 \u914D\u5C0D\u8D85\u6642\u6216\u672A\u6536\u5230\u6709\u6548\u8A0A\u606F\uFF0C\u8A2D\u5B9A\u4E2D\u6B62\u3002
+        pairing = await waitForPairingMessage(api2, {
+          nonce,
+          expiresAt,
+          now,
+          pollTimeoutSeconds: 5
+        });
+      } catch {
+        stdout.write(isZh ? `\u2502  \u2716 \u914D\u5C0D\u8D85\u6642\u6216\u672A\u6536\u5230\u6709\u6548\u8A0A\u606F\uFF0C\u8A2D\u5B9A\u4E2D\u6B62\u3002
 ` : `\u2502  \u2716 Pairing timed out or no valid message received. Aborted.
 `);
-      return 1;
-    }
-    stdout.write(isZh ? `\u2502  \u2714 \u6536\u5230\u9A57\u8B49\u8A0A\u606F\uFF01\u4F86\u81EA Telegram \u7528\u6236 (ID: ${pairing.userId}, Chat: ${pairing.chatId})
+        return 1;
+      }
+      stdout.write(isZh ? `\u2502  \u2714 \u6536\u5230\u9A57\u8B49\u8A0A\u606F\uFF01\u4F86\u81EA Telegram \u7528\u6236 (ID: ${pairing.userId}, Chat: ${pairing.chatId})
 ` : `\u2502  \u2714 Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})
 `);
-    const confirmBind = await reader.ask(isZh ? "\u2502  \u662F\u5426\u5C07\u6B64 Telegram \u5E33\u865F\u7D81\u5B9A\u70BA OpenCode \u7BA1\u7406\u54E1\uFF1F [Y/n]: " : "\u2502  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ", stdout, "Y");
-    if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
-      stdout.write(isZh ? `\u2502  \u2716 \u5DF2\u53D6\u6D88\u7D81\u5B9A\u3002
+      const confirmBind = await reader.ask(isZh ? "\u2502  \u662F\u5426\u5C07\u6B64 Telegram \u5E33\u865F\u7D81\u5B9A\u70BA OpenCode \u7BA1\u7406\u54E1\uFF1F [Y/n]: " : "\u2502  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ", stdout, "Y");
+      if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
+        stdout.write(isZh ? `\u2502  \u2716 \u5DF2\u53D6\u6D88\u7D81\u5B9A\u3002
 ` : `\u2502  \u2716 Pairing cancelled.
 `);
-      return 1;
-    }
-    const tokenFile = join5(stateDirectory, "telegram-bot-token");
-    await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
-    const identityFile = join5(stateDirectory, "telegram-identity.json");
-    await writeFile3(identityFile, `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}
+        return 1;
+      }
+      const tokenFile = join5(stateDirectory, "telegram-bot-token");
+      await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
+      const identityFile = join5(stateDirectory, "telegram-identity.json");
+      await writeFile3(identityFile, `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}
 `, "utf8");
-    stdout.write(isZh ? `\u2502  \u2714 \u5B89\u5168 Token \u6A94\u6848\u5DF2\u5132\u5B58 (${tokenFile})
+      stdout.write(isZh ? `\u2502  \u2714 \u5B89\u5168 Token \u6A94\u6848\u5DF2\u5132\u5B58 (${tokenFile})
 ` : `\u2502  \u2714 Secure token file saved (${tokenFile})
 `);
-    configData = {
-      mode: "local",
-      role: "gateway",
-      hostLabel,
-      locale,
-      telegram: {
-        tokenFile,
-        userId: pairing.userId,
-        chatId: pairing.chatId
-      },
-      notifications: {
-        completion: true,
-        error: true,
-        question: true,
-        permission: true,
-        includeChildLifecycle: false,
-        completionDebounceMs: 1500,
-        pluginBufferSize: 100
-      },
-      broker: {
-        host: "127.0.0.1",
-        port: 42617
-      },
-      interaction: {
-        sessionPromptTtlMinutes: 1440,
-        questionTtlMinutes: 30
-      }
-    };
-  }
-  stdout.write(`\u2502
+      configData = {
+        mode: "local",
+        role: "gateway",
+        hostLabel,
+        locale,
+        telegram: {
+          tokenFile,
+          userId: pairing.userId,
+          chatId: pairing.chatId
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true,
+          includeChildLifecycle: false,
+          completionDebounceMs: 1500,
+          pluginBufferSize: 100
+        },
+        broker: {
+          host: "127.0.0.1",
+          port: 42617
+        },
+        interaction: {
+          sessionPromptTtlMinutes: 1440,
+          questionTtlMinutes: 30
+        }
+      };
+    }
+    stdout.write(`\u2502
 `);
-  const discovered = await discoverOpenCodeConfigFiles(cwd);
-  const existingConfigs = discovered.filter((d) => d.exists);
-  const fallback = discovered.find((d) => !d.isWorkspace) ?? discovered[0];
-  const targets = existingConfigs.length > 0 ? existingConfigs : fallback ? [fallback] : [];
-  if (targets.length > 0) {
-    const descList = targets.map((t) => `${t.path} [${t.exists ? isZh ? "\u5DF2\u5B58\u5728" : "existing" : isZh ? "\u5C07\u81EA\u52D5\u5EFA\u7ACB" : "will create"}]`).join(", ");
-    stdout.write(isZh ? `\u25C7  \u5075\u6E2C\u5230 OpenCode \u8A2D\u5B9A\u6A94 (${descList})
+    const discovered = await discoverOpenCodeConfigFiles(cwd);
+    const existingConfigs = discovered.filter((d) => d.exists);
+    const fallback = discovered.find((d) => !d.isWorkspace) ?? discovered[0];
+    const targets = existingConfigs.length > 0 ? existingConfigs : fallback ? [fallback] : [];
+    if (targets.length > 0) {
+      const descList = targets.map((t) => `${t.path} [${t.exists ? isZh ? "\u5DF2\u5B58\u5728" : "existing" : isZh ? "\u5C07\u81EA\u52D5\u5EFA\u7ACB" : "will create"}]`).join(", ");
+      stdout.write(isZh ? `\u25C7  \u5075\u6E2C\u5230 OpenCode \u8A2D\u5B9A\u6A94 (${descList})
 ` : `\u25C7  Discovered OpenCode config file(s) (${descList})
 `);
-    const autoWrite = await reader.ask(isZh ? "\u2502  \u662F\u5426\u81EA\u52D5\u5BEB\u5165\u5916\u639B\u8A2D\u5B9A\uFF1F [Y/n]: " : "\u2502  Automatically update OpenCode config file(s)? [Y/n]: ", stdout, "Y");
-    if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
-      for (const target of targets) {
-        try {
-          const { backupPath } = await injectOpenCodeConfig(target.path, configData);
-          stdout.write(isZh ? `\u2502  \u2714 OpenCode \u8A2D\u5B9A\u6A94\u5DF2\u66F4\u65B0: ${target.path}${backupPath ? ` (\u5099\u4EFD\u65BC ${backupPath})` : ""}
+      const autoWrite = await reader.ask(isZh ? "\u2502  \u662F\u5426\u81EA\u52D5\u5BEB\u5165\u5916\u639B\u8A2D\u5B9A\uFF1F [Y/n]: " : "\u2502  Automatically update OpenCode config file(s)? [Y/n]: ", stdout, "Y");
+      if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
+        for (const target of targets) {
+          try {
+            const { backupPath } = await injectOpenCodeConfig(target.path, configData);
+            stdout.write(isZh ? `\u2502  \u2714 OpenCode \u8A2D\u5B9A\u6A94\u5DF2\u66F4\u65B0: ${target.path}${backupPath ? ` (\u5099\u4EFD\u65BC ${backupPath})` : ""}
 ` : `\u2502  \u2714 OpenCode config updated: ${target.path}${backupPath ? ` (backup at ${backupPath})` : ""}
 `);
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : "failed to write config";
-          stdout.write(isZh ? `\u2502  \u2716 \u8A2D\u5B9A\u6A94\u5BEB\u5165\u5931\u6557 (${target.path}): ${errMsg}
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : "failed to write config";
+            stdout.write(isZh ? `\u2502  \u2716 \u8A2D\u5B9A\u6A94\u5BEB\u5165\u5931\u6557 (${target.path}): ${errMsg}
 ` : `\u2502  \u2716 Failed to write config (${target.path}): ${errMsg}
 `);
+          }
         }
-      }
-    } else {
-      stdout.write(isZh ? `\u2502  \u8ACB\u624B\u52D5\u5C07\u4E0B\u5217\u8A2D\u5B9A\u52A0\u5165\u60A8\u7684 opencode.json:
+      } else {
+        stdout.write(isZh ? `\u2502  \u8ACB\u624B\u52D5\u5C07\u4E0B\u5217\u8A2D\u5B9A\u52A0\u5165\u60A8\u7684 opencode.json:
 ` : `\u2502  Please add the following configuration to your opencode.json:
 `);
-      stdout.write(`\u2502
+        stdout.write(`\u2502
 ${generatePluginConfigSnippet(configData)}
 \u2502
 `);
+      }
     }
-  }
-  let dockerFailed = false;
-  if (isDocker) {
-    stdout.write(`\u2502
+    let dockerFailed = false;
+    if (isDocker) {
+      stdout.write(`\u2502
 `);
-    const autoStartDocker = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u7ACB\u5373\u5728\u80CC\u666F\u81EA\u52D5\u5EFA\u7F6E\u4E26\u555F\u52D5 Docker Broker \u5BB9\u5668\uFF1F [Y/n]: " : "\u25C7  Build and start Docker Broker container in background now? [Y/n]: ", stdout, "Y");
-    if (autoStartDocker.toLowerCase() !== "n" && autoStartDocker.toLowerCase() !== "no") {
-      stdout.write(isZh ? `\u2502  \u280B \u6B63\u5728\u5EFA\u7F6E\u4E26\u555F\u52D5 Docker \u5BB9\u5668 (docker compose up -d --build)...
+      const autoStartDocker = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u7ACB\u5373\u5728\u80CC\u666F\u81EA\u52D5\u5EFA\u7F6E\u4E26\u555F\u52D5 Docker Broker \u5BB9\u5668\uFF1F [Y/n]: " : "\u25C7  Build and start Docker Broker container in background now? [Y/n]: ", stdout, "Y");
+      if (autoStartDocker.toLowerCase() !== "n" && autoStartDocker.toLowerCase() !== "no") {
+        stdout.write(isZh ? `\u2502  \u280B \u6B63\u5728\u5EFA\u7F6E\u4E26\u555F\u52D5 Docker \u5BB9\u5668 (docker compose up -d --build)...
 ` : `\u2502  \u280B Building and starting Docker container (docker compose up -d --build)...
 `);
-      try {
-        const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-        const composeCtx = resolveDockerComposeContext(cwd);
-        if (!composeCtx) {
-          throw new Error("Could not find docker-compose.yml in project or package directory");
-        }
-        const result = Bun.spawnSync([
-          dockerCmd,
-          "compose",
-          "-f",
-          composeCtx.composeFile,
-          "--project-directory",
-          composeCtx.projectDir,
-          "up",
-          "-d",
-          "--build"
-        ], {
-          cwd: composeCtx.projectDir,
-          env: {
-            ...process.env,
-            HOME: process.env.HOME || process.env.USERPROFILE || ""
+        try {
+          const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+          const composeCtx = resolveDockerComposeContext(cwd);
+          if (!composeCtx) {
+            throw new Error("Could not find docker-compose.yml in project or package directory");
           }
-        });
-        if (result.exitCode === 0) {
-          stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u6210\u529F\u5728\u80CC\u666F\u555F\u52D5\uFF01
+          const result = Bun.spawnSync([
+            dockerCmd,
+            "compose",
+            "-f",
+            composeCtx.composeFile,
+            "--project-directory",
+            composeCtx.projectDir,
+            "up",
+            "-d",
+            "--build"
+          ], {
+            cwd: composeCtx.projectDir,
+            env: {
+              ...process.env,
+              HOME: process.env.HOME || process.env.USERPROFILE || ""
+            }
+          });
+          if (result.exitCode === 0) {
+            stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u6210\u529F\u5728\u80CC\u666F\u555F\u52D5\uFF01
 ` : `\u2502  \u2714 Docker Broker container started in background!
 `);
-        } else {
-          dockerFailed = true;
-          const stderr2 = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
-          stdout.write(isZh ? `\u2502  \u2716 Docker \u81EA\u52D5\u555F\u52D5\u672A\u6210\u529F${stderr2 ? ` (${stderr2})` : ""}\uFF08\u8ACB\u78BA\u8A8D Docker Desktop \u662F\u5426\u904B\u884C\u4E2D\uFF09\u3002
+          } else {
+            dockerFailed = true;
+            const stderr2 = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
+            stdout.write(isZh ? `\u2502  \u2716 Docker \u81EA\u52D5\u555F\u52D5\u672A\u6210\u529F${stderr2 ? ` (${stderr2})` : ""}\uFF08\u8ACB\u78BA\u8A8D Docker Desktop \u662F\u5426\u904B\u884C\u4E2D\uFF09\u3002
 ` : `\u2502  \u2716 Docker start failed${stderr2 ? ` (${stderr2})` : ""} (please check if Docker is running).
 `);
-          stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u57F7\u884C: docker compose -f "${composeCtx.composeFile}" up -d
+            stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u57F7\u884C: docker compose -f "${composeCtx.composeFile}" up -d
 ` : `\u2502  You can manually run later: docker compose -f "${composeCtx.composeFile}" up -d
 `);
-        }
-      } catch (err) {
-        dockerFailed = true;
-        const msg = err instanceof Error ? err.message : String(err);
-        stdout.write(isZh ? `\u2502  \u2716 Docker \u555F\u52D5\u5931\u6557: ${msg}\uFF0C\u60A8\u53EF\u65BC\u5B89\u88DD/\u555F\u52D5 Docker \u5F8C\u624B\u52D5\u57F7\u884C docker compose up -d
+          }
+        } catch (err) {
+          dockerFailed = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          stdout.write(isZh ? `\u2502  \u2716 Docker \u555F\u52D5\u5931\u6557: ${msg}\uFF0C\u60A8\u53EF\u65BC\u5B89\u88DD/\u555F\u52D5 Docker \u5F8C\u624B\u52D5\u57F7\u884C docker compose up -d
 ` : `\u2502  \u2716 Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.
+`);
+        }
+      } else {
+        stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u555F\u52D5\u5BB9\u5668: docker compose up -d
+` : `\u2502  You can manually start the container later: docker compose up -d
 `);
       }
     } else {
-      stdout.write(isZh ? `\u2502  \u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u555F\u52D5\u5BB9\u5668: docker compose up -d
-` : `\u2502  You can manually start the container later: docker compose up -d
+      stdout.write(`\u2502
 `);
-    }
-  } else {
-    stdout.write(`\u2502
-`);
-    stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F\u539F\u751F\u6A21\u5F0F\u5DF2\u8A2D\u5B9A\u5B8C\u6210\uFF01\u7576 OpenCode \u555F\u52D5\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u63A5\u7BA1 Broker\u3002
+      stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F\u539F\u751F\u6A21\u5F0F\u5DF2\u8A2D\u5B9A\u5B8C\u6210\uFF01\u7576 OpenCode \u555F\u52D5\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u63A5\u7BA1 Broker\u3002
 ` : `\u2502  \u2714 Native mode configured! OpenCode will automatically manage Broker in background.
 `);
-  }
-  if (!isNode && pairing && api2) {
-    stdout.write(`\u2502
+    }
+    if (!isNode && pairing && api2) {
+      stdout.write(`\u2502
 `);
-    const sendTest = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u767C\u9001\u6E2C\u8A66\u901A\u77E5\u5230\u60A8\u7684 Telegram\uFF1F [Y/n]: " : "\u25C7  Send a welcome test notification to your Telegram now? [Y/n]: ", stdout, "Y");
-    if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
-      try {
-        const botDisplayName = botInfo?.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo?.id})`;
-        const welcomeText = isZh ? `\uD83C\uDF89 <b>OpenCode Telegram Notifier \u8A2D\u5B9A\u6210\u529F\uFF01</b>
+      const sendTest = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u767C\u9001\u6E2C\u8A66\u901A\u77E5\u5230\u60A8\u7684 Telegram\uFF1F [Y/n]: " : "\u25C7  Send a welcome test notification to your Telegram now? [Y/n]: ", stdout, "Y");
+      if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
+        try {
+          const botDisplayName = botInfo?.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo?.id})`;
+          const welcomeText = isZh ? `\uD83C\uDF89 <b>OpenCode Telegram Notifier \u8A2D\u5B9A\u6210\u529F\uFF01</b>
 
 \u5DF2\u6210\u529F\u7D81\u5B9A\u4E3B\u6A5F [${hostLabel}] \u8207 Telegram\u3002
 \u7576 OpenCode \u4EFB\u52D9\u5B8C\u6210\u3001\u767C\u751F\u7570\u5E38\u6216\u9700\u8981\u56DE\u8986\u6642\uFF0C\u60A8\u5C07\u5728\u6B64\u6536\u5230\u5373\u6642\u901A\u77E5\u3002
@@ -17162,38 +17170,41 @@ You will receive notifications here when sessions finish or require input.
 
 \u2022 Bot: ${botDisplayName}
 \u2022 Authorized User ID: <code>${pairing.userId}</code>`;
-        await api2.sendMessage({
-          chatId: pairing.chatId,
-          text: welcomeText,
-          parseMode: "HTML"
-        });
-        stdout.write(isZh ? `\u2502  \u2714 \u5DF2\u6210\u529F\u767C\u9001\u6E2C\u8A66\u901A\u77E5\u5230\u60A8\u7684 Telegram\uFF01\u8ACB\u6AA2\u67E5\u624B\u6A5F\u8A0A\u606F\u3002
+          await api2.sendMessage({
+            chatId: pairing.chatId,
+            text: welcomeText,
+            parseMode: "HTML"
+          });
+          stdout.write(isZh ? `\u2502  \u2714 \u5DF2\u6210\u529F\u767C\u9001\u6E2C\u8A66\u901A\u77E5\u5230\u60A8\u7684 Telegram\uFF01\u8ACB\u6AA2\u67E5\u624B\u6A5F\u8A0A\u606F\u3002
 ` : `\u2502  \u2714 Test notification sent to your Telegram! Please check your messages.
 `);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "send failed";
-        stdout.write(isZh ? `\u2502  \u2716 \u6E2C\u8A66\u901A\u77E5\u767C\u9001\u5931\u6557: ${errMsg}
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "send failed";
+          stdout.write(isZh ? `\u2502  \u2716 \u6E2C\u8A66\u901A\u77E5\u767C\u9001\u5931\u6557: ${errMsg}
 ` : `\u2502  \u2716 Failed to send test notification: ${errMsg}
 `);
+        }
       }
     }
-  }
-  stdout.write(`\u2502
+    stdout.write(`\u2502
 `);
-  if (dockerFailed) {
-    stdout.write(isZh ? `\u2514  \u26A0 \u8A2D\u5B9A\u6A94\u5DF2\u5BEB\u5165\uFF0C\u4F46 Docker \u5BB9\u5668\u555F\u52D5\u5931\u6557\u3002\u8ACB\u78BA\u8A8D Docker \u670D\u52D9\u904B\u884C\u5F8C\u624B\u52D5\u555F\u52D5\u5BB9\u5668\u3002
+    if (dockerFailed) {
+      stdout.write(isZh ? `\u2514  \u26A0 \u8A2D\u5B9A\u6A94\u5DF2\u5BEB\u5165\uFF0C\u4F46 Docker \u5BB9\u5668\u555F\u52D5\u5931\u6557\u3002\u8ACB\u78BA\u8A8D Docker \u670D\u52D9\u904B\u884C\u5F8C\u624B\u52D5\u555F\u52D5\u5BB9\u5668\u3002
 
 ` : `\u2514  \u26A0 Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.
 
 `);
-    return 1;
-  }
-  stdout.write(isZh ? `\u2514  \uD83C\uDF89 \u5B89\u88DD\u8A2D\u5B9A\u5B8C\u6210\uFF01\u60A8\u73FE\u5728\u53EF\u4EE5\u56DE\u5230 OpenCode \u958B\u59CB\u5DE5\u4F5C\u3002
+      return 1;
+    }
+    stdout.write(isZh ? `\u2514  \uD83C\uDF89 \u5B89\u88DD\u8A2D\u5B9A\u5B8C\u6210\uFF01\u60A8\u73FE\u5728\u53EF\u4EE5\u56DE\u5230 OpenCode \u958B\u59CB\u5DE5\u4F5C\u3002
 
 ` : `\u2514  \uD83C\uDF89 Setup completed! You can now return to OpenCode and start working.
 
 `);
-  return 0;
+    return 0;
+  } finally {
+    reader.close();
+  }
 }
 async function runSetupCli(options = {}) {
   const argv = options.argv ?? process.argv.slice(2);
@@ -17975,7 +17986,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.2";
+var PACKAGE_VERSION = "1.0.0-rc.3";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -21694,161 +21705,165 @@ async function runInteractiveUninstall(options = {}) {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const reader = new AsyncPromptReader(options.stdin ?? process.stdin);
-  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
-  const cwd = options.cwd ?? process.cwd();
-  const fetchImpl = options.fetch ?? fetch;
-  stdout.write(`
+  try {
+    const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+    const cwd = options.cwd ?? process.cwd();
+    const fetchImpl = options.fetch ?? fetch;
+    stdout.write(`
 \u250C  OpenCode Telegram Notifier \u2014 Uninstaller / \u79FB\u9664\u7CBE\u9748
 \u2502
 `);
-  stdout.write(`\u25C7  Language / \u8A9E\u8A00:
+    stdout.write(`\u25C7  Language / \u8A9E\u8A00:
 `);
-  stdout.write(`\u2502  1) \u7E41\u9AD4\u4E2D\u6587 (zh-TW) [\u9810\u8A2D/Default]
+    stdout.write(`\u2502  1) \u7E41\u9AD4\u4E2D\u6587 (zh-TW) [\u9810\u8A2D/Default]
 `);
-  stdout.write(`\u2502  2) English (en)
+    stdout.write(`\u2502  2) English (en)
 `);
-  const langChoice = await reader.ask("\u2502  \u8ACB\u9078\u64C7 / Select [1]: ", stdout, "1");
-  const locale = langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
-  const isZh = locale === "zh-TW";
-  stdout.write(`\u2502
+    const langChoice = await reader.ask("\u2502  \u8ACB\u9078\u64C7 / Select [1]: ", stdout, "1");
+    const locale = langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
+    const isZh = locale === "zh-TW";
+    stdout.write(`\u2502
 `);
-  const confirm = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u78BA\u8A8D\u8981\u89E3\u9664\u5B89\u88DD OpenCode Telegram Notifier\uFF1F [y/N]: " : "\u25C7  Are you sure you want to uninstall OpenCode Telegram Notifier? [y/N]: ", stdout, "N");
-  if (confirm.toLowerCase() !== "y" && confirm.toLowerCase() !== "yes") {
-    stdout.write(isZh ? `\u2502  \u64CD\u4F5C\u5DF2\u53D6\u6D88\u3002
+    const confirm = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u78BA\u8A8D\u8981\u89E3\u9664\u5B89\u88DD OpenCode Telegram Notifier\uFF1F [y/N]: " : "\u25C7  Are you sure you want to uninstall OpenCode Telegram Notifier? [y/N]: ", stdout, "N");
+    if (confirm.toLowerCase() !== "y" && confirm.toLowerCase() !== "yes") {
+      stdout.write(isZh ? `\u2502  \u64CD\u4F5C\u5DF2\u53D6\u6D88\u3002
 \u2514  \uD83D\uDC4B \u7D50\u675F\u3002
 
 ` : `\u2502  Aborted.
 \u2514  \uD83D\uDC4B Done.
 
 `);
-    return 0;
-  }
-  stdout.write(`\u2502
+      return 0;
+    }
+    stdout.write(`\u2502
 `);
-  stdout.write(isZh ? `\u25C7  [1/4] \u6B63\u5728\u6AA2\u67E5\u4E26\u505C\u6B62\u57F7\u884C\u4E2D\u7684 Broker (\u672C\u6A5F\u7A0B\u5E8F\u6216 Docker \u5BB9\u5668)...
+    stdout.write(isZh ? `\u25C7  [1/4] \u6B63\u5728\u6AA2\u67E5\u4E26\u505C\u6B62\u57F7\u884C\u4E2D\u7684 Broker (\u672C\u6A5F\u7A0B\u5E8F\u6216 Docker \u5BB9\u5668)...
 ` : `\u25C7  [1/4] Checking and stopping running Broker (native process or Docker container)...
 `);
-  try {
-    const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-    const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], { cwd });
-    if (dockerDown.exitCode === 0) {
-      stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u505C\u6B62\u4E26\u6E05\u7406\u3002
+    try {
+      const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+      const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], { cwd });
+      if (dockerDown.exitCode === 0) {
+        stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u505C\u6B62\u4E26\u6E05\u7406\u3002
 ` : `\u2502  \u2714 Docker Broker container stopped and cleaned up.
 `);
-    }
-  } catch {}
-  try {
-    const identity = await loadOrCreateStateIdentity(stateDirectory);
-    const isRunning = await probeBroker(42617, identity.brokerSecret);
-    if (isRunning) {
-      await runStopCommand({ stateDirectory, port: 42617 }, { stdout, stderr }, fetchImpl);
-      stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F Broker \u5DF2\u6210\u529F\u505C\u6B62\u3002
+      }
+    } catch {}
+    try {
+      const identity = await loadOrCreateStateIdentity(stateDirectory);
+      const isRunning = await probeBroker(42617, identity.brokerSecret);
+      if (isRunning) {
+        await runStopCommand({ stateDirectory, port: 42617 }, { stdout, stderr }, fetchImpl);
+        stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F Broker \u5DF2\u6210\u529F\u505C\u6B62\u3002
 ` : `\u2502  \u2714 Local broker stopped.
 `);
-    } else {
-      stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F Broker \u672A\u5728\u57F7\u884C\u4E2D\u3002
+      } else {
+        stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F Broker \u672A\u5728\u57F7\u884C\u4E2D\u3002
 ` : `\u2502  \u2714 Local broker is not running.
 `);
-    }
-  } catch {
-    stdout.write(isZh ? `\u2502  \u2714 \u672A\u627E\u5230\u57F7\u884C\u4E2D\u7684\u672C\u6A5F Broker \u6216\u5DF2\u505C\u6B62\u3002
+      }
+    } catch {
+      stdout.write(isZh ? `\u2502  \u2714 \u672A\u627E\u5230\u57F7\u884C\u4E2D\u7684\u672C\u6A5F Broker \u6216\u5DF2\u505C\u6B62\u3002
 ` : `\u2502  \u2714 No active local broker found or already stopped.
 `);
-  }
-  stdout.write(`\u2502
+    }
+    stdout.write(`\u2502
 `);
-  stdout.write(isZh ? `\u25C7  [2/4] \u6B63\u5728\u641C\u5C0B OpenCode \u8A2D\u5B9A\u6A94...
+    stdout.write(isZh ? `\u25C7  [2/4] \u6B63\u5728\u641C\u5C0B OpenCode \u8A2D\u5B9A\u6A94...
 ` : `\u25C7  [2/4] Searching for OpenCode configuration files...
 `);
-  const discoveredConfigs = await discoverOpenCodeConfigFiles(cwd);
-  const existingConfigs = discoveredConfigs.filter((c) => c.exists);
-  if (existingConfigs.length > 0) {
-    const cleanConfig = await reader.ask(isZh ? `\u2502  \u627E\u5230 ${existingConfigs.length} \u500B\u8A2D\u5B9A\u6A94\uFF0C\u662F\u5426\u5F9E\u4E2D\u79FB\u9664\u5916\u639B\u8A2D\u5B9A\uFF1F [Y/n]: ` : `\u2502  Found ${existingConfigs.length} config file(s). Remove plugin configuration? [Y/n]: `, stdout, "Y");
-    if (cleanConfig.toLowerCase() !== "n" && cleanConfig.toLowerCase() !== "no") {
-      for (const config2 of existingConfigs) {
-        const { modified, backupPath } = await removeOpenCodeConfig(config2.path);
-        if (modified) {
-          stdout.write(isZh ? `\u2502  \u2714 \u5DF2\u5F9E ${config2.path} \u79FB\u9664\u5916\u639B\u8A2D\u5B9A${backupPath ? ` (\u5099\u4EFD\u65BC ${backupPath})` : ""}
+    const discoveredConfigs = await discoverOpenCodeConfigFiles(cwd);
+    const existingConfigs = discoveredConfigs.filter((c) => c.exists);
+    if (existingConfigs.length > 0) {
+      const cleanConfig = await reader.ask(isZh ? `\u2502  \u627E\u5230 ${existingConfigs.length} \u500B\u8A2D\u5B9A\u6A94\uFF0C\u662F\u5426\u5F9E\u4E2D\u79FB\u9664\u5916\u639B\u8A2D\u5B9A\uFF1F [Y/n]: ` : `\u2502  Found ${existingConfigs.length} config file(s). Remove plugin configuration? [Y/n]: `, stdout, "Y");
+      if (cleanConfig.toLowerCase() !== "n" && cleanConfig.toLowerCase() !== "no") {
+        for (const config2 of existingConfigs) {
+          const { modified, backupPath } = await removeOpenCodeConfig(config2.path);
+          if (modified) {
+            stdout.write(isZh ? `\u2502  \u2714 \u5DF2\u5F9E ${config2.path} \u79FB\u9664\u5916\u639B\u8A2D\u5B9A${backupPath ? ` (\u5099\u4EFD\u65BC ${backupPath})` : ""}
 ` : `\u2502  \u2714 Removed plugin config from ${config2.path}${backupPath ? ` (backup at ${backupPath})` : ""}
 `);
-        } else {
-          stdout.write(isZh ? `\u2502  - ${config2.path} \u672A\u5305\u542B\u672C\u5916\u639B\u8A2D\u5B9A\u3002
+          } else {
+            stdout.write(isZh ? `\u2502  - ${config2.path} \u672A\u5305\u542B\u672C\u5916\u639B\u8A2D\u5B9A\u3002
 ` : `\u2502  - No plugin config in ${config2.path}.
 `);
+          }
         }
       }
-    }
-    const symlinkLocations = [
-      join8(cwd, "node_modules", "opencode-telegram-link"),
-      join8(homedir3(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
-      join8(homedir3(), ".opencode", "node_modules", "opencode-telegram-link")
-    ];
-    for (const symlink of symlinkLocations) {
-      try {
-        await rm4(symlink, { recursive: true, force: true });
-      } catch {}
-    }
-  } else {
-    stdout.write(isZh ? `\u2502  \u2714 \u672A\u627E\u5230\u4EFB\u4F55 opencode.json \u8A2D\u5B9A\u6A94\u3002
+      const symlinkLocations = [
+        join8(cwd, "node_modules", "opencode-telegram-link"),
+        join8(homedir3(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+        join8(homedir3(), ".opencode", "node_modules", "opencode-telegram-link")
+      ];
+      for (const symlink of symlinkLocations) {
+        try {
+          await rm4(symlink, { recursive: true, force: true });
+        } catch {}
+      }
+    } else {
+      stdout.write(isZh ? `\u2502  \u2714 \u672A\u627E\u5230\u4EFB\u4F55 opencode.json \u8A2D\u5B9A\u6A94\u3002
 ` : `\u2502  \u2714 No opencode.json configuration files found.
 `);
-  }
-  stdout.write(`\u2502
+    }
+    stdout.write(`\u2502
 `);
-  const cleanState = await reader.ask(isZh ? "\u25C7  [3/4] \u662F\u5426\u6E05\u9664\u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u8A0A\u606F\u8DEF\u7531\u72C0\u614B (SQLite)\uFF1F [Y/n]: " : "\u25C7  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ", stdout, "Y");
-  if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
-    try {
-      const dbPath = join8(stateDirectory, "state.sqlite");
-      await rm4(dbPath, { force: true });
-      await rm4(`${dbPath}-wal`, { force: true });
-      await rm4(`${dbPath}-shm`, { force: true });
-      await rm4(discoveryRecordPath(stateDirectory), { force: true });
-      await rm4(join8(stateDirectory, "dashboard-settings.json"), { force: true });
+    const cleanState = await reader.ask(isZh ? "\u25C7  [3/4] \u662F\u5426\u6E05\u9664\u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u8A0A\u606F\u8DEF\u7531\u72C0\u614B (SQLite)\uFF1F [Y/n]: " : "\u25C7  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ", stdout, "Y");
+    if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
       try {
-        await rm4(join8(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
-      } catch {}
-      stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u63A7\u5236\u53F0\u8A2D\u5B9A\u6A94 (dashboard-settings.json) \u5DF2\u6E05\u9664\u3002
+        const dbPath = join8(stateDirectory, "state.sqlite");
+        await rm4(dbPath, { force: true });
+        await rm4(`${dbPath}-wal`, { force: true });
+        await rm4(`${dbPath}-shm`, { force: true });
+        await rm4(discoveryRecordPath(stateDirectory), { force: true });
+        await rm4(join8(stateDirectory, "dashboard-settings.json"), { force: true });
+        try {
+          await rm4(join8(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+        } catch {}
+        stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u63A7\u5236\u53F0\u8A2D\u5B9A\u6A94 (dashboard-settings.json) \u5DF2\u6E05\u9664\u3002
 ` : `\u2502  \u2714 Operational state database & dashboard settings cleared.
 `);
-    } catch {
-      stdout.write(isZh ? `\u2502  - \u66AB\u5B58\u8CC7\u6599\u5EAB\u4E0D\u5B58\u5728\u6216\u5DF2\u6E05\u7406\u3002
+      } catch {
+        stdout.write(isZh ? `\u2502  - \u66AB\u5B58\u8CC7\u6599\u5EAB\u4E0D\u5B58\u5728\u6216\u5DF2\u6E05\u7406\u3002
 ` : `\u2502  - State database not found or already clean.
 `);
+      }
     }
-  }
-  stdout.write(`\u2502
+    stdout.write(`\u2502
 `);
-  const cleanToken = await reader.ask(isZh ? "\u25C7  [4/4] \u662F\u5426\u522A\u9664\u5132\u5B58\u7684 Telegram Bot Token \u6A94\u6848\uFF1F [y/N]: " : "\u25C7  [4/4] Delete saved Telegram Bot Token file? [y/N]: ", stdout, "N");
-  if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
-    try {
-      const tokenPath = join8(stateDirectory, "telegram-bot-token");
-      await rm4(tokenPath, { force: true });
-      stdout.write(isZh ? `\u2502  \u2714 Token \u6A94\u6848\u5DF2\u5B89\u5168\u522A\u9664\u3002
+    const cleanToken = await reader.ask(isZh ? "\u25C7  [4/4] \u662F\u5426\u522A\u9664\u5132\u5B58\u7684 Telegram Bot Token \u6A94\u6848\uFF1F [y/N]: " : "\u25C7  [4/4] Delete saved Telegram Bot Token file? [y/N]: ", stdout, "N");
+    if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
+      try {
+        const tokenPath = join8(stateDirectory, "telegram-bot-token");
+        await rm4(tokenPath, { force: true });
+        stdout.write(isZh ? `\u2502  \u2714 Token \u6A94\u6848\u5DF2\u5B89\u5168\u522A\u9664\u3002
 ` : `\u2502  \u2714 Token file securely removed.
 `);
-    } catch {
-      stdout.write(isZh ? `\u2502  - Token \u6A94\u6848\u4E0D\u5B58\u5728\u3002
+      } catch {
+        stdout.write(isZh ? `\u2502  - Token \u6A94\u6848\u4E0D\u5B58\u5728\u3002
 ` : `\u2502  - Token file does not exist.
 `);
-    }
-    const cleanAll = await reader.ask(isZh ? `\u2502  \u662F\u5426\u9023\u540C\u91D1\u9470\u76EE\u9304 ${stateDirectory} \u4E00\u4F75\u5B8C\u5168\u522A\u9664\uFF1F [y/N]: ` : `\u2502  Delete entire state directory (${stateDirectory})? [y/N]: `, stdout, "N");
-    if (cleanAll.toLowerCase() === "y" || cleanAll.toLowerCase() === "yes") {
-      try {
-        await rm4(stateDirectory, { recursive: true, force: true });
-        stdout.write(isZh ? `\u2502  \u2714 \u91D1\u9470\u8207\u72C0\u614B\u76EE\u9304\u5DF2\u5B8C\u5168\u79FB\u9664\u3002
+      }
+      const cleanAll = await reader.ask(isZh ? `\u2502  \u662F\u5426\u9023\u540C\u91D1\u9470\u76EE\u9304 ${stateDirectory} \u4E00\u4F75\u5B8C\u5168\u522A\u9664\uFF1F [y/N]: ` : `\u2502  Delete entire state directory (${stateDirectory})? [y/N]: `, stdout, "N");
+      if (cleanAll.toLowerCase() === "y" || cleanAll.toLowerCase() === "yes") {
+        try {
+          await rm4(stateDirectory, { recursive: true, force: true });
+          stdout.write(isZh ? `\u2502  \u2714 \u91D1\u9470\u8207\u72C0\u614B\u76EE\u9304\u5DF2\u5B8C\u5168\u79FB\u9664\u3002
 ` : `\u2502  \u2714 State directory completely removed.
 `);
-      } catch {}
+        } catch {}
+      }
     }
-  }
-  stdout.write(`\u2502
+    stdout.write(`\u2502
 `);
-  stdout.write(isZh ? `\u2514  \uD83C\uDF89 OpenCode Telegram Notifier \u5DF2\u6210\u529F\u79FB\u9664\uFF01
+    stdout.write(isZh ? `\u2514  \uD83C\uDF89 OpenCode Telegram Notifier \u5DF2\u6210\u529F\u79FB\u9664\uFF01
 
 ` : `\u2514  \uD83C\uDF89 OpenCode Telegram Notifier successfully uninstalled!
 
 `);
-  return 0;
+    return 0;
+  } finally {
+    reader.close();
+  }
 }
 async function runUninstallCli(options = {}) {
   const argv = options.argv ?? process.argv.slice(2);
@@ -21892,9 +21907,10 @@ async function runBroker() {
 }
 if (import.meta.main) {
   await runBroker();
+  process.exit(process.exitCode ?? 0);
 }
 export {
   runBroker
 };
 
-//# debugId=02CC163E478BF57D64756E2164756E21
+//# debugId=4DA37A84D8B98D2764756E2164756E21

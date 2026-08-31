@@ -20,4 +20,5 @@ export async function runBroker(): Promise<void> {
 
 if (import.meta.main) {
   await runBroker();
+  process.exit(process.exitCode ?? 0);
 }

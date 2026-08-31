@@ -127,11 +127,23 @@ export class SetupError extends Error {
 }
 
 export class AsyncPromptReader {
+  private input: AsyncIterable<Buffer | string> | NodeJS.ReadableStream;
   private iterator: AsyncIterator<Buffer | string>;
   private buffer = "";
 
   constructor(input: AsyncIterable<Buffer | string> | NodeJS.ReadableStream) {
+    this.input = input;
     this.iterator = (input as AsyncIterable<Buffer | string>)[Symbol.asyncIterator]();
+  }
+
+  close(): void {
+    if (
+      this.input &&
+      "pause" in this.input &&
+      typeof (this.input as NodeJS.ReadableStream).pause === "function"
+    ) {
+      (this.input as NodeJS.ReadableStream).pause();
+    }
   }
 
   async readLine(): Promise<string> {
@@ -236,470 +248,474 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   const stderr = options.stderr ?? process.stderr;
   const fetchImpl = options.fetch ?? fetch;
   const reader = new AsyncPromptReader(options.stdin ?? process.stdin);
-  const now = options.now ?? Date.now;
-  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
-  const cwd = options.cwd ?? process.cwd();
+  try {
+    const now = options.now ?? Date.now;
+    const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+    const cwd = options.cwd ?? process.cwd();
 
-  stdout.write("\n┌  OpenCode Telegram Notifier — Setup Wizard\n│\n");
+    stdout.write("\n┌  OpenCode Telegram Notifier — Setup Wizard\n│\n");
 
-  // Step 1: Language / 語言
-  stdout.write("◇  Language / 語言:\n");
-  stdout.write("│  1) 繁體中文 (zh-TW) [預設/Default]\n");
-  stdout.write("│  2) English (en)\n");
-  const langChoice = await reader.ask("│  請選擇 / Select [1]: ", stdout, "1");
-  const locale: SupportedLocale =
-    langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
-  const isZh = locale === "zh-TW";
+    // Step 1: Language / 語言
+    stdout.write("◇  Language / 語言:\n");
+    stdout.write("│  1) 繁體中文 (zh-TW) [預設/Default]\n");
+    stdout.write("│  2) English (en)\n");
+    const langChoice = await reader.ask("│  請選擇 / Select [1]: ", stdout, "1");
+    const locale: SupportedLocale =
+      langChoice === "2" || langChoice.toLowerCase() === "en" ? "en" : "zh-TW";
+    const isZh = locale === "zh-TW";
 
-  // Step 2: Role Selection
-  stdout.write("│\n");
-  stdout.write(
-    isZh
-      ? "◇  請選擇此機器的角色 (Role):\n│  1) 獨立 Gateway 模式 (Gateway Mode) [預設/Default] — 擁有專屬 Telegram Bot，可供本機與其他節點連線\n│  2) 節點 Agent 模式 (Node Agent Mode) — 連線至現有的 Gateway，共用 Telegram Bot\n"
-      : "◇  Select machine role:\n│  1) Standalone Gateway Mode [Default] — Owns a Telegram Bot, serves local and remote nodes\n│  2) Node Agent Mode — Connects to an existing Gateway, shares Telegram Bot\n",
-  );
-  const roleChoice = await reader.ask(
-    isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
-    stdout,
-    "1",
-  );
-  const isNode = roleChoice === "2" || roleChoice.toLowerCase().includes("node");
-
-  // Step 3: Host Label
-  const defaultHost = hostname() || "host";
-  stdout.write("│\n");
-  stdout.write(
-    isZh
-      ? `◇  主機識別標籤 (Host Label) [預設: ${defaultHost}]:\n│  (此標籤將顯示於 Telegram 通知頂部，便於識別來源主機)\n`
-      : `◇  Host Label [Default: ${defaultHost}]:\n│  (Shown in notification header to identify this machine)\n`,
-  );
-  const hostLabel = await reader.ask(
-    isZh ? `│  標籤名稱 [${defaultHost}]: ` : `│  Label [${defaultHost}]: `,
-    stdout,
-    defaultHost,
-  );
-
-  let configData: NotifierConfig;
-  let isDocker = false;
-  let pairing: PairingCandidate | undefined;
-  let api: TelegramBotApi | undefined;
-  let botInfo: TelegramBot | undefined;
-
-  if (isNode) {
+    // Step 2: Role Selection
     stdout.write("│\n");
     stdout.write(
       isZh
-        ? "◇  請輸入 Central Gateway 的 WebSocket 位址:\n│  (範例: ws://192.168.1.100:42617 或 wss://gateway.example.com)\n"
-        : "◇  Enter Central Gateway WebSocket URL:\n│  (Example: ws://192.168.1.100:42617 or wss://gateway.example.com)\n",
+        ? "◇  請選擇此機器的角色 (Role):\n│  1) 獨立 Gateway 模式 (Gateway Mode) [預設/Default] — 擁有專屬 Telegram Bot，可供本機與其他節點連線\n│  2) 節點 Agent 模式 (Node Agent Mode) — 連線至現有的 Gateway，共用 Telegram Bot\n"
+        : "◇  Select machine role:\n│  1) Standalone Gateway Mode [Default] — Owns a Telegram Bot, serves local and remote nodes\n│  2) Node Agent Mode — Connects to an existing Gateway, shares Telegram Bot\n",
     );
-    const gatewayUrl = await reader.ask("│  Gateway URL: ", stdout);
-    if (!gatewayUrl) {
-      stderr.write(isZh ? "✖ Gateway URL 不能為空。\n" : "✖ Gateway URL cannot be empty.\n");
-      return 1;
-    }
-
-    stdout.write("│\n");
-    stdout.write(
-      isZh
-        ? "◇  請輸入 Gateway 連線金鑰 (Secret Token):\n│  (若 Gateway 無需金鑰可直接按 Enter)\n"
-        : "◇  Enter Gateway Secret Token:\n│  (Press Enter if no secret required)\n",
-    );
-    const gatewaySecret = await reader.ask("│  Secret: ", stdout, "");
-
-    configData = {
-      mode: "local",
-      role: "node",
-      hostLabel,
-      locale,
-      gateway: {
-        url: gatewayUrl,
-        secret: gatewaySecret || "default-secret",
-      },
-      notifications: {
-        completion: true,
-        error: true,
-        question: true,
-        permission: true,
-        includeChildLifecycle: false,
-        completionDebounceMs: 1500,
-        pluginBufferSize: 100,
-      },
-      broker: {
-        host: "127.0.0.1",
-        port: 42617,
-      },
-      interaction: {
-        sessionPromptTtlMinutes: 1440,
-        questionTtlMinutes: 30,
-      },
-    };
-  } else {
-    // Gateway mode
-    // Deployment Mode
-    stdout.write("│\n");
-    stdout.write(
-      isZh
-        ? "◇  部署模式選擇 / Deployment Mode:\n│  1) 本機原生模式 (Native Mode) [預設/Default] — Broker 作為本機常駐程序，OpenCode 自動在背景拉起\n│  2) Docker 容器模式 (Docker Container) — Broker 隔離於 Docker 容器中執行\n"
-        : "◇  Deployment Mode:\n│  1) Native Mode [Default] — Broker runs as a local background process, auto-spawned by OpenCode\n│  2) Docker Container Mode — Broker runs isolated inside a Docker container\n",
-    );
-    const modeChoice = await reader.ask(
+    const roleChoice = await reader.ask(
       isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
       stdout,
       "1",
     );
-    isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+    const isNode = roleChoice === "2" || roleChoice.toLowerCase().includes("node");
 
-    // BotFather Token
-    let botToken = "";
-    let attempts = 0;
-    while (!botInfo) {
-      attempts += 1;
-      if (attempts > 5) {
-        stderr.write(isZh ? "✖ 超過重試次數，設定終止。\n" : "✖ Too many attempts. Aborted.\n");
+    // Step 3: Host Label
+    const defaultHost = hostname() || "host";
+    stdout.write("│\n");
+    stdout.write(
+      isZh
+        ? `◇  主機識別標籤 (Host Label) [預設: ${defaultHost}]:\n│  (此標籤將顯示於 Telegram 通知頂部，便於識別來源主機)\n`
+        : `◇  Host Label [Default: ${defaultHost}]:\n│  (Shown in notification header to identify this machine)\n`,
+    );
+    const hostLabel = await reader.ask(
+      isZh ? `│  標籤名稱 [${defaultHost}]: ` : `│  Label [${defaultHost}]: `,
+      stdout,
+      defaultHost,
+    );
+
+    let configData: NotifierConfig;
+    let isDocker = false;
+    let pairing: PairingCandidate | undefined;
+    let api: TelegramBotApi | undefined;
+    let botInfo: TelegramBot | undefined;
+
+    if (isNode) {
+      stdout.write("│\n");
+      stdout.write(
+        isZh
+          ? "◇  請輸入 Central Gateway 的 WebSocket 位址:\n│  (範例: ws://192.168.1.100:42617 或 wss://gateway.example.com)\n"
+          : "◇  Enter Central Gateway WebSocket URL:\n│  (Example: ws://192.168.1.100:42617 or wss://gateway.example.com)\n",
+      );
+      const gatewayUrl = await reader.ask("│  Gateway URL: ", stdout);
+      if (!gatewayUrl) {
+        stderr.write(isZh ? "✖ Gateway URL 不能為空。\n" : "✖ Gateway URL cannot be empty.\n");
         return 1;
       }
+
       stdout.write("│\n");
-      if (isZh) {
-        stdout.write("◇  請輸入向 @BotFather 申請的 Telegram Bot Token:\n");
-        stdout.write("│  (範例: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
-      } else {
-        stdout.write("◇  Enter your Telegram Bot Token from @BotFather:\n");
-        stdout.write("│  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
-      }
-      botToken = await reader.ask("│  Token: ", stdout);
-      if (!botToken) {
-        stdout.write(
-          isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n",
-        );
-        continue;
-      }
-      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
-        stdout.write(
-          isZh
-            ? "│  ✖ Token 格式不符合 Telegram 規範，請重新輸入。\n"
-            : "│  ✖ Invalid token format.\n",
-        );
-        continue;
-      }
       stdout.write(
         isZh
-          ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
-          : "│  ⠋ Verifying Bot Token with Telegram...\n",
+          ? "◇  請輸入 Gateway 連線金鑰 (Secret Token):\n│  (若 Gateway 無需金鑰可直接按 Enter)\n"
+          : "◇  Enter Gateway Secret Token:\n│  (Press Enter if no secret required)\n",
       );
-      api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
-      try {
-        botInfo = await api.getMe();
-        const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
-        stdout.write(
-          isZh
-            ? `│  ✔ 連線成功！已辨識 Bot: ${botName} (ID: ${botInfo.id})\n`
-            : `│  ✔ Connected! Identified Bot: ${botName} (ID: ${botInfo.id})\n`,
-        );
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "connection failed";
-        stdout.write(
-          isZh
-            ? `│  ✖ Token 驗證失敗 (${errMsg})，請確認後重試。\n`
-            : `│  ✖ Verification failed (${errMsg}). Please retry.\n`,
-        );
-      }
-    }
+      const gatewaySecret = await reader.ask("│  Secret: ", stdout, "");
 
-    // Nonce Pairing
-    api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
-    const nonce = createPairingNonce();
-    const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
-    stdout.write("│\n");
-    if (isZh) {
-      stdout.write("◇  [身分驗證配對]\n");
-      stdout.write(`│  請在 Telegram 打開與 ${botName} 的私聊視窗，並發送此驗證碼：\n`);
-      stdout.write(`│\n│  👉  ${nonce}\n│\n`);
-      stdout.write("│  ⠋ 等待 Telegram 私訊中...\n");
+      configData = {
+        mode: "local",
+        role: "node",
+        hostLabel,
+        locale,
+        gateway: {
+          url: gatewayUrl,
+          secret: gatewaySecret || "default-secret",
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true,
+          includeChildLifecycle: false,
+          completionDebounceMs: 1500,
+          pluginBufferSize: 100,
+        },
+        broker: {
+          host: "127.0.0.1",
+          port: 42617,
+        },
+        interaction: {
+          sessionPromptTtlMinutes: 1440,
+          questionTtlMinutes: 30,
+        },
+      };
     } else {
-      stdout.write("◇  [Identity Pairing]\n");
-      stdout.write(`│  Open a private chat with ${botName} on Telegram and send this code:\n`);
-      stdout.write(`│\n│  👉  ${nonce}\n│\n`);
-      stdout.write("│  ⠋ Waiting for Telegram private message...\n");
-    }
-
-    const expiresAt = now() + 120_000;
-    try {
-      pairing = await waitForPairingMessage(api, {
-        nonce,
-        expiresAt,
-        now,
-        pollTimeoutSeconds: 5,
-      });
-    } catch {
+      // Gateway mode
+      // Deployment Mode
+      stdout.write("│\n");
       stdout.write(
         isZh
-          ? "│  ✖ 配對超時或未收到有效訊息，設定中止。\n"
-          : "│  ✖ Pairing timed out or no valid message received. Aborted.\n",
+          ? "◇  部署模式選擇 / Deployment Mode:\n│  1) 本機原生模式 (Native Mode) [預設/Default] — Broker 作為本機常駐程序，OpenCode 自動在背景拉起\n│  2) Docker 容器模式 (Docker Container) — Broker 隔離於 Docker 容器中執行\n"
+          : "◇  Deployment Mode:\n│  1) Native Mode [Default] — Broker runs as a local background process, auto-spawned by OpenCode\n│  2) Docker Container Mode — Broker runs isolated inside a Docker container\n",
       );
-      return 1;
-    }
+      const modeChoice = await reader.ask(
+        isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
+        stdout,
+        "1",
+      );
+      isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
 
-    stdout.write(
-      isZh
-        ? `│  ✔ 收到驗證訊息！來自 Telegram 用戶 (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`
-        : `│  ✔ Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`,
-    );
-
-    const confirmBind = await reader.ask(
-      isZh
-        ? "│  是否將此 Telegram 帳號綁定為 OpenCode 管理員？ [Y/n]: "
-        : "│  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ",
-      stdout,
-      "Y",
-    );
-    if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
-      stdout.write(isZh ? "│  ✖ 已取消綁定。\n" : "│  ✖ Pairing cancelled.\n");
-      return 1;
-    }
-
-    // Write secure token file
-    const tokenFile = join(stateDirectory, "telegram-bot-token");
-    await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
-    const identityFile = join(stateDirectory, "telegram-identity.json");
-    await writeFile(
-      identityFile,
-      `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
-      "utf8",
-    );
-    stdout.write(
-      isZh
-        ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
-        : `│  ✔ Secure token file saved (${tokenFile})\n`,
-    );
-
-    configData = {
-      mode: "local",
-      role: "gateway",
-      hostLabel,
-      locale,
-      telegram: {
-        tokenFile,
-        userId: pairing.userId,
-        chatId: pairing.chatId,
-      },
-      notifications: {
-        completion: true,
-        error: true,
-        question: true,
-        permission: true,
-        includeChildLifecycle: false,
-        completionDebounceMs: 1500,
-        pluginBufferSize: 100,
-      },
-      broker: {
-        host: "127.0.0.1",
-        port: 42617,
-      },
-      interaction: {
-        sessionPromptTtlMinutes: 1440,
-        questionTtlMinutes: 30,
-      },
-    };
-  }
-
-  // Step 5: OpenCode config detection & injection
-  stdout.write("│\n");
-  const discovered = await discoverOpenCodeConfigFiles(cwd);
-  const existingConfigs = discovered.filter((d) => d.exists);
-  const fallback = discovered.find((d) => !d.isWorkspace) ?? discovered[0];
-  const targets = existingConfigs.length > 0 ? existingConfigs : fallback ? [fallback] : [];
-
-  if (targets.length > 0) {
-    const descList = targets
-      .map(
-        (t) =>
-          `${t.path} [${t.exists ? (isZh ? "已存在" : "existing") : isZh ? "將自動建立" : "will create"}]`,
-      )
-      .join(", ");
-    stdout.write(
-      isZh
-        ? `◇  偵測到 OpenCode 設定檔 (${descList})\n`
-        : `◇  Discovered OpenCode config file(s) (${descList})\n`,
-    );
-    const autoWrite = await reader.ask(
-      isZh
-        ? "│  是否自動寫入外掛設定？ [Y/n]: "
-        : "│  Automatically update OpenCode config file(s)? [Y/n]: ",
-      stdout,
-      "Y",
-    );
-    if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
-      for (const target of targets) {
-        try {
-          const { backupPath } = await injectOpenCodeConfig(target.path, configData);
+      // BotFather Token
+      let botToken = "";
+      let attempts = 0;
+      while (!botInfo) {
+        attempts += 1;
+        if (attempts > 5) {
+          stderr.write(isZh ? "✖ 超過重試次數，設定終止。\n" : "✖ Too many attempts. Aborted.\n");
+          return 1;
+        }
+        stdout.write("│\n");
+        if (isZh) {
+          stdout.write("◇  請輸入向 @BotFather 申請的 Telegram Bot Token:\n");
+          stdout.write("│  (範例: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+        } else {
+          stdout.write("◇  Enter your Telegram Bot Token from @BotFather:\n");
+          stdout.write("│  (Example: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ)\n");
+        }
+        botToken = await reader.ask("│  Token: ", stdout);
+        if (!botToken) {
+          stdout.write(
+            isZh ? "│  ✖ Token 不能為空，請重新輸入。\n" : "│  ✖ Token cannot be empty.\n",
+          );
+          continue;
+        }
+        if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
           stdout.write(
             isZh
-              ? `│  ✔ OpenCode 設定檔已更新: ${target.path}${backupPath ? ` (備份於 ${backupPath})` : ""}\n`
-              : `│  ✔ OpenCode config updated: ${target.path}${backupPath ? ` (backup at ${backupPath})` : ""}\n`,
+              ? "│  ✖ Token 格式不符合 Telegram 規範，請重新輸入。\n"
+              : "│  ✖ Invalid token format.\n",
+          );
+          continue;
+        }
+        stdout.write(
+          isZh
+            ? "│  ⠋ 正在向 Telegram 驗證 Bot Token...\n"
+            : "│  ⠋ Verifying Bot Token with Telegram...\n",
+        );
+        api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+        try {
+          botInfo = await api.getMe();
+          const botName = botInfo.username ? `@${botInfo.username}` : `bot ${botInfo.id}`;
+          stdout.write(
+            isZh
+              ? `│  ✔ 連線成功！已辨識 Bot: ${botName} (ID: ${botInfo.id})\n`
+              : `│  ✔ Connected! Identified Bot: ${botName} (ID: ${botInfo.id})\n`,
           );
         } catch (err) {
-          const errMsg = err instanceof Error ? err.message : "failed to write config";
+          const errMsg = err instanceof Error ? err.message : "connection failed";
           stdout.write(
             isZh
-              ? `│  ✖ 設定檔寫入失敗 (${target.path}): ${errMsg}\n`
-              : `│  ✖ Failed to write config (${target.path}): ${errMsg}\n`,
+              ? `│  ✖ Token 驗證失敗 (${errMsg})，請確認後重試。\n`
+              : `│  ✖ Verification failed (${errMsg}). Please retry.\n`,
           );
         }
       }
-    } else {
-      stdout.write(
-        isZh
-          ? "│  請手動將下列設定加入您的 opencode.json:\n"
-          : "│  Please add the following configuration to your opencode.json:\n",
-      );
-      stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
-    }
-  }
 
-  let dockerFailed = false;
-  if (isDocker) {
-    stdout.write("│\n");
-    const autoStartDocker = await reader.ask(
-      isZh
-        ? "◇  是否立即在背景自動建置並啟動 Docker Broker 容器？ [Y/n]: "
-        : "◇  Build and start Docker Broker container in background now? [Y/n]: ",
-      stdout,
-      "Y",
-    );
-    if (autoStartDocker.toLowerCase() !== "n" && autoStartDocker.toLowerCase() !== "no") {
-      stdout.write(
-        isZh
-          ? "│  ⠋ 正在建置並啟動 Docker 容器 (docker compose up -d --build)...\n"
-          : "│  ⠋ Building and starting Docker container (docker compose up -d --build)...\n",
-      );
-      try {
-        const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-        const composeCtx = resolveDockerComposeContext(cwd);
-        if (!composeCtx) {
-          throw new Error("Could not find docker-compose.yml in project or package directory");
-        }
-
-        const result = Bun.spawnSync(
-          [
-            dockerCmd,
-            "compose",
-            "-f",
-            composeCtx.composeFile,
-            "--project-directory",
-            composeCtx.projectDir,
-            "up",
-            "-d",
-            "--build",
-          ],
-          {
-            cwd: composeCtx.projectDir,
-            env: {
-              ...process.env,
-              HOME: process.env.HOME || process.env.USERPROFILE || "",
-            },
-          },
-        );
-        if (result.exitCode === 0) {
-          stdout.write(
-            isZh
-              ? "│  ✔ Docker Broker 容器已成功在背景啟動！\n"
-              : "│  ✔ Docker Broker container started in background!\n",
-          );
-        } else {
-          dockerFailed = true;
-          const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
-          stdout.write(
-            isZh
-              ? `│  ✖ Docker 自動啟動未成功${stderr ? ` (${stderr})` : ""}（請確認 Docker Desktop 是否運行中）。\n`
-              : `│  ✖ Docker start failed${stderr ? ` (${stderr})` : ""} (please check if Docker is running).\n`,
-          );
-          stdout.write(
-            isZh
-              ? `│  您可於稍後手動執行: docker compose -f "${composeCtx.composeFile}" up -d\n`
-              : `│  You can manually run later: docker compose -f "${composeCtx.composeFile}" up -d\n`,
-          );
-        }
-      } catch (err) {
-        dockerFailed = true;
-        const msg = err instanceof Error ? err.message : String(err);
-        stdout.write(
-          isZh
-            ? `│  ✖ Docker 啟動失敗: ${msg}，您可於安裝/啟動 Docker 後手動執行 docker compose up -d\n`
-            : `│  ✖ Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.\n`,
-        );
+      // Nonce Pairing
+      api = new TelegramBotApi({ token: botToken, fetch: fetchImpl });
+      const nonce = createPairingNonce();
+      const botName = botInfo.username ? `@${botInfo.username}` : `Bot (ID: ${botInfo.id})`;
+      stdout.write("│\n");
+      if (isZh) {
+        stdout.write("◇  [身分驗證配對]\n");
+        stdout.write(`│  請在 Telegram 打開與 ${botName} 的私聊視窗，並發送此驗證碼：\n`);
+        stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+        stdout.write("│  ⠋ 等待 Telegram 私訊中...\n");
+      } else {
+        stdout.write("◇  [Identity Pairing]\n");
+        stdout.write(`│  Open a private chat with ${botName} on Telegram and send this code:\n`);
+        stdout.write(`│\n│  👉  ${nonce}\n│\n`);
+        stdout.write("│  ⠋ Waiting for Telegram private message...\n");
       }
-    } else {
-      stdout.write(
-        isZh
-          ? "│  您可於稍後手動啟動容器: docker compose up -d\n"
-          : "│  You can manually start the container later: docker compose up -d\n",
-      );
-    }
-  } else {
-    stdout.write("│\n");
-    stdout.write(
-      isZh
-        ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
-        : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
-    );
-  }
 
-  // Step 6: Test Notification
-  if (!isNode && pairing && api) {
-    stdout.write("│\n");
-    const sendTest = await reader.ask(
-      isZh
-        ? "◇  是否發送測試通知到您的 Telegram？ [Y/n]: "
-        : "◇  Send a welcome test notification to your Telegram now? [Y/n]: ",
-      stdout,
-      "Y",
-    );
-    if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
+      const expiresAt = now() + 120_000;
       try {
-        const botDisplayName = botInfo?.username
-          ? `@${botInfo.username}`
-          : `Bot (ID: ${botInfo?.id})`;
-        const welcomeText = isZh
-          ? `🎉 <b>OpenCode Telegram Notifier 設定成功！</b>\n\n已成功綁定主機 [${hostLabel}] 與 Telegram。\n當 OpenCode 任務完成、發生異常或需要回覆時，您將在此收到即時通知。\n\n• Bot: ${botDisplayName}\n• 授權用戶 ID: <code>${pairing.userId}</code>`
-          : `🎉 <b>OpenCode Telegram Notifier setup complete!</b>\n\nYour host [${hostLabel}] is now linked with Telegram.\nYou will receive notifications here when sessions finish or require input.\n\n• Bot: ${botDisplayName}\n• Authorized User ID: <code>${pairing.userId}</code>`;
-        await api.sendMessage({
-          chatId: pairing.chatId,
-          text: welcomeText,
-          parseMode: "HTML",
+        pairing = await waitForPairingMessage(api, {
+          nonce,
+          expiresAt,
+          now,
+          pollTimeoutSeconds: 5,
         });
+      } catch {
         stdout.write(
           isZh
-            ? "│  ✔ 已成功發送測試通知到您的 Telegram！請檢查手機訊息。\n"
-            : "│  ✔ Test notification sent to your Telegram! Please check your messages.\n",
+            ? "│  ✖ 配對超時或未收到有效訊息，設定中止。\n"
+            : "│  ✖ Pairing timed out or no valid message received. Aborted.\n",
         );
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : "send failed";
+        return 1;
+      }
+
+      stdout.write(
+        isZh
+          ? `│  ✔ 收到驗證訊息！來自 Telegram 用戶 (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`
+          : `│  ✔ Received pairing message! Telegram User (ID: ${pairing.userId}, Chat: ${pairing.chatId})\n`,
+      );
+
+      const confirmBind = await reader.ask(
+        isZh
+          ? "│  是否將此 Telegram 帳號綁定為 OpenCode 管理員？ [Y/n]: "
+          : "│  Authorize this Telegram user for OpenCode notifications & replies? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (confirmBind.toLowerCase() === "n" || confirmBind.toLowerCase() === "no") {
+        stdout.write(isZh ? "│  ✖ 已取消綁定。\n" : "│  ✖ Pairing cancelled.\n");
+        return 1;
+      }
+
+      // Write secure token file
+      const tokenFile = join(stateDirectory, "telegram-bot-token");
+      await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
+      const identityFile = join(stateDirectory, "telegram-identity.json");
+      await writeFile(
+        identityFile,
+        `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
+        "utf8",
+      );
+      stdout.write(
+        isZh
+          ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
+          : `│  ✔ Secure token file saved (${tokenFile})\n`,
+      );
+
+      configData = {
+        mode: "local",
+        role: "gateway",
+        hostLabel,
+        locale,
+        telegram: {
+          tokenFile,
+          userId: pairing.userId,
+          chatId: pairing.chatId,
+        },
+        notifications: {
+          completion: true,
+          error: true,
+          question: true,
+          permission: true,
+          includeChildLifecycle: false,
+          completionDebounceMs: 1500,
+          pluginBufferSize: 100,
+        },
+        broker: {
+          host: "127.0.0.1",
+          port: 42617,
+        },
+        interaction: {
+          sessionPromptTtlMinutes: 1440,
+          questionTtlMinutes: 30,
+        },
+      };
+    }
+
+    // Step 5: OpenCode config detection & injection
+    stdout.write("│\n");
+    const discovered = await discoverOpenCodeConfigFiles(cwd);
+    const existingConfigs = discovered.filter((d) => d.exists);
+    const fallback = discovered.find((d) => !d.isWorkspace) ?? discovered[0];
+    const targets = existingConfigs.length > 0 ? existingConfigs : fallback ? [fallback] : [];
+
+    if (targets.length > 0) {
+      const descList = targets
+        .map(
+          (t) =>
+            `${t.path} [${t.exists ? (isZh ? "已存在" : "existing") : isZh ? "將自動建立" : "will create"}]`,
+        )
+        .join(", ");
+      stdout.write(
+        isZh
+          ? `◇  偵測到 OpenCode 設定檔 (${descList})\n`
+          : `◇  Discovered OpenCode config file(s) (${descList})\n`,
+      );
+      const autoWrite = await reader.ask(
+        isZh
+          ? "│  是否自動寫入外掛設定？ [Y/n]: "
+          : "│  Automatically update OpenCode config file(s)? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (autoWrite.toLowerCase() !== "n" && autoWrite.toLowerCase() !== "no") {
+        for (const target of targets) {
+          try {
+            const { backupPath } = await injectOpenCodeConfig(target.path, configData);
+            stdout.write(
+              isZh
+                ? `│  ✔ OpenCode 設定檔已更新: ${target.path}${backupPath ? ` (備份於 ${backupPath})` : ""}\n`
+                : `│  ✔ OpenCode config updated: ${target.path}${backupPath ? ` (backup at ${backupPath})` : ""}\n`,
+            );
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : "failed to write config";
+            stdout.write(
+              isZh
+                ? `│  ✖ 設定檔寫入失敗 (${target.path}): ${errMsg}\n`
+                : `│  ✖ Failed to write config (${target.path}): ${errMsg}\n`,
+            );
+          }
+        }
+      } else {
         stdout.write(
           isZh
-            ? `│  ✖ 測試通知發送失敗: ${errMsg}\n`
-            : `│  ✖ Failed to send test notification: ${errMsg}\n`,
+            ? "│  請手動將下列設定加入您的 opencode.json:\n"
+            : "│  Please add the following configuration to your opencode.json:\n",
         );
+        stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
       }
     }
-  }
 
-  stdout.write("│\n");
-  if (dockerFailed) {
+    let dockerFailed = false;
+    if (isDocker) {
+      stdout.write("│\n");
+      const autoStartDocker = await reader.ask(
+        isZh
+          ? "◇  是否立即在背景自動建置並啟動 Docker Broker 容器？ [Y/n]: "
+          : "◇  Build and start Docker Broker container in background now? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (autoStartDocker.toLowerCase() !== "n" && autoStartDocker.toLowerCase() !== "no") {
+        stdout.write(
+          isZh
+            ? "│  ⠋ 正在建置並啟動 Docker 容器 (docker compose up -d --build)...\n"
+            : "│  ⠋ Building and starting Docker container (docker compose up -d --build)...\n",
+        );
+        try {
+          const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
+          const composeCtx = resolveDockerComposeContext(cwd);
+          if (!composeCtx) {
+            throw new Error("Could not find docker-compose.yml in project or package directory");
+          }
+
+          const result = Bun.spawnSync(
+            [
+              dockerCmd,
+              "compose",
+              "-f",
+              composeCtx.composeFile,
+              "--project-directory",
+              composeCtx.projectDir,
+              "up",
+              "-d",
+              "--build",
+            ],
+            {
+              cwd: composeCtx.projectDir,
+              env: {
+                ...process.env,
+                HOME: process.env.HOME || process.env.USERPROFILE || "",
+              },
+            },
+          );
+          if (result.exitCode === 0) {
+            stdout.write(
+              isZh
+                ? "│  ✔ Docker Broker 容器已成功在背景啟動！\n"
+                : "│  ✔ Docker Broker container started in background!\n",
+            );
+          } else {
+            dockerFailed = true;
+            const stderr = result.stderr ? new TextDecoder().decode(result.stderr).trim() : "";
+            stdout.write(
+              isZh
+                ? `│  ✖ Docker 自動啟動未成功${stderr ? ` (${stderr})` : ""}（請確認 Docker Desktop 是否運行中）。\n`
+                : `│  ✖ Docker start failed${stderr ? ` (${stderr})` : ""} (please check if Docker is running).\n`,
+            );
+            stdout.write(
+              isZh
+                ? `│  您可於稍後手動執行: docker compose -f "${composeCtx.composeFile}" up -d\n`
+                : `│  You can manually run later: docker compose -f "${composeCtx.composeFile}" up -d\n`,
+            );
+          }
+        } catch (err) {
+          dockerFailed = true;
+          const msg = err instanceof Error ? err.message : String(err);
+          stdout.write(
+            isZh
+              ? `│  ✖ Docker 啟動失敗: ${msg}，您可於安裝/啟動 Docker 後手動執行 docker compose up -d\n`
+              : `│  ✖ Docker startup failed: ${msg}. You can run 'docker compose up -d' after installing/starting Docker.\n`,
+          );
+        }
+      } else {
+        stdout.write(
+          isZh
+            ? "│  您可於稍後手動啟動容器: docker compose up -d\n"
+            : "│  You can manually start the container later: docker compose up -d\n",
+        );
+      }
+    } else {
+      stdout.write("│\n");
+      stdout.write(
+        isZh
+          ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
+          : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
+      );
+    }
+
+    // Step 6: Test Notification
+    if (!isNode && pairing && api) {
+      stdout.write("│\n");
+      const sendTest = await reader.ask(
+        isZh
+          ? "◇  是否發送測試通知到您的 Telegram？ [Y/n]: "
+          : "◇  Send a welcome test notification to your Telegram now? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (sendTest.toLowerCase() !== "n" && sendTest.toLowerCase() !== "no") {
+        try {
+          const botDisplayName = botInfo?.username
+            ? `@${botInfo.username}`
+            : `Bot (ID: ${botInfo?.id})`;
+          const welcomeText = isZh
+            ? `🎉 <b>OpenCode Telegram Notifier 設定成功！</b>\n\n已成功綁定主機 [${hostLabel}] 與 Telegram。\n當 OpenCode 任務完成、發生異常或需要回覆時，您將在此收到即時通知。\n\n• Bot: ${botDisplayName}\n• 授權用戶 ID: <code>${pairing.userId}</code>`
+            : `🎉 <b>OpenCode Telegram Notifier setup complete!</b>\n\nYour host [${hostLabel}] is now linked with Telegram.\nYou will receive notifications here when sessions finish or require input.\n\n• Bot: ${botDisplayName}\n• Authorized User ID: <code>${pairing.userId}</code>`;
+          await api.sendMessage({
+            chatId: pairing.chatId,
+            text: welcomeText,
+            parseMode: "HTML",
+          });
+          stdout.write(
+            isZh
+              ? "│  ✔ 已成功發送測試通知到您的 Telegram！請檢查手機訊息。\n"
+              : "│  ✔ Test notification sent to your Telegram! Please check your messages.\n",
+          );
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : "send failed";
+          stdout.write(
+            isZh
+              ? `│  ✖ 測試通知發送失敗: ${errMsg}\n`
+              : `│  ✖ Failed to send test notification: ${errMsg}\n`,
+          );
+        }
+      }
+    }
+
+    stdout.write("│\n");
+    if (dockerFailed) {
+      stdout.write(
+        isZh
+          ? "└  ⚠ 設定檔已寫入，但 Docker 容器啟動失敗。請確認 Docker 服務運行後手動啟動容器。\n\n"
+          : "└  ⚠ Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.\n\n",
+      );
+      return 1;
+    }
+
     stdout.write(
       isZh
-        ? "└  ⚠ 設定檔已寫入，但 Docker 容器啟動失敗。請確認 Docker 服務運行後手動啟動容器。\n\n"
-        : "└  ⚠ Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.\n\n",
+        ? "└  🎉 安裝設定完成！您現在可以回到 OpenCode 開始工作。\n\n"
+        : "└  🎉 Setup completed! You can now return to OpenCode and start working.\n\n",
     );
-    return 1;
+
+    return 0;
+  } finally {
+    reader.close();
   }
-
-  stdout.write(
-    isZh
-      ? "└  🎉 安裝設定完成！您現在可以回到 OpenCode 開始工作。\n\n"
-      : "└  🎉 Setup completed! You can now return to OpenCode and start working.\n\n",
-  );
-
-  return 0;
 }
 
 export async function runSetupCli(
