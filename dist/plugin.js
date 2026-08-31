@@ -15923,14 +15923,11 @@ async function injectOpenCodeConfig(targetPath, config2) {
       chatId: config2.telegram.chatId
     };
   }
+  delete existingJson["opencode-telegram-link"];
+  delete existingJson["telegram-link"];
   const isMatch = (entry) => {
-    if (typeof entry === "string") {
-      return entry === "opencode-telegram-link" || entry.endsWith("opencode-telegram-link");
-    }
-    if (Array.isArray(entry) && typeof entry[0] === "string") {
-      return entry[0] === "opencode-telegram-link" || entry[0].endsWith("opencode-telegram-link");
-    }
-    return false;
+    const name = typeof entry === "string" ? entry : Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : "";
+    return name === "opencode-telegram-link" || name.startsWith("opencode-telegram-link") || name.includes("opencode-telegram-link") || name.includes("opencode_notification") || name.includes("telegram-link");
   };
   function mergePluginOptions(existing, updated) {
     const existingObj = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
@@ -15953,19 +15950,15 @@ async function injectOpenCodeConfig(targetPath, config2) {
     return merged;
   }
   if (Array.isArray(existingJson.plugin)) {
-    const index = existingJson.plugin.findIndex(isMatch);
-    if (index >= 0) {
-      const existingEntry = existingJson.plugin[index];
-      const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
-      const pluginName = Array.isArray(existingEntry) && typeof existingEntry[0] === "string" ? existingEntry[0] : "opencode-telegram-link";
-      existingJson.plugin[index] = [pluginName, mergePluginOptions(existingOptions, pluginConfig)];
-    } else {
-      existingJson.plugin.push(["opencode-telegram-link", pluginConfig]);
-    }
+    const existingEntry = existingJson.plugin.find(isMatch);
+    const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
+    const mergedOptions = mergePluginOptions(existingOptions, pluginConfig);
+    const cleanedPlugins = existingJson.plugin.filter((p) => !isMatch(p));
+    cleanedPlugins.push(["opencode-telegram-link", mergedOptions]);
+    existingJson.plugin = cleanedPlugins;
   } else if (Array.isArray(existingJson.plugins)) {
-    if (!existingJson.plugins.includes("opencode-telegram-link")) {
-      existingJson.plugins.push("opencode-telegram-link");
-    }
+    const plugins = existingJson.plugins;
+    existingJson.plugins = [...plugins.filter((p) => !isMatch(p)), "opencode-telegram-link"];
     const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
     existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
     existingJson.plugin = existingPluginMap;
@@ -15987,14 +15980,17 @@ async function removeOpenCodeConfig(targetPath) {
     const existingJson = parseJsonc(existingContent);
     let modified = false;
     const isPluginMatch = (entry) => {
-      if (typeof entry === "string") {
-        return entry === "opencode-telegram-link" || entry.endsWith("opencode_notification") || entry.endsWith("opencode-telegram-link");
-      }
-      if (Array.isArray(entry) && typeof entry[0] === "string") {
-        return isPluginMatch(entry[0]);
-      }
-      return false;
+      const name = typeof entry === "string" ? entry : Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : "";
+      return name === "opencode-telegram-link" || name.startsWith("opencode-telegram-link") || name.includes("opencode-telegram-link") || name.includes("opencode_notification") || name.includes("telegram-link");
     };
+    if ("opencode-telegram-link" in existingJson) {
+      delete existingJson["opencode-telegram-link"];
+      modified = true;
+    }
+    if ("telegram-link" in existingJson) {
+      delete existingJson["telegram-link"];
+      modified = true;
+    }
     if (Array.isArray(existingJson.plugin)) {
       const originalLength = existingJson.plugin.length;
       const filtered = existingJson.plugin.filter((p) => !isPluginMatch(p));
@@ -16721,7 +16717,7 @@ async function runSessionSpawnCommand(client, directory, command) {
 }
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.3";
+var PACKAGE_VERSION = "1.0.0-rc.4";
 
 // src/plugin.ts
 function trace(msg) {
@@ -16910,4 +16906,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=A8C497A468A9B55F64756E2164756E21
+//# debugId=AD8C9FBF4329185664756E2164756E21

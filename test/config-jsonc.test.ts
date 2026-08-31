@@ -7,6 +7,7 @@ import {
   injectOpenCodeConfig,
   loadResolvedNotifierConfig,
   parseJsonc,
+  removeOpenCodeConfig,
 } from "../src/opencode/config-helper";
 
 describe("JSONC Parsing & Config Injection Security", () => {
@@ -261,5 +262,85 @@ describe("JSONC Parsing & Config Injection Security", () => {
 
     // Custom option must remain
     expect(options.customSetting).toBe("keep-me");
+  });
+
+  test("injectOpenCodeConfig purges invalid root-level plugin keys and replaces legacy file links", async () => {
+    const configPath = join(tempDir, "legacy-root-key.jsonc");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          $schema: "https://opencode.ai/config.json",
+          plugin: ["file:///E:/opencode_notification-master/dist/plugin.js", "other-plugin"],
+          "opencode-telegram-link": {
+            mode: "local",
+            role: "node",
+            hostLabel: "stale-label",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const newConfig = NotifierConfigSchema.parse({
+      mode: "local",
+      role: "node",
+      hostLabel: "Fresh-Node",
+      locale: "zh-TW",
+      gateway: {
+        url: "ws://10.0.0.5:42617",
+        secret: "new_secret_123",
+      },
+      notifications: {
+        completion: true,
+        error: true,
+        question: true,
+        permission: true,
+      },
+    });
+
+    await injectOpenCodeConfig(configPath, newConfig);
+
+    const parsed = JSON.parse(await readFile(configPath, "utf8"));
+    // Unrecognized root key must be deleted to prevent OpenCode ConfigInvalidError
+    expect(parsed["opencode-telegram-link"]).toBeUndefined();
+
+    // Plugin list must contain other-plugin and exactly one clean opencode-telegram-link entry
+    expect(parsed.plugin).toHaveLength(2);
+    expect(parsed.plugin[0]).toBe("other-plugin");
+    expect(parsed.plugin[1][0]).toBe("opencode-telegram-link");
+    expect(parsed.plugin[1][1].hostLabel).toBe("Fresh-Node");
+  });
+
+  test("removeOpenCodeConfig removes all plugin varieties and root-level keys", async () => {
+    const configPath = join(tempDir, "to-remove.jsonc");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          $schema: "https://opencode.ai/config.json",
+          plugin: [
+            "file:///E:/opencode_notification-master/dist/plugin.js",
+            ["opencode-telegram-link@next", { role: "node" }],
+            "keep-plugin",
+          ],
+          "opencode-telegram-link": {
+            mode: "local",
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const { modified } = await removeOpenCodeConfig(configPath);
+    expect(modified).toBe(true);
+
+    const parsed = JSON.parse(await readFile(configPath, "utf8"));
+    expect(parsed["opencode-telegram-link"]).toBeUndefined();
+    expect(parsed.plugin).toEqual(["keep-plugin"]);
   });
 });

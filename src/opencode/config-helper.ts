@@ -348,14 +348,24 @@ export async function injectOpenCodeConfig(
     };
   }
 
+  // Strip any invalid/legacy root-level keys to comply with OpenCode schema
+  delete existingJson["opencode-telegram-link"];
+  delete existingJson["telegram-link"];
+
   const isMatch = (entry: unknown): boolean => {
-    if (typeof entry === "string") {
-      return entry === "opencode-telegram-link" || entry.endsWith("opencode-telegram-link");
-    }
-    if (Array.isArray(entry) && typeof entry[0] === "string") {
-      return entry[0] === "opencode-telegram-link" || entry[0].endsWith("opencode-telegram-link");
-    }
-    return false;
+    const name =
+      typeof entry === "string"
+        ? entry
+        : Array.isArray(entry) && typeof entry[0] === "string"
+          ? entry[0]
+          : "";
+    return (
+      name === "opencode-telegram-link" ||
+      name.startsWith("opencode-telegram-link") ||
+      name.includes("opencode-telegram-link") ||
+      name.includes("opencode_notification") ||
+      name.includes("telegram-link")
+    );
   };
 
   function mergePluginOptions(
@@ -394,22 +404,18 @@ export async function injectOpenCodeConfig(
   }
 
   if (Array.isArray(existingJson.plugin)) {
-    const index = existingJson.plugin.findIndex(isMatch);
-    if (index >= 0) {
-      const existingEntry = existingJson.plugin[index];
-      const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
-      const pluginName =
-        Array.isArray(existingEntry) && typeof existingEntry[0] === "string"
-          ? existingEntry[0]
-          : "opencode-telegram-link";
-      existingJson.plugin[index] = [pluginName, mergePluginOptions(existingOptions, pluginConfig)];
-    } else {
-      existingJson.plugin.push(["opencode-telegram-link", pluginConfig]);
-    }
+    // Find any existing options from matching entries
+    const existingEntry = existingJson.plugin.find(isMatch);
+    const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
+    const mergedOptions = mergePluginOptions(existingOptions, pluginConfig);
+
+    // Filter out all old matches (e.g. stale local file paths or multiple aliases)
+    const cleanedPlugins = existingJson.plugin.filter((p) => !isMatch(p));
+    cleanedPlugins.push(["opencode-telegram-link", mergedOptions]);
+    existingJson.plugin = cleanedPlugins;
   } else if (Array.isArray(existingJson.plugins)) {
-    if (!existingJson.plugins.includes("opencode-telegram-link")) {
-      existingJson.plugins.push("opencode-telegram-link");
-    }
+    const plugins = existingJson.plugins as unknown[];
+    existingJson.plugins = [...plugins.filter((p) => !isMatch(p)), "opencode-telegram-link"];
     const existingPluginMap =
       existingJson.plugin && typeof existingJson.plugin === "object"
         ? (existingJson.plugin as Record<string, unknown>)
@@ -447,18 +453,30 @@ export async function removeOpenCodeConfig(
     let modified = false;
 
     const isPluginMatch = (entry: unknown): boolean => {
-      if (typeof entry === "string") {
-        return (
-          entry === "opencode-telegram-link" ||
-          entry.endsWith("opencode_notification") ||
-          entry.endsWith("opencode-telegram-link")
-        );
-      }
-      if (Array.isArray(entry) && typeof entry[0] === "string") {
-        return isPluginMatch(entry[0]);
-      }
-      return false;
+      const name =
+        typeof entry === "string"
+          ? entry
+          : Array.isArray(entry) && typeof entry[0] === "string"
+            ? entry[0]
+            : "";
+      return (
+        name === "opencode-telegram-link" ||
+        name.startsWith("opencode-telegram-link") ||
+        name.includes("opencode-telegram-link") ||
+        name.includes("opencode_notification") ||
+        name.includes("telegram-link")
+      );
     };
+
+    // Remove from root-level keys if present
+    if ("opencode-telegram-link" in existingJson) {
+      delete existingJson["opencode-telegram-link"];
+      modified = true;
+    }
+    if ("telegram-link" in existingJson) {
+      delete existingJson["telegram-link"];
+      modified = true;
+    }
 
     // Remove from plugin array
     if (Array.isArray(existingJson.plugin)) {

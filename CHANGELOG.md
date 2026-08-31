@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.4 - 2026-08-31
+
+- Fix OpenCode `ConfigInvalidError` by purging invalid root-level keys from `opencode.jsonc` and ensuring strict schema tuple compliance.
+- Deduplicate and replace legacy local file URLs during config injection and uninstallation.
+
 ## 1.0.0-rc.3 - 2026-08-31
 
 - Fix terminal hanging after interactive setup and uninstall wizards by releasing standard input streams and explicitly terminating the process on completion.
