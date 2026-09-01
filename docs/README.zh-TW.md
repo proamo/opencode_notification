@@ -2,14 +2,14 @@
 
 OpenCode Telegram Notifier 是一個注重隱私、支援多主機集中控制與遠端主動派工的 OpenCode 外掛與控制中樞（Gateway）。它專為同時執行多個專案、多台電腦（開發主機、筆電、線上 VPS）的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並提供全新 **Web 控制台 (OpenCode Commander)**、**遠端主動派工**、**多核心語音辨識**、**一鍵權限審批**與**多主機標籤識別**，確保使用者無論在 Telegram 或是網頁看板上的每一次操作都能精準送回目標主機、專案與工作視窗。
 
-> 目前版本：**v1.0.0-rc.4**（OpenCode Commander Web 控制台、遠端主動派工、多核心語音 STT、多主機 Hub-and-Spoke Gateway、節點 Agent、Telegram 互動按鈕與 AI 執行結論）。
-> 目前狀態：Release Candidate 4，尚未發布 npm 公開版本。
+> 目前版本：**v1.0.0-rc.5**（OpenCode Commander Web 控制台、遠端主動派工、多核心語音 STT、多主機 Hub-and-Spoke Gateway、節點 Agent、Telegram 互動按鈕與 AI 執行結論）。
+> 目前狀態：Release Candidate 5，尚未發布 npm 公開版本。
 
 [English Documentation](../README.md)
 
 ---
 
-## 核心功能與特色 (v1.0.0-rc.4)
+## 核心功能與特色 (v1.0.0-rc.5)
 
 - 🖥️ **OpenCode Commander（Web 視覺化控制台）**：內建現代化毛玻璃質感網頁控制台（預設 `http://<gateway-ip>:42617/dashboard`），即時掌握叢集狀態與運行指標。
 - 🌐 **叢集拓撲總覽 (Cluster Topology)**：1 對 1 精準對齊所有連線電腦與 VS Code 工作區視窗，即時呈現多任務進度與待命狀態。

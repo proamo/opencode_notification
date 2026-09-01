@@ -5,6 +5,7 @@ import { probeBroker } from "./broker";
 import { runStopCommand } from "./broker/commands";
 import type { SupportedLocale } from "./i18n";
 import { discoverOpenCodeConfigFiles, removeOpenCodeConfig } from "./opencode";
+import { uninstallSystemdService } from "./service";
 import {
   AsyncPromptReader,
   type InteractiveSetupOptions,
@@ -72,6 +73,18 @@ export async function runInteractiveUninstall(
       } catch {
         // Docker not present or not running
       }
+    }
+    try {
+      const systemdResult = await uninstallSystemdService();
+      if (systemdResult.removed) {
+        stdout.write(
+          isZh
+            ? "│  ✔ Systemd 服務 (opencode-gateway.service) 已停用並移除。\n"
+            : "│  ✔ Systemd service (opencode-gateway.service) stopped and removed.\n",
+        );
+      }
+    } catch {
+      // Systemd not present or non-linux
     }
     try {
       const identity = await loadOrCreateStateIdentity(stateDirectory);

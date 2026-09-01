@@ -2,14 +2,14 @@
 
 OpenCode Telegram Notifier is a privacy-first OpenCode plugin and multi-host management gateway for asynchronous notifications, interactive inline buttons, safe remote replies, and proactive remote task dispatching. It is designed for developers who run OpenCode across multiple projects and multiple computers (dev machine, laptop, VPS) while routing every Telegram and Web interaction to the exact originating host, process, and workspace window.
 
-> Version: **v1.0.0-rc.4** (OpenCode Commander Web Dashboard, Proactive Remote Dispatch, Multi-Engine Voice STT, Multi-Host Gateway & Node Agent Architecture).
-> Status: Release Candidate 4. Install from a release tarball or source checkout until the first public npm package is published.
+> Version: **v1.0.0-rc.5** (OpenCode Commander Web Dashboard, Proactive Remote Dispatch, Multi-Engine Voice STT, Multi-Host Gateway & Node Agent Architecture).
+> Status: Release Candidate 5. Install from a release tarball or source checkout until the first public npm package is published.
 
 [繁體中文總覽 (Traditional Chinese)](docs/README.zh-TW.md)
 
 ---
 
-## Features & Highlights (v1.0.0-rc.4)
+## Features & Highlights (v1.0.0-rc.5)
 
 - 🖥️ **OpenCode Commander (Web GUI Dashboard)**: Built-in modern Glassmorphism Web Console (`http://<gateway-ip>:42617/dashboard`) providing real-time visibility, live metrics, and centralized cluster management.
 - 🌐 **Cluster Topology & 1-to-1 Window Mapping**: Live cards for all connected computers and OpenCode workspace windows with real-time session indicators and task counters.

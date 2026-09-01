@@ -16717,7 +16717,7 @@ async function runSessionSpawnCommand(client, directory, command) {
 }
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.4";
+var PACKAGE_VERSION = "1.0.0-rc.5";
 
 // src/plugin.ts
 function trace(msg) {
@@ -16906,4 +16906,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=AD8C9FBF4329185664756E2164756E21
+//# debugId=0A9CEF45A35A550F64756E2164756E21

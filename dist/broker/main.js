@@ -14518,9 +14518,9 @@ var DiagnosticSchema = exports_external.object({
 
 // src/setup.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
-import { existsSync, readFileSync } from "fs";
-import { chmod as chmod3, lstat as lstat5, mkdir as mkdir3, open as open2, readFile as readFile5, rename as rename4, rm as rm2, writeFile as writeFile3 } from "fs/promises";
-import { hostname as hostname3, platform as platform4 } from "os";
+import { existsSync as existsSync2, readFileSync } from "fs";
+import { chmod as chmod3, lstat as lstat5, mkdir as mkdir3, open as open2, readFile as readFile5, rename as rename4, rm as rm2, writeFile as writeFile4 } from "fs/promises";
+import { hostname as hostname3, platform as platform5 } from "os";
 import { dirname as dirname2, join as join5, resolve as resolve2 } from "path";
 
 // src/config.ts
@@ -15888,6 +15888,93 @@ async function removeOpenCodeConfig(targetPath) {
     return { modified: false };
   }
 }
+// src/service.ts
+import { existsSync } from "fs";
+import { writeFile as writeFile2 } from "fs/promises";
+import { homedir as homedir3, platform as platform4 } from "os";
+function isSystemdAvailable() {
+  if (platform4() !== "linux")
+    return false;
+  try {
+    const result = Bun.spawnSync(["systemctl", "--version"]);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+function generateSystemdService(options = {}) {
+  const user = options.user || process.env.USER || "root";
+  const home = options.home || process.env.HOME || homedir3();
+  const envPath = options.envPath || process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  const execPath = options.execPath || process.execPath;
+  const binScript = options.binScript || process.argv[1] || "opencode-telegram-link";
+  return `[Unit]
+Description=OpenCode Telegram Gateway & Commander
+After=network.target
+
+[Service]
+Type=simple
+User=${user}
+WorkingDirectory=${home}
+Environment=HOME=${home}
+Environment="PATH=${envPath}"
+Environment="OPENCODE_TELEGRAM_BROKER_BIND_HOST=0.0.0.0"
+ExecStart=${execPath} ${binScript} start --bind-host 0.0.0.0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+async function installSystemdService(options = {}) {
+  try {
+    const serviceContent = generateSystemdService(options);
+    const tmpServicePath = `/tmp/opencode-gateway.${process.pid}.service`;
+    await writeFile2(tmpServicePath, serviceContent, "utf8");
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    const cpCmd = isRoot ? ["cp", tmpServicePath, "/etc/systemd/system/opencode-gateway.service"] : ["sudo", "cp", tmpServicePath, "/etc/systemd/system/opencode-gateway.service"];
+    const cpResult = Bun.spawnSync(cpCmd);
+    if (cpResult.exitCode !== 0) {
+      const err = cpResult.stderr ? new TextDecoder().decode(cpResult.stderr) : "Failed to copy service file";
+      return { success: false, error: err };
+    }
+    const reloadCmd = isRoot ? ["systemctl", "daemon-reload"] : ["sudo", "systemctl", "daemon-reload"];
+    Bun.spawnSync(reloadCmd);
+    const enableCmd = isRoot ? ["systemctl", "enable", "--now", "opencode-gateway"] : ["sudo", "systemctl", "enable", "--now", "opencode-gateway"];
+    const enableResult = Bun.spawnSync(enableCmd);
+    if (enableResult.exitCode !== 0) {
+      const err = enableResult.stderr ? new TextDecoder().decode(enableResult.stderr) : "Failed to enable service";
+      return { success: false, error: err };
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function uninstallSystemdService() {
+  const serviceFile = "/etc/systemd/system/opencode-gateway.service";
+  if (!existsSync(serviceFile)) {
+    return { success: true, removed: false };
+  }
+  try {
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    const disableCmd = isRoot ? ["systemctl", "disable", "--now", "opencode-gateway"] : ["sudo", "systemctl", "disable", "--now", "opencode-gateway"];
+    Bun.spawnSync(disableCmd);
+    const rmCmd = isRoot ? ["rm", "-f", serviceFile] : ["sudo", "rm", "-f", serviceFile];
+    Bun.spawnSync(rmCmd);
+    const reloadCmd = isRoot ? ["systemctl", "daemon-reload"] : ["sudo", "systemctl", "daemon-reload"];
+    Bun.spawnSync(reloadCmd);
+    return { success: true, removed: true };
+  } catch (err) {
+    return {
+      success: false,
+      removed: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+
 // src/state/database.ts
 import { Database } from "bun:sqlite";
 import { chmod as chmod2, copyFile as copyFile2, lstat as lstat4, rename as rename2 } from "fs/promises";
@@ -16385,7 +16472,7 @@ var SCHEMA_VERSION_2 = `
 `;
 // src/state/discovery.ts
 import { randomUUID as randomUUID2 } from "crypto";
-import { readFile as readFile4, rename as rename3, rm, writeFile as writeFile2 } from "fs/promises";
+import { readFile as readFile4, rename as rename3, rm, writeFile as writeFile3 } from "fs/promises";
 import { join as join4 } from "path";
 var DiscoveryRecordSchema = exports_external.object({
   port: exports_external.number().int().min(1).max(65535),
@@ -16407,7 +16494,7 @@ async function writeDiscoveryRecord(stateDirectory, port) {
   };
   const destination = discoveryRecordPath(stateDirectory);
   const temporary = `${destination}.${record2.nonce}.tmp`;
-  await writeFile2(temporary, `${JSON.stringify(record2)}
+  await writeFile3(temporary, `${JSON.stringify(record2)}
 `, { encoding: "utf8", mode: 384 });
   await rename3(temporary, destination);
   return record2;
@@ -16654,7 +16741,7 @@ class TelegramApiError extends Error {
 
 // src/setup.ts
 function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
-  if (explicitComposePath && existsSync(explicitComposePath)) {
+  if (explicitComposePath && existsSync2(explicitComposePath)) {
     return {
       composeFile: explicitComposePath,
       projectDir: dirname2(explicitComposePath)
@@ -16667,7 +16754,7 @@ function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
   ];
   for (const file2 of packageCandidates) {
     try {
-      if (existsSync(file2)) {
+      if (existsSync2(file2)) {
         return {
           composeFile: file2,
           projectDir: dirname2(file2)
@@ -16677,7 +16764,7 @@ function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
   }
   const cwdCompose = join5(cwd, "docker-compose.yml");
   try {
-    if (existsSync(cwdCompose)) {
+    if (existsSync2(cwdCompose)) {
       const content = readFileSync(cwdCompose, "utf8");
       if (content.includes("opencode-telegram-broker") || content.includes("broker.Dockerfile")) {
         return {
@@ -17011,7 +17098,7 @@ async function runInteractiveSetup(options = {}) {
       const tokenFile = join5(stateDirectory, "telegram-bot-token");
       await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
       const identityFile = join5(stateDirectory, "telegram-identity.json");
-      await writeFile3(identityFile, `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}
+      await writeFile4(identityFile, `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}
 `, "utf8");
       stdout.write(isZh ? `\u2502  \u2714 \u5B89\u5168 Token \u6A94\u6848\u5DF2\u5132\u5B58 (${tokenFile})
 ` : `\u2502  \u2714 Secure token file saved (${tokenFile})
@@ -17142,9 +17229,32 @@ ${generatePluginConfigSnippet(configData)}
     } else {
       stdout.write(`\u2502
 `);
-      stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F\u539F\u751F\u6A21\u5F0F\u5DF2\u8A2D\u5B9A\u5B8C\u6210\uFF01\u7576 OpenCode \u555F\u52D5\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u63A5\u7BA1 Broker\u3002
+      if (!isNode && isSystemdAvailable()) {
+        const autoSystemd = await reader.ask(isZh ? "\u25C7  \u662F\u5426\u5C07 Gateway \u8A3B\u518A\u70BA Systemd \u7CFB\u7D71\u958B\u6A5F\u81EA\u52D5\u555F\u52D5\u670D\u52D9\uFF1F [Y/n]: " : "\u25C7  Register Gateway as a systemd background service (auto-start on boot)? [Y/n]: ", stdout, "Y");
+        if (autoSystemd.toLowerCase() !== "n" && autoSystemd.toLowerCase() !== "no") {
+          stdout.write(isZh ? `\u2502  \u280B \u6B63\u5728\u8A3B\u518A\u4E26\u555F\u7528 Systemd \u670D\u52D9 (opencode-gateway.service)...
+` : `\u2502  \u280B Registering and enabling systemd service (opencode-gateway.service)...
+`);
+          const serviceResult = await installSystemdService();
+          if (serviceResult.success) {
+            stdout.write(isZh ? `\u2502  \u2714 Systemd \u670D\u52D9\u5DF2\u6210\u529F\u5EFA\u7ACB\u4E26\u555F\u52D5\uFF01\u91CD\u958B\u6A5F\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u57F7\u884C\u3002
+` : `\u2502  \u2714 Systemd service created and enabled! Will auto-start on boot.
+`);
+          } else {
+            stdout.write(isZh ? `\u2502  \u2716 Systemd \u670D\u52D9\u8A3B\u518A\u5931\u6557: ${serviceResult.error}\uFF08\u60A8\u53EF\u65BC\u7A0D\u5F8C\u624B\u52D5\u555F\u52D5: npx opencode-telegram-link start\uFF09
+` : `\u2502  \u2716 Failed to register systemd service: ${serviceResult.error}
+`);
+          }
+        } else {
+          stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F\u539F\u751F\u6A21\u5F0F\u5DF2\u8A2D\u5B9A\u5B8C\u6210\uFF01\u7576 OpenCode \u555F\u52D5\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u63A5\u7BA1 Broker\u3002
 ` : `\u2502  \u2714 Native mode configured! OpenCode will automatically manage Broker in background.
 `);
+        }
+      } else {
+        stdout.write(isZh ? `\u2502  \u2714 \u672C\u6A5F\u539F\u751F\u6A21\u5F0F\u5DF2\u8A2D\u5B9A\u5B8C\u6210\uFF01\u7576 OpenCode \u555F\u52D5\u6642\u5C07\u81EA\u52D5\u5728\u80CC\u666F\u63A5\u7BA1 Broker\u3002
+` : `\u2502  \u2714 Native mode configured! OpenCode will automatically manage Broker in background.
+`);
+      }
     }
     if (!isNode && pairing && api2) {
       stdout.write(`\u2502
@@ -17329,7 +17439,7 @@ async function assertPrivateFile(path) {
   await assertPrivateMode(path, stats.mode, 384);
 }
 async function assertPrivateMode(path, mode, expectedMode) {
-  if (platform4() === "win32")
+  if (platform5() === "win32")
     return;
   if ((mode & 63) !== 0) {
     throw new SetupError("SETUP_PERMISSIONS_UNSAFE", "setup state must not allow group or other access");
@@ -17337,7 +17447,7 @@ async function assertPrivateMode(path, mode, expectedMode) {
   await chmodPrivate(path, expectedMode);
 }
 async function chmodPrivate(path, mode) {
-  if (platform4() !== "win32")
+  if (platform5() !== "win32")
     await chmod3(path, mode);
 }
 function parseSetupArgs(argv) {
@@ -17438,7 +17548,7 @@ function publicBot(bot) {
 
 // src/uninstall.ts
 import { rm as rm4 } from "fs/promises";
-import { homedir as homedir3, tmpdir } from "os";
+import { homedir as homedir4, tmpdir } from "os";
 import { join as join8 } from "path";
 
 // src/broker/registry.ts
@@ -17747,7 +17857,7 @@ function sameSessionRoute(left, right) {
 }
 // src/broker/server.ts
 import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
-import { readFile as readFile6, writeFile as writeFile4 } from "fs/promises";
+import { readFile as readFile6, writeFile as writeFile5 } from "fs/promises";
 import { join as join6 } from "path";
 
 // src/i18n/catalogs.ts
@@ -17982,7 +18092,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.4";
+var PACKAGE_VERSION = "1.0.0-rc.5";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -20049,7 +20159,7 @@ async function loadDashboardSettings(stateDirectory) {
 }
 async function saveDashboardSettings(stateDirectory, settings) {
   const filePath = join6(stateDirectory, "dashboard-settings.json");
-  await writeFile4(filePath, JSON.stringify(settings, null, 2), "utf-8");
+  await writeFile5(filePath, JSON.stringify(settings, null, 2), "utf-8");
 }
 async function readJsonBody(request) {
   const text = await request.text();
@@ -21455,10 +21565,11 @@ async function runBrokerCli(options = {}) {
     stdout: options.stdout ?? process.stdout,
     stderr: options.stderr ?? process.stderr
   };
-  const command = argv[0];
-  const flags = parseFlags(argv.slice(1));
+  const normalizedArgv = argv[0] === "broker" ? argv.slice(1) : argv;
+  const command = normalizedArgv[0];
+  const flags = parseFlags(normalizedArgv.slice(1));
   const brokerOptions = brokerOptionsFrom(flags, env);
-  if (!command || command === "start") {
+  if (!command || command === "start" || command === "run") {
     return await runStartCommand(brokerOptions, streams, options.onStarted);
   }
   try {
@@ -21751,6 +21862,14 @@ async function runInteractiveUninstall(options = {}) {
       } catch {}
     }
     try {
+      const systemdResult = await uninstallSystemdService();
+      if (systemdResult.removed) {
+        stdout.write(isZh ? `\u2502  \u2714 Systemd \u670D\u52D9 (opencode-gateway.service) \u5DF2\u505C\u7528\u4E26\u79FB\u9664\u3002
+` : `\u2502  \u2714 Systemd service (opencode-gateway.service) stopped and removed.
+`);
+      }
+    } catch {}
+    try {
       const identity = await loadOrCreateStateIdentity(stateDirectory);
       const isRunning = await probeBroker(42617, identity.brokerSecret);
       if (isRunning) {
@@ -21793,8 +21912,8 @@ async function runInteractiveUninstall(options = {}) {
       }
       const symlinkLocations = [
         join8(cwd, "node_modules", "opencode-telegram-link"),
-        join8(homedir3(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
-        join8(homedir3(), ".opencode", "node_modules", "opencode-telegram-link")
+        join8(homedir4(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+        join8(homedir4(), ".opencode", "node_modules", "opencode-telegram-link")
       ];
       for (const symlink of symlinkLocations) {
         try {
@@ -21914,4 +22033,4 @@ export {
   runBroker
 };
 
-//# debugId=81AE8738AC7A8E1264756E2164756E21
+//# debugId=6769A77FD917233264756E2164756E21

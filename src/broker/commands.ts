@@ -33,11 +33,12 @@ export async function runBrokerCli(options: BrokerCliOptions = {}): Promise<numb
     stdout: options.stdout ?? process.stdout,
     stderr: options.stderr ?? process.stderr,
   };
-  const command = argv[0];
-  const flags = parseFlags(argv.slice(1));
+  const normalizedArgv = argv[0] === "broker" ? argv.slice(1) : argv;
+  const command = normalizedArgv[0];
+  const flags = parseFlags(normalizedArgv.slice(1));
   const brokerOptions = brokerOptionsFrom(flags, env);
 
-  if (!command || command === "start") {
+  if (!command || command === "start" || command === "run") {
     return await runStartCommand(brokerOptions, streams, options.onStarted);
   }
 

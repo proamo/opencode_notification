@@ -10,6 +10,7 @@ import {
   generatePluginConfigSnippet,
   injectOpenCodeConfig,
 } from "./opencode";
+import { installSystemdService, isSystemdAvailable } from "./service";
 import { defaultStateDirectory } from "./state";
 import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "./telegram/api";
 
@@ -650,11 +651,48 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       }
     } else {
       stdout.write("│\n");
-      stdout.write(
-        isZh
-          ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
-          : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
-      );
+      if (!isNode && isSystemdAvailable()) {
+        const autoSystemd = await reader.ask(
+          isZh
+            ? "◇  是否將 Gateway 註冊為 Systemd 系統開機自動啟動服務？ [Y/n]: "
+            : "◇  Register Gateway as a systemd background service (auto-start on boot)? [Y/n]: ",
+          stdout,
+          "Y",
+        );
+        if (autoSystemd.toLowerCase() !== "n" && autoSystemd.toLowerCase() !== "no") {
+          stdout.write(
+            isZh
+              ? "│  ⠋ 正在註冊並啟用 Systemd 服務 (opencode-gateway.service)...\n"
+              : "│  ⠋ Registering and enabling systemd service (opencode-gateway.service)...\n",
+          );
+          const serviceResult = await installSystemdService();
+          if (serviceResult.success) {
+            stdout.write(
+              isZh
+                ? "│  ✔ Systemd 服務已成功建立並啟動！重開機時將自動在背景執行。\n"
+                : "│  ✔ Systemd service created and enabled! Will auto-start on boot.\n",
+            );
+          } else {
+            stdout.write(
+              isZh
+                ? `│  ✖ Systemd 服務註冊失敗: ${serviceResult.error}（您可於稍後手動啟動: npx opencode-telegram-link start）\n`
+                : `│  ✖ Failed to register systemd service: ${serviceResult.error}\n`,
+            );
+          }
+        } else {
+          stdout.write(
+            isZh
+              ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
+              : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
+          );
+        }
+      } else {
+        stdout.write(
+          isZh
+            ? "│  ✔ 本機原生模式已設定完成！當 OpenCode 啟動時將自動在背景接管 Broker。\n"
+            : "│  ✔ Native mode configured! OpenCode will automatically manage Broker in background.\n",
+        );
+      }
     }
 
     // Step 6: Test Notification
