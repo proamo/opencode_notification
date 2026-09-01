@@ -62,6 +62,7 @@ export async function runInteractiveUninstall(
         const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
         const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], {
           cwd: composeContext.projectDir,
+          timeout: 1000,
         });
         if (dockerDown.exitCode === 0) {
           stdout.write(
