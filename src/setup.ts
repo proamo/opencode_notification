@@ -506,7 +506,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           pluginBufferSize: 100,
         },
         broker: {
-          host: "127.0.0.1",
+          host: "0.0.0.0",
           port: 42617,
         },
         interaction: {

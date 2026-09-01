@@ -17123,7 +17123,7 @@ async function runInteractiveSetup(options = {}) {
           pluginBufferSize: 100
         },
         broker: {
-          host: "127.0.0.1",
+          host: "0.0.0.0",
           port: 42617
         },
         interaction: {
@@ -18092,7 +18092,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.5";
+var PACKAGE_VERSION = "1.0.0-rc.6";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -22033,4 +22033,4 @@ export {
   runBroker
 };
 
-//# debugId=6769A77FD917233264756E2164756E21
+//# debugId=4C72277111F4C94E64756E2164756E21

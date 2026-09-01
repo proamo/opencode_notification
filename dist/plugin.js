@@ -16432,7 +16432,7 @@ function spawnDetachedBroker(input) {
       ...process.env,
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
-      OPENCODE_TELEGRAM_BROKER_BIND_HOST: process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "127.0.0.1"
+      OPENCODE_TELEGRAM_BROKER_BIND_HOST: process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "0.0.0.0"
     }
   });
   child.unref();
@@ -16717,7 +16717,7 @@ async function runSessionSpawnCommand(client, directory, command) {
 }
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.5";
+var PACKAGE_VERSION = "1.0.0-rc.6";
 
 // src/plugin.ts
 function trace(msg) {
@@ -16906,4 +16906,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=0A9CEF45A35A550F64756E2164756E21
+//# debugId=FD8B5AF6FB01279264756E2164756E21
