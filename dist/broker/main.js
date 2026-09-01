@@ -18092,7 +18092,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.6";
+var PACKAGE_VERSION = "1.0.0-rc.7";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -20063,7 +20063,7 @@ function renderDashboardHtml() {
 
 // src/broker/server.ts
 var LOOPBACK_HOST = "127.0.0.1";
-var DEFAULT_BIND_HOST = "127.0.0.1";
+var DEFAULT_BIND_HOST = "0.0.0.0";
 var CONTAINER_HOST = "0.0.0.0";
 var DEFAULT_PORT = 42617;
 var DEFAULT_REGISTRATION_TIMEOUT_MS = 1e4;
@@ -22033,4 +22033,4 @@ export {
   runBroker
 };
 
-//# debugId=4C72277111F4C94E64756E2164756E21
+//# debugId=980708034D3C98AA64756E2164756E21

@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.7 - 2026-09-01
+
+- Default `DEFAULT_BIND_HOST` in BrokerServer core to `0.0.0.0` for full multi-host network accessibility.
+
 ## 1.0.0-rc.6 - 2026-09-01
 
 - Default Gateway broker binding host to `0.0.0.0` in both `setup` wizard and `spawnDetachedBroker` to allow external and ZeroTier/LAN network access.

@@ -43,7 +43,7 @@ import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
-const DEFAULT_BIND_HOST = "127.0.0.1";
+const DEFAULT_BIND_HOST = "0.0.0.0";
 const CONTAINER_HOST = "0.0.0.0";
 const DEFAULT_PORT = 42617;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
