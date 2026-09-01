@@ -17857,6 +17857,7 @@ function sameSessionRoute(left, right) {
 }
 // src/broker/server.ts
 import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
+import { existsSync as existsSync3 } from "fs";
 import { readFile as readFile6, writeFile as writeFile5 } from "fs/promises";
 import { join as join6 } from "path";
 
@@ -18092,7 +18093,7 @@ function rejectionHash(updateId, reason) {
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.7";
+var PACKAGE_VERSION = "1.0.0-rc.8";
 
 // src/telegram/commands.ts
 function isSlashCommand(text) {
@@ -20767,6 +20768,56 @@ async function startBroker(options = {}) {
       telegramRuntimeRef,
       removeDiscovery: () => removeDiscoveryRecord(state.stateDirectory, discovery.nonce)
     });
+    try {
+      const tokenFile = join6(state.stateDirectory, "telegram-bot-token");
+      if (existsSync3(tokenFile)) {
+        const botToken = (await readFile6(tokenFile, "utf8")).trim();
+        if (botToken) {
+          let userId;
+          let chatId;
+          let voiceApiKey = persistedSettings.voiceApiKey;
+          let voiceProvider = persistedSettings.voiceProvider;
+          let voiceAccountId = persistedSettings.voiceAccountId;
+          const discovered = await discoverOpenCodeConfigFiles();
+          for (const c of discovered) {
+            if (c.exists) {
+              try {
+                const content = await readFile6(c.path, "utf8");
+                const json2 = parseJsonc(content);
+                const pluginEntry = Array.isArray(json2.plugin) ? json2.plugin.find((p) => Array.isArray(p) && typeof p[0] === "string" && p[0].includes("telegram-link"))?.[1] : json2.plugin && typeof json2.plugin === "object" ? json2.plugin["opencode-telegram-link"] : json2["opencode-telegram-link"];
+                const tg = pluginEntry?.telegram;
+                if (tg?.userId && tg?.chatId) {
+                  userId = String(tg.userId);
+                  chatId = String(tg.chatId);
+                  const vc = pluginEntry?.voice;
+                  if (vc?.apiKey)
+                    voiceApiKey = String(vc.apiKey);
+                  if (vc?.provider === "groq" || vc?.provider === "openai" || vc?.provider === "cloudflare" || vc?.provider === "custom") {
+                    voiceProvider = vc.provider;
+                  }
+                  if (vc?.accountId)
+                    voiceAccountId = String(vc.accountId);
+                  break;
+                }
+              } catch {}
+            }
+          }
+          if (botToken && userId && chatId) {
+            ensureTelegramRuntime({
+              botToken,
+              userId,
+              chatId,
+              locale: "zh-TW",
+              sessionPromptTtlMinutes: 1440,
+              questionTtlMinutes: 30,
+              ...voiceApiKey ? { voiceApiKey } : {},
+              ...voiceProvider ? { voiceProvider } : {},
+              ...voiceAccountId ? { voiceAccountId } : {}
+            });
+          }
+        }
+      }
+    } catch {}
     return broker;
   } catch (error51) {
     clearInterval(livenessTimer);
@@ -21852,7 +21903,8 @@ async function runInteractiveUninstall(options = {}) {
       try {
         const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
         const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], {
-          cwd: composeContext.projectDir
+          cwd: composeContext.projectDir,
+          timeout: 1000
         });
         if (dockerDown.exitCode === 0) {
           stdout.write(isZh ? `\u2502  \u2714 Docker Broker \u5BB9\u5668\u5DF2\u505C\u6B62\u4E26\u6E05\u7406\u3002
@@ -22033,4 +22085,4 @@ export {
   runBroker
 };
 
-//# debugId=980708034D3C98AA64756E2164756E21
+//# debugId=DAF810980632226264756E2164756E21

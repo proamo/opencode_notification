@@ -1,8 +1,10 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { type SupportedLocale, translate } from "../i18n";
+import { discoverOpenCodeConfigFiles, parseJsonc } from "../opencode";
 import {
   BROKER_CAPABILITIES,
   type BrokerCommand,
@@ -999,6 +1001,76 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
       telegramRuntimeRef,
       removeDiscovery: () => removeDiscoveryRecord(state.stateDirectory, discovery.nonce),
     });
+
+    // Auto-start Telegram runtime daemon if credentials exist on disk
+    try {
+      const tokenFile = join(state.stateDirectory, "telegram-bot-token");
+      if (existsSync(tokenFile)) {
+        const botToken = (await readFile(tokenFile, "utf8")).trim();
+        if (botToken) {
+          let userId: string | undefined;
+          let chatId: string | undefined;
+          let voiceApiKey = persistedSettings.voiceApiKey;
+          let voiceProvider = persistedSettings.voiceProvider;
+          let voiceAccountId = persistedSettings.voiceAccountId;
+
+          const discovered = await discoverOpenCodeConfigFiles();
+          for (const c of discovered) {
+            if (c.exists) {
+              try {
+                const content = await readFile(c.path, "utf8");
+                const json = parseJsonc<Record<string, unknown>>(content);
+                const pluginEntry = (
+                  Array.isArray(json.plugin)
+                    ? json.plugin.find(
+                        (p: unknown) =>
+                          Array.isArray(p) &&
+                          typeof p[0] === "string" &&
+                          p[0].includes("telegram-link"),
+                      )?.[1]
+                    : json.plugin && typeof json.plugin === "object"
+                      ? (json.plugin as Record<string, unknown>)["opencode-telegram-link"]
+                      : json["opencode-telegram-link"]
+                ) as Record<string, unknown> | undefined;
+
+                const tg = pluginEntry?.telegram as Record<string, unknown> | undefined;
+                if (tg?.userId && tg?.chatId) {
+                  userId = String(tg.userId);
+                  chatId = String(tg.chatId);
+                  const vc = pluginEntry?.voice as Record<string, unknown> | undefined;
+                  if (vc?.apiKey) voiceApiKey = String(vc.apiKey);
+                  if (
+                    vc?.provider === "groq" ||
+                    vc?.provider === "openai" ||
+                    vc?.provider === "cloudflare" ||
+                    vc?.provider === "custom"
+                  ) {
+                    voiceProvider = vc.provider;
+                  }
+                  if (vc?.accountId) voiceAccountId = String(vc.accountId);
+                  break;
+                }
+              } catch {}
+            }
+          }
+
+          if (botToken && userId && chatId) {
+            ensureTelegramRuntime({
+              botToken,
+              userId,
+              chatId,
+              locale: "zh-TW",
+              sessionPromptTtlMinutes: 1440,
+              questionTtlMinutes: 30,
+              ...(voiceApiKey ? { voiceApiKey } : {}),
+              ...(voiceProvider ? { voiceProvider } : {}),
+              ...(voiceAccountId ? { voiceAccountId } : {}),
+            });
+          }
+        }
+      }
+    } catch {}
+
     return broker;
   } catch (error) {
     clearInterval(livenessTimer);

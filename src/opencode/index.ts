@@ -9,6 +9,7 @@ export {
   getCandidateConfigPaths,
   injectOpenCodeConfig,
   loadResolvedNotifierConfig,
+  parseJsonc,
   removeOpenCodeConfig,
 } from "./config-helper";
 export {

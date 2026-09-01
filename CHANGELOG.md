@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.8 - 2026-09-01
+
+- Auto-start Telegram Poller daemon on Gateway startup if credentials exist in stateDirectory, allowing 24/7 standalone Telegram bot slash command handling (`/status`, `/help`, etc.) even when no OpenCode client is attached.
+
 ## 1.0.0-rc.7 - 2026-09-01
 
 - Default `DEFAULT_BIND_HOST` in BrokerServer core to `0.0.0.0` for full multi-host network accessibility.
