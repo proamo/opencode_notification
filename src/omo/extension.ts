@@ -5,7 +5,13 @@ import { computeNotifierConfigFingerprint, type NotifierConfig } from "../config
 import { resolveLocale, type SupportedLocale } from "../i18n";
 import { loadResolvedNotifierConfig } from "../opencode";
 import { BrokerClient, derivePluginInstanceId, type RouteIntent } from "../plugin/client";
-import type { NormalizedNotification, NormalizedQuestion, RouteKey } from "../protocol";
+import type {
+  BrokerCommand,
+  CommandResult,
+  NormalizedNotification,
+  NormalizedQuestion,
+  RouteKey,
+} from "../protocol";
 import { deriveProjectId, loadOrCreateStateIdentity } from "../state/identity";
 import { PACKAGE_VERSION } from "../version";
 
@@ -40,7 +46,10 @@ export type AskUserAskedEvent = { ctx?: OmoContext; request?: unknown };
 
 export type OmoExtensionApi = {
   sessionKind?: "interactive" | "worker";
-  on(event: "agent_settled", handler: (event: unknown, ctx: OmoContext) => Promise<void>): void;
+  on(
+    event: "agent_settled" | "session_start" | "session_shutdown",
+    handler: (event: unknown, ctx: OmoContext) => Promise<void> | void,
+  ): void;
   on(
     event: "ui_prompt_start",
     handler: (event: UiPromptEvent, ctx: OmoContext) => Promise<void>,
@@ -48,7 +57,10 @@ export type OmoExtensionApi = {
   events?: {
     on(channel: "ask-user:asked", handler: (data: AskUserAskedEvent) => void): unknown;
   };
+  sendUserMessage?(text: string, options?: { deliverAs?: "steer" | "followUp" }): void;
 };
+
+export type OmoSessionInbox = Map<string, (text: string) => void>;
 
 export type SettledOutcome =
   | { kind: "session.completed"; summary?: string }
@@ -71,6 +83,8 @@ export type OmoGateway = {
   notifyError: boolean;
   notifyQuestion: boolean;
   broker: {
+    readonly connected?: boolean;
+    stop?(): Promise<void>;
     upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
   };
@@ -140,13 +154,51 @@ export function uiPromptQuestion(event: UiPromptEvent, interactionId: string): P
   };
 }
 
+export function handleOmoCommand(command: BrokerCommand, inbox: OmoSessionInbox): CommandResult {
+  if (command.type !== "session.prompt") {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "not supported for OMO sessions yet",
+    };
+  }
+  const deliver = inbox.get(command.route.sessionId);
+  if (!deliver) {
+    return { commandId: command.commandId, status: "rejected", reason: "OMO session is not open" };
+  }
+  try {
+    deliver(command.text);
+    return { commandId: command.commandId, status: "accepted" };
+  } catch (error) {
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: (error instanceof Error ? error.message : "OMO prompt delivery failed").slice(0, 256),
+    };
+  }
+}
+
 export function createOmoExtension(
   connect: (cwd: string) => Promise<OmoGateway | undefined>,
   onDiagnostic: (message: string) => void = trace,
+  inbox: OmoSessionInbox = new Map(),
 ): (pi: OmoExtensionApi) => void {
   return (pi) => {
     if (pi.sessionKind === "worker") return;
     let uiPromptCount = 0;
+    let ownSessionId: string | undefined;
+    const deliver = (text: string) => pi.sendUserMessage?.(text, { deliverAs: "followUp" });
+
+    pi.on("session_start", (_event, ctx) => {
+      if (ctx.sessionManager.getHeader()?.spawnedBy) return;
+      ownSessionId = ctx.sessionManager.getSessionId();
+      inbox.set(ownSessionId, deliver);
+    });
+
+    pi.on("session_shutdown", () => {
+      if (ownSessionId && inbox.get(ownSessionId) === deliver) inbox.delete(ownSessionId);
+      ownSessionId = undefined;
+    });
 
     const notify = async (
       ctx: OmoContext,
@@ -227,11 +279,29 @@ export function createOmoExtension(
   };
 }
 
-const gateways = new Map<string, Promise<OmoGateway | undefined>>();
+type ProcessState = {
+  gateways: Map<string, Promise<OmoGateway | undefined>>;
+  inbox: OmoSessionInbox;
+};
 
-function connectOnce(cwd: string): Promise<OmoGateway | undefined> {
+const PROCESS_STATE_KEY = Symbol.for("opencode-telegram-link.omo");
+const processGlobals = globalThis as Record<symbol, ProcessState | undefined>;
+const processState: ProcessState = processGlobals[PROCESS_STATE_KEY] ?? {
+  gateways: new Map(),
+  inbox: new Map(),
+};
+processGlobals[PROCESS_STATE_KEY] = processState;
+const { gateways } = processState;
+
+async function connectOnce(cwd: string): Promise<OmoGateway | undefined> {
   const existing = gateways.get(cwd);
-  if (existing) return existing;
+  if (existing) {
+    const gateway = await existing.catch(() => undefined);
+    if (gateway?.broker.connected !== false) return gateway;
+    if (gateways.get(cwd) === existing) gateways.delete(cwd);
+    void gateway.broker.stop?.();
+    return await connectOnce(cwd);
+  }
   const pending = connectGateway(cwd).catch((error: unknown) => {
     gateways.delete(cwd);
     throw error;
@@ -264,6 +334,11 @@ async function connectGateway(cwd: string): Promise<OmoGateway | undefined> {
       throw new Error("the OMO extension never starts a Gateway");
     },
     onDiagnostic: (code, message) => trace(`BrokerClient ${code}: ${message}`),
+    onCommand: (command) => {
+      const result = handleOmoCommand(command, processState.inbox);
+      trace(`command ${command.type} for ${commandSession(command)}: ${result.status}`);
+      return result;
+    },
   });
   await broker.start();
   return {
@@ -326,4 +401,15 @@ function trace(message: string): void {
   } catch {}
 }
 
-export default createOmoExtension(connectOnce);
+function commandSession(command: BrokerCommand): string {
+  return "route" in command ? command.route.sessionId : "new session";
+}
+
+// OMO reclaims sockets and timers opened from session callbacks when a session reloads;
+// connecting from module scope keeps the Gateway connection (and its route generations)
+// owned by the process so Telegram replies to earlier notifications survive /reload.
+connectOnce(process.cwd()).catch((error: unknown) =>
+  trace(`Gateway connect failed: ${error instanceof Error ? error.message : String(error)}`),
+);
+
+export default createOmoExtension(connectOnce, trace, processState.inbox);

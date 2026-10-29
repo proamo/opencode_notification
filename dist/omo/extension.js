@@ -16842,11 +16842,47 @@ function uiPromptQuestion(event, interactionId) {
     ]
   };
 }
-function createOmoExtension(connect, onDiagnostic = trace) {
+function handleOmoCommand(command, inbox) {
+  if (command.type !== "session.prompt") {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "not supported for OMO sessions yet"
+    };
+  }
+  const deliver = inbox.get(command.route.sessionId);
+  if (!deliver) {
+    return { commandId: command.commandId, status: "rejected", reason: "OMO session is not open" };
+  }
+  try {
+    deliver(command.text);
+    return { commandId: command.commandId, status: "accepted" };
+  } catch (error51) {
+    return {
+      commandId: command.commandId,
+      status: "indeterminate",
+      reason: (error51 instanceof Error ? error51.message : "OMO prompt delivery failed").slice(0, 256)
+    };
+  }
+}
+function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map) {
   return (pi) => {
     if (pi.sessionKind === "worker")
       return;
     let uiPromptCount = 0;
+    let ownSessionId;
+    const deliver = (text) => pi.sendUserMessage?.(text, { deliverAs: "followUp" });
+    pi.on("session_start", (_event, ctx) => {
+      if (ctx.sessionManager.getHeader()?.spawnedBy)
+        return;
+      ownSessionId = ctx.sessionManager.getSessionId();
+      inbox.set(ownSessionId, deliver);
+    });
+    pi.on("session_shutdown", () => {
+      if (ownSessionId && inbox.get(ownSessionId) === deliver)
+        inbox.delete(ownSessionId);
+      ownSessionId = undefined;
+    });
     const notify = async (ctx, resolve2) => {
       try {
         const session = ctx.sessionManager;
@@ -16918,11 +16954,27 @@ function createOmoExtension(connect, onDiagnostic = trace) {
     }));
   };
 }
-var gateways = new Map;
-function connectOnce(cwd) {
+var PROCESS_STATE_KEY = Symbol.for("opencode-telegram-link.omo");
+var processGlobals = globalThis;
+var processState = processGlobals[PROCESS_STATE_KEY] ?? {
+  gateways: new Map,
+  inbox: new Map
+};
+processGlobals[PROCESS_STATE_KEY] = processState;
+var { gateways } = processState;
+async function connectOnce(cwd) {
   const existing = gateways.get(cwd);
-  if (existing)
-    return existing;
+  if (existing) {
+    const gateway = await existing.catch(() => {
+      return;
+    });
+    if (gateway?.broker.connected !== false)
+      return gateway;
+    if (gateways.get(cwd) === existing)
+      gateways.delete(cwd);
+    gateway.broker.stop?.();
+    return await connectOnce(cwd);
+  }
   const pending = connectGateway(cwd).catch((error51) => {
     gateways.delete(cwd);
     throw error51;
@@ -16953,7 +17005,12 @@ async function connectGateway(cwd) {
     spawnBroker: () => {
       throw new Error("the OMO extension never starts a Gateway");
     },
-    onDiagnostic: (code, message) => trace(`BrokerClient ${code}: ${message}`)
+    onDiagnostic: (code, message) => trace(`BrokerClient ${code}: ${message}`),
+    onCommand: (command) => {
+      const result = handleOmoCommand(command, processState.inbox);
+      trace(`command ${command.type} for ${commandSession(command)}: ${result.status}`);
+      return result;
+    }
   });
   await broker.start();
   return {
@@ -17008,13 +17065,18 @@ function trace(message) {
 `);
   } catch {}
 }
-var extension_default = createOmoExtension(connectOnce);
+function commandSession(command) {
+  return "route" in command ? command.route.sessionId : "new session";
+}
+connectOnce(process.cwd()).catch((error51) => trace(`Gateway connect failed: ${error51 instanceof Error ? error51.message : String(error51)}`));
+var extension_default = createOmoExtension(connectOnce, trace, processState.inbox);
 export {
   uiPromptQuestion,
   resolveSettledOutcome,
   normalizeAskUserRequest,
+  handleOmoCommand,
   extension_default as default,
   createOmoExtension
 };
 
-//# debugId=642EDFE140DBFFCD64756E2164756E21
+//# debugId=F8B7FB762C6973F664756E2164756E21

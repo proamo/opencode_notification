@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   createOmoExtension,
+  handleOmoCommand,
   normalizeAskUserRequest,
   type OmoContext,
   type OmoEntry,
   type OmoExtensionApi,
   type OmoGateway,
+  type OmoSessionInbox,
   resolveSettledOutcome,
   type UiPromptEvent,
 } from "../src/omo/extension";
@@ -52,12 +54,17 @@ function harness(options: {
       },
     },
   };
-  const handlers = new Map<string, (event: never, ctx: OmoContext) => Promise<void>>();
+  const handlers = new Map<string, (event: never, ctx: OmoContext) => Promise<void> | void>();
+  const sent: Array<{ text: string; options: unknown }> = [];
+  const inbox: OmoSessionInbox = new Map();
   let askUser: ((data: { ctx?: OmoContext; request?: unknown }) => void) | undefined;
   const pi: OmoExtensionApi = {
     ...(options.sessionKind ? { sessionKind: options.sessionKind } : {}),
-    on: (event: string, registered: (event: never, ctx: OmoContext) => Promise<void>) => {
+    on: (event: string, registered: (event: never, ctx: OmoContext) => Promise<void> | void) => {
       handlers.set(event, registered);
+    },
+    sendUserMessage: (text, sendOptions) => {
+      sent.push({ text, options: sendOptions });
     },
     events: {
       on: (_channel, registered) => {
@@ -75,6 +82,7 @@ function harness(options: {
       diagnostics.push(message);
       settled.resolve();
     },
+    inbox,
   )(pi);
   const ctx: OmoContext = {
     cwd: "/tmp/demo",
@@ -95,12 +103,69 @@ function harness(options: {
       askUser?.({ ctx, request });
       await settled.promise;
     },
+    start: () => handlers.get("session_start")?.({} as never, ctx),
+    shutdown: () => handlers.get("session_shutdown")?.({} as never, ctx),
+    inbox,
+    sent,
     published,
     diagnostics,
     connects: () => connects,
     registered: () => handlers.size > 0,
   };
 }
+
+function prompt(text: string) {
+  return {
+    type: "session.prompt" as const,
+    commandId: "44444444-4444-4444-8444-444444444444",
+    route: ROUTE,
+    text,
+  };
+}
+
+describe("Telegram replies to OMO sessions", () => {
+  test("delivers a reply to the open session as a follow-up user message", async () => {
+    const run = harness({ entries: [] });
+    await run.start();
+    expect(handleOmoCommand(prompt("continue please"), run.inbox)).toEqual({
+      commandId: "44444444-4444-4444-8444-444444444444",
+      status: "accepted",
+    });
+    expect(run.sent).toEqual([{ text: "continue please", options: { deliverAs: "followUp" } }]);
+  });
+
+  test("rejects replies after the session shuts down", async () => {
+    const run = harness({ entries: [] });
+    await run.start();
+    await run.shutdown();
+    expect(handleOmoCommand(prompt("hello"), run.inbox)).toMatchObject({
+      status: "rejected",
+      reason: "OMO session is not open",
+    });
+    expect(run.sent).toHaveLength(0);
+  });
+
+  test("does not accept replies for execution children", async () => {
+    const run = harness({ entries: [], spawnedBy: { parentSessionId: "root" } });
+    await run.start();
+    expect(run.inbox.size).toBe(0);
+  });
+
+  test("rejects commands other than session prompts", async () => {
+    const run = harness({ entries: [] });
+    await run.start();
+    const result = handleOmoCommand(
+      {
+        type: "session.cancel",
+        commandId: "44444444-4444-4444-8444-444444444444",
+        route: ROUTE,
+      },
+      run.inbox,
+    );
+    expect(result).toMatchObject({ status: "rejected" });
+    expect(run.sent).toHaveLength(0);
+  });
+});
 
 describe("resolveSettledOutcome", () => {
   test("uses the last assistant message text as the completion summary", () => {
