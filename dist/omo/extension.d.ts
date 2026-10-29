@@ -35,7 +35,7 @@ export type AskUserAskedEvent = {
 };
 export type OmoExtensionApi = {
     sessionKind?: "interactive" | "worker";
-    on(event: "agent_settled" | "session_start" | "session_shutdown", handler: (event: unknown, ctx: OmoContext) => Promise<void> | void): void;
+    on(event: "agent_start" | "agent_settled" | "session_start" | "session_shutdown", handler: (event: unknown, ctx: OmoContext) => Promise<void> | void): void;
     on(event: "ui_prompt_start", handler: (event: UiPromptEvent, ctx: OmoContext) => Promise<void>): void;
     events?: {
         on(channel: "ask-user:asked", handler: (data: AskUserAskedEvent) => void): unknown;
@@ -72,6 +72,7 @@ export type OmoGateway = {
         readonly connected?: boolean;
         stop?(): Promise<void>;
         activeRoute?(projectId: string, sessionId: string): RouteKey | undefined;
+        setRouteActivity?(projectId: string, sessionId: string, active: boolean): Promise<boolean>;
         upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
         publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
     };
@@ -95,6 +96,7 @@ export type OmoCommandTargets = {
     inbox: OmoSessionInbox;
     questions: Map<string, OmoQuestionTarget>;
     answerQuestion: (sessionId: string, requestId: string, answers: OmoQuestionAnswers) => Promise<void>;
+    interrupt: (sessionId: string) => Promise<boolean>;
 };
 export declare function askUserQuestionTarget(request: unknown, sessionId: string): {
     requestId: string;

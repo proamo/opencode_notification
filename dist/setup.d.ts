@@ -53,6 +53,7 @@ export type InteractiveSetupOptions = {
     now?: (() => number) | undefined;
     systemdAvailable?: (() => boolean) | undefined;
     installSystemd?: typeof installSystemdService | undefined;
+    omoAgentDirectory?: string | undefined;
     uninstallSystemd?: typeof import("./service").uninstallSystemdService | undefined;
     dockerSpawnSync?: ((command: string[], options?: {
         cwd?: string;

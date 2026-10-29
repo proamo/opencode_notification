@@ -39,6 +39,8 @@ function harness(options: {
   const settled = Promise.withResolvers<void>();
   let connects = 0;
   let registrations = 0;
+  const activity: boolean[] = [];
+  const interrupted: string[] = [];
   const gateway: OmoGateway = {
     projectId: ROUTE.projectId,
     projectLabel: "demo",
@@ -49,9 +51,14 @@ function harness(options: {
     notifyQuestion: options.notifyQuestion ?? true,
     broker: {
       activeRoute: () => (registrations > 0 ? ROUTE : undefined),
-      upsertRoute: async () => {
+      upsertRoute: async (intent) => {
         registrations += 1;
+        activity.push(intent.active ?? true);
         return ROUTE;
+      },
+      setRouteActivity: async (_projectId, _sessionId, active) => {
+        activity.push(active);
+        return true;
       },
       publishNotification: async (notification) => {
         published.push(notification);
@@ -120,7 +127,14 @@ function harness(options: {
       answerQuestion: async (sessionId: string, requestId: string, answers: unknown) => {
         answered.push({ sessionId, requestId, answers });
       },
+      interrupt: async (sessionId: string) => {
+        interrupted.push(sessionId);
+        return true;
+      },
     },
+    agentStart: () => handlers.get("agent_start")?.({} as never, ctx),
+    activity,
+    interrupted,
     answered,
     questions,
     start: () => handlers.get("session_start")?.({} as never, ctx),
@@ -172,14 +186,37 @@ describe("Telegram replies to OMO sessions", () => {
     expect(run.inbox.size).toBe(0);
   });
 
-  test("rejects commands other than session prompts", async () => {
+  test("interrupts the running session for a Telegram cancel", async () => {
+    const run = harness({ entries: [] });
+    const cancel = {
+      type: "session.cancel" as const,
+      commandId: "44444444-4444-4444-8444-444444444444",
+      route: ROUTE,
+    };
+    expect(await handleOmoCommand(cancel, run.targets)).toMatchObject({ status: "accepted" });
+    expect(run.interrupted).toEqual(["omo-session"]);
+    const idle = await handleOmoCommand(cancel, { ...run.targets, interrupt: async () => false });
+    expect(idle).toMatchObject({ status: "rejected", reason: "OMO session is idle" });
+  });
+
+  test("marks the session active while OMO works and inactive once it settles", async () => {
+    const run = harness({
+      entries: [assistant({ stopReason: "stop", content: [{ type: "text", text: "done" }] })],
+    });
+    await run.agentStart();
+    await run.settle();
+    expect(run.activity).toEqual([true, false]);
+    expect(run.registrations()).toBe(1);
+  });
+
+  test("rejects commands OMO cannot run", async () => {
     const run = harness({ entries: [] });
     await run.start();
     const result = await handleOmoCommand(
       {
-        type: "session.cancel",
+        type: "session.spawn",
         commandId: "44444444-4444-4444-8444-444444444444",
-        route: ROUTE,
+        prompt: "new work",
       },
       run.targets,
     );

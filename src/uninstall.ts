@@ -5,6 +5,7 @@ import { isAbsolute, join } from "node:path";
 import { probeBroker } from "./broker";
 import { readPersistedBrokerEndpoint, runStopCommand } from "./broker/commands";
 import type { SupportedLocale } from "./i18n";
+import { removeOmoExtension } from "./omo/install";
 import { discoverOpenCodeConfigFiles, removeOpenCodeConfig } from "./opencode";
 import { uninstallSystemdService } from "./service";
 import {
@@ -265,6 +266,16 @@ export async function runInteractiveUninstall(
         try {
           await rm(symlink, { recursive: true, force: true });
         } catch {}
+      }
+      const omoResult = await removeOmoExtension(options.omoAgentDirectory);
+      if (omoResult === "removed") {
+        stdout.write(isZh ? "│  ✔ 已移除 OMO extension。\n" : "│  ✔ Removed the OMO extension.\n");
+      } else if (omoResult === "foreign") {
+        stdout.write(
+          isZh
+            ? "│  - OMO extension 不是由 setup 安裝，未移除。\n"
+            : "│  - The OMO extension was not installed by setup; left in place.\n",
+        );
       }
     } else {
       stdout.write(

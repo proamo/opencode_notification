@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## Unreleased
+
+- Add an OMO Native extension that shares the Gateway: completion, final error, and waiting-for-answer notifications; Telegram replies continue the exact session; option buttons answer non-blocking questions; `/cancel` interrupts a running turn.
+- Install the OMO extension from setup when an OMO agent directory is detected, and remove it on uninstall only when setup installed it.
+- Follow the native deployment endpoint when a Gateway plugin's configured loopback host is stale, instead of failing to connect.
+- Let clients toggle a route's active state in place, preserving its generation so earlier Telegram buttons stay valid.
+- Isolate HOME, XDG, and OMO agent directories in tests so test runs never modify the developer's real configuration.
+
 ## 1.0.0-rc.9 - 2026-09-01
 
 - Keep the persisted Telegram poller alive without OpenCode WebSocket clients and report terminal polling failures as degraded.

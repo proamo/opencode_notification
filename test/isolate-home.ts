@@ -12,6 +12,8 @@ process.env.XDG_CONFIG_HOME = join(home, ".config");
 process.env.XDG_STATE_HOME = join(home, ".local", "state");
 process.env.XDG_DATA_HOME = join(home, ".local", "share");
 process.env.XDG_CACHE_HOME = join(home, ".cache");
+process.env.OMO_CODING_AGENT_DIR = join(home, ".omo", "agent");
+process.env.SENPI_CODING_AGENT_DIR = join(home, ".omo", "agent");
 
 const isolatedOs = { ...os, homedir: () => home };
 mock.module("node:os", () => ({ ...isolatedOs, default: isolatedOs }));

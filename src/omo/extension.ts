@@ -50,7 +50,7 @@ export type AskUserAskedEvent = { ctx?: OmoContext; request?: unknown };
 export type OmoExtensionApi = {
   sessionKind?: "interactive" | "worker";
   on(
-    event: "agent_settled" | "session_start" | "session_shutdown",
+    event: "agent_start" | "agent_settled" | "session_start" | "session_shutdown",
     handler: (event: unknown, ctx: OmoContext) => Promise<void> | void,
   ): void;
   on(
@@ -90,6 +90,7 @@ export type OmoGateway = {
     readonly connected?: boolean;
     stop?(): Promise<void>;
     activeRoute?(projectId: string, sessionId: string): RouteKey | undefined;
+    setRouteActivity?(projectId: string, sessionId: string, active: boolean): Promise<boolean>;
     upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
   };
@@ -188,6 +189,7 @@ export type OmoCommandTargets = {
     requestId: string,
     answers: OmoQuestionAnswers,
   ) => Promise<void>;
+  interrupt: (sessionId: string) => Promise<boolean>;
 };
 
 export function askUserQuestionTarget(
@@ -228,6 +230,20 @@ export async function handleOmoCommand(
   targets: OmoCommandTargets,
 ): Promise<CommandResult> {
   if (command.type === "question.reply") return await answerOmoQuestion(command, targets);
+  if (command.type === "session.cancel") {
+    try {
+      const interrupted = await targets.interrupt(command.route.sessionId);
+      return interrupted
+        ? { commandId: command.commandId, status: "accepted" }
+        : { commandId: command.commandId, status: "rejected", reason: "OMO session is idle" };
+    } catch (error) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: (error instanceof Error ? error.message : "OMO cancel failed").slice(0, 256),
+      };
+    }
+  }
   if (command.type !== "session.prompt") {
     return {
       commandId: command.commandId,
@@ -331,15 +347,8 @@ export function createOmoExtension(
           0,
           256,
         );
-        const route =
-          gateway.broker.activeRoute?.(gateway.projectId, sessionId) ??
-          (await gateway.broker.upsertRoute({
-            projectId: gateway.projectId,
-            sessionId,
-            projectLabel: gateway.projectLabel,
-            sessionLabel,
-            active: false,
-          }));
+        const active = outcome.kind === "question.pending" ? undefined : false;
+        const route = await ensureRoute(gateway, sessionId, sessionLabel, active);
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
           return;
@@ -361,6 +370,22 @@ export function createOmoExtension(
         );
       }
     };
+
+    pi.on("agent_start", async (_event, ctx) => {
+      try {
+        const session = ctx.sessionManager;
+        if (session.getHeader()?.spawnedBy) return;
+        const gateway = await connect(ctx.cwd);
+        if (!gateway) return;
+        const sessionId = session.getSessionId();
+        const label = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(0, 256);
+        await ensureRoute(gateway, sessionId, label, true);
+      } catch (error) {
+        onDiagnostic(
+          `OMO activity update failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    });
 
     pi.on("agent_settled", (_event, ctx) =>
       notify(ctx, () => {
@@ -419,6 +444,7 @@ const processState: ProcessState = {
       inbox: processState.inbox,
       questions: processState.questions,
       answerQuestion: answerThroughControlEndpoint,
+      interrupt: interruptThroughControlEndpoint,
     });
     trace(
       `command ${command.type} for ${commandSession(command)}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
@@ -537,11 +563,51 @@ function trace(message: string): void {
   } catch {}
 }
 
+async function ensureRoute(
+  gateway: OmoGateway,
+  sessionId: string,
+  sessionLabel: string,
+  active: boolean | undefined,
+): Promise<RouteKey | undefined> {
+  const existing = gateway.broker.activeRoute?.(gateway.projectId, sessionId);
+  if (!existing) {
+    return await gateway.broker.upsertRoute({
+      projectId: gateway.projectId,
+      sessionId,
+      projectLabel: gateway.projectLabel,
+      sessionLabel,
+      active: active ?? false,
+    });
+  }
+  if (active !== undefined) {
+    await gateway.broker.setRouteActivity?.(gateway.projectId, sessionId, active);
+  }
+  return existing;
+}
+
 async function answerThroughControlEndpoint(
   sessionId: string,
   requestId: string,
   answers: OmoQuestionAnswers,
 ): Promise<void> {
+  const socket = await findControlSocket(sessionId);
+  const response = await controlRequest(socket, {
+    type: "extension_ui_response",
+    uiRequestId: requestId,
+    answers,
+  });
+  if (response.success !== true) {
+    throw new Error(String(response.error ?? "question answer was refused"));
+  }
+}
+
+async function interruptThroughControlEndpoint(sessionId: string): Promise<boolean> {
+  const response = await controlRequest(await findControlSocket(sessionId), { type: "interrupt" });
+  if (response.success !== true) throw new Error(String(response.error ?? "interrupt was refused"));
+  return (response.data as { interrupted?: unknown } | undefined)?.interrupted === true;
+}
+
+async function findControlSocket(sessionId: string): Promise<string> {
   const agentDir =
     process.env.OMO_CODING_AGENT_DIR ??
     process.env.SENPI_CODING_AGENT_DIR ??
@@ -554,16 +620,7 @@ async function answerThroughControlEndpoint(
     const listed = await controlRequest(socket, { type: "list_sessions" }).catch(() => undefined);
     const sessions = (listed?.data as { sessions?: Array<{ sessionId?: unknown }> } | undefined)
       ?.sessions;
-    if (!sessions?.some((session) => session.sessionId === sessionId)) continue;
-    const response = await controlRequest(socket, {
-      type: "extension_ui_response",
-      uiRequestId: requestId,
-      answers,
-    });
-    if (response.success !== true) {
-      throw new Error(String(response.error ?? "question answer was refused"));
-    }
-    return;
+    if (sessions?.some((session) => session.sessionId === sessionId)) return socket;
   }
   throw new Error("terminal intervention required");
 }

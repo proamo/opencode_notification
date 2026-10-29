@@ -14519,11 +14519,11 @@ var DiagnosticSchema = exports_external.object({
 
 // src/setup.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
-import { existsSync as existsSync3, readFileSync } from "fs";
-import { chmod as chmod5, lstat as lstat5, mkdir as mkdir4, open as open2, readFile as readFile5, rename as rename6, rm as rm4 } from "fs/promises";
+import { existsSync as existsSync4, readFileSync } from "fs";
+import { chmod as chmod5, lstat as lstat5, mkdir as mkdir5, open as open2, readFile as readFile6, rename as rename6, rm as rm5 } from "fs/promises";
 import { isIP as isIP2 } from "net";
 import { hostname as hostname3, platform as platform5 } from "os";
-import { dirname as dirname3, join as join6, resolve as resolve3 } from "path";
+import { dirname as dirname3, join as join7, resolve as resolve3 } from "path";
 
 // src/config.ts
 import { createHash } from "crypto";
@@ -14768,6 +14768,48 @@ function stableJson(value) {
   if (Array.isArray(value))
     return `[${value.map((item) => stableJson(item)).join(",")}]`;
   return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+}
+
+// src/omo/install.ts
+import { existsSync } from "fs";
+import { copyFile, mkdir, readFile as readFile2, rm, writeFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
+import { fileURLToPath } from "url";
+var EXTENSION_NAME = "opencode-telegram-link";
+var ENTRY_SOURCE = `export { default } from "./extension.js";
+`;
+function omoAgentDirectory(environment = process.env) {
+  return environment.OMO_CODING_AGENT_DIR ?? environment.SENPI_CODING_AGENT_DIR ?? join(homedir(), ".omo", "agent");
+}
+function omoExtensionDirectory(agentDirectory = omoAgentDirectory()) {
+  return join(agentDirectory, "extensions", EXTENSION_NAME);
+}
+function bundledOmoExtensionPath() {
+  const candidates = ["../omo/extension.js", "../../dist/omo/extension.js"].map((relative) => fileURLToPath(new URL(relative, import.meta.url)));
+  return candidates.find((candidate) => existsSync(candidate));
+}
+async function installOmoExtension(input) {
+  const bundlePath = input.bundlePath ?? bundledOmoExtensionPath();
+  if (!bundlePath)
+    throw new Error("bundled OMO extension was not found; run the package build");
+  const directory = omoExtensionDirectory(input.agentDirectory);
+  await mkdir(directory, { recursive: true });
+  await copyFile(bundlePath, join(directory, "extension.js"));
+  await writeFile(join(directory, "index.ts"), ENTRY_SOURCE, "utf8");
+  return { directory };
+}
+async function removeOmoExtension(agentDirectory = omoAgentDirectory()) {
+  const directory = omoExtensionDirectory(agentDirectory);
+  const entry = await readFile2(join(directory, "index.ts"), "utf8").catch(() => {
+    return;
+  });
+  if (entry === undefined)
+    return existsSync(directory) ? "foreign" : "absent";
+  if (entry !== ENTRY_SOURCE)
+    return "foreign";
+  await rm(directory, { recursive: true, force: true });
+  return "removed";
 }
 
 // src/opencode/bridge.ts
@@ -15503,39 +15545,39 @@ function removeExpired(items, now) {
   }
 }
 // src/opencode/config-helper.ts
-import { chmod as chmod2, copyFile, lstat as lstat3, mkdir as mkdir2, readFile as readFile3, rename as rename2, writeFile } from "fs/promises";
-import { homedir as homedir2, platform as platform3 } from "os";
-import { dirname, join as join2, resolve } from "path";
+import { chmod as chmod2, copyFile as copyFile2, lstat as lstat3, mkdir as mkdir3, readFile as readFile4, rename as rename2, writeFile as writeFile2 } from "fs/promises";
+import { homedir as homedir3, platform as platform3 } from "os";
+import { dirname, join as join3, resolve } from "path";
 
 // src/state/identity.ts
 import { createHmac, randomBytes, randomUUID } from "crypto";
-import { existsSync } from "fs";
-import { chmod, lstat as lstat2, mkdir, open, readFile as readFile2, realpath, rename, rm } from "fs/promises";
-import { homedir, platform as platform2 } from "os";
-import { join } from "path";
+import { existsSync as existsSync2 } from "fs";
+import { chmod, lstat as lstat2, mkdir as mkdir2, open, readFile as readFile3, realpath, rename, rm as rm2 } from "fs/promises";
+import { homedir as homedir2, platform as platform2 } from "os";
+import { join as join2 } from "path";
 var UUIDSchema = exports_external.uuid();
 var SECRET_BYTES = 32;
 var IDENTITY_MODE_LEGACY = "2:legacy";
 var IDENTITY_MODE_SEPARATE = "2:separate";
 function defaultStateDirectory(environment = process.env) {
   if (environment.XDG_STATE_HOME) {
-    return join(environment.XDG_STATE_HOME, "opencode-telegram-link");
+    return join2(environment.XDG_STATE_HOME, "opencode-telegram-link");
   }
   if (platform2() === "darwin") {
-    return join(homedir(), "Library", "Application Support", "opencode-telegram-link");
+    return join2(homedir2(), "Library", "Application Support", "opencode-telegram-link");
   }
   if (platform2() === "win32" && environment.LOCALAPPDATA) {
-    return join(environment.LOCALAPPDATA, "opencode-telegram-link");
+    return join2(environment.LOCALAPPDATA, "opencode-telegram-link");
   }
-  return join(homedir(), ".local", "state", "opencode-telegram-link");
+  return join2(homedir2(), ".local", "state", "opencode-telegram-link");
 }
 async function loadOrCreateStateIdentity(stateDirectory = defaultStateDirectory()) {
-  await mkdir(stateDirectory, { recursive: true, mode: 448 });
+  await mkdir2(stateDirectory, { recursive: true, mode: 448 });
   await assertPrivatePath(stateDirectory, "directory", 448);
-  const machineId = await loadOrCreatePrivateValue(join(stateDirectory, "machine-id"), () => randomUUID(), (value) => UUIDSchema.parse(value));
-  const brokerSecretPath = join(stateDirectory, "broker-secret");
-  const versionPath = join(stateDirectory, "identity-version");
-  const identityMode = await loadOrCreatePrivateValue(versionPath, () => existsSync(brokerSecretPath) ? IDENTITY_MODE_LEGACY : IDENTITY_MODE_SEPARATE, (value) => {
+  const machineId = await loadOrCreatePrivateValue(join2(stateDirectory, "machine-id"), () => randomUUID(), (value) => UUIDSchema.parse(value));
+  const brokerSecretPath = join2(stateDirectory, "broker-secret");
+  const versionPath = join2(stateDirectory, "identity-version");
+  const identityMode = await loadOrCreatePrivateValue(versionPath, () => existsSync2(brokerSecretPath) ? IDENTITY_MODE_LEGACY : IDENTITY_MODE_SEPARATE, (value) => {
     if (value === "2")
       return IDENTITY_MODE_SEPARATE;
     if (value !== IDENTITY_MODE_LEGACY && value !== IDENTITY_MODE_SEPARATE) {
@@ -15545,15 +15587,15 @@ async function loadOrCreateStateIdentity(stateDirectory = defaultStateDirectory(
   });
   const legacyIdentity = identityMode === IDENTITY_MODE_LEGACY;
   const brokerSecret = await loadOrCreatePrivateValue(brokerSecretPath, () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
-  const gatewaySecret = await loadOrCreatePrivateValue(join(stateDirectory, "gateway-secret"), () => legacyIdentity ? brokerSecret : randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
-  const routeSalt = await loadOrCreatePrivateValue(join(stateDirectory, "route-salt"), () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
+  const gatewaySecret = await loadOrCreatePrivateValue(join2(stateDirectory, "gateway-secret"), () => legacyIdentity ? brokerSecret : randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
+  const routeSalt = await loadOrCreatePrivateValue(join2(stateDirectory, "route-salt"), () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
   return { stateDirectory, machineId, brokerSecret, gatewaySecret, routeSalt };
 }
 async function rotateGatewaySecret(stateDirectory = defaultStateDirectory()) {
-  await mkdir(stateDirectory, { recursive: true, mode: 448 });
+  await mkdir2(stateDirectory, { recursive: true, mode: 448 });
   await assertPrivatePath(stateDirectory, "directory", 448);
   const secret = randomBytes(SECRET_BYTES).toString("base64url");
-  const path = join(stateDirectory, "gateway-secret");
+  const path = join2(stateDirectory, "gateway-secret");
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temporaryPath, "wx", 384);
   try {
@@ -15566,7 +15608,7 @@ async function rotateGatewaySecret(stateDirectory = defaultStateDirectory()) {
     await rename(temporaryPath, path);
     await assertPrivatePath(path, "file", 384);
   } catch (error51) {
-    await rm(temporaryPath, { force: true });
+    await rm2(temporaryPath, { force: true });
     throw error51;
   }
   return secret;
@@ -15601,11 +15643,11 @@ async function loadOrCreatePrivateValue(path, generate, validate) {
   }
   await assertPrivatePath(path, "file", 384);
   if (created)
-    return validate((await readFile2(path, "utf8")).trim());
+    return validate((await readFile3(path, "utf8")).trim());
   let lastError;
   for (let attempt = 0;attempt < 25; attempt += 1) {
     try {
-      return validate((await readFile2(path, "utf8")).trim());
+      return validate((await readFile3(path, "utf8")).trim());
     } catch (error51) {
       lastError = error51;
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -15737,30 +15779,30 @@ function parseJsonc(content) {
   return JSON.parse(result);
 }
 function getCandidateConfigPaths(cwd = process.cwd()) {
-  const home = homedir2();
+  const home = homedir3();
   const candidates = [];
-  candidates.push(join2(cwd, "opencode.json"));
-  candidates.push(join2(cwd, "opencode.jsonc"));
-  candidates.push(join2(cwd, ".opencode", "opencode.json"));
-  candidates.push(join2(cwd, ".opencode", "opencode.jsonc"));
-  candidates.push(join2(cwd, ".opencode", "config.json"));
+  candidates.push(join3(cwd, "opencode.json"));
+  candidates.push(join3(cwd, "opencode.jsonc"));
+  candidates.push(join3(cwd, ".opencode", "opencode.json"));
+  candidates.push(join3(cwd, ".opencode", "opencode.jsonc"));
+  candidates.push(join3(cwd, ".opencode", "config.json"));
   if (platform3() === "win32") {
-    candidates.push(join2(home, ".config", "opencode", "opencode.json"));
-    candidates.push(join2(home, ".config", "opencode", "opencode.jsonc"));
-    candidates.push(join2(home, ".config", "opencode", "config.json"));
+    candidates.push(join3(home, ".config", "opencode", "opencode.json"));
+    candidates.push(join3(home, ".config", "opencode", "opencode.jsonc"));
+    candidates.push(join3(home, ".config", "opencode", "config.json"));
     if (process.env.APPDATA) {
-      candidates.push(join2(process.env.APPDATA, "opencode", "opencode.json"));
-      candidates.push(join2(process.env.APPDATA, "opencode", "opencode.jsonc"));
-      candidates.push(join2(process.env.APPDATA, "opencode", "config.json"));
+      candidates.push(join3(process.env.APPDATA, "opencode", "opencode.json"));
+      candidates.push(join3(process.env.APPDATA, "opencode", "opencode.jsonc"));
+      candidates.push(join3(process.env.APPDATA, "opencode", "config.json"));
     }
   } else {
-    const xdgConfig = process.env.XDG_CONFIG_HOME || join2(home, ".config");
-    candidates.push(join2(xdgConfig, "opencode", "opencode.json"));
-    candidates.push(join2(xdgConfig, "opencode", "opencode.jsonc"));
-    candidates.push(join2(xdgConfig, "opencode", "config.json"));
-    candidates.push(join2(home, ".opencode", "opencode.json"));
-    candidates.push(join2(home, ".opencode", "opencode.jsonc"));
-    candidates.push(join2(home, ".opencode", "config.json"));
+    const xdgConfig = process.env.XDG_CONFIG_HOME || join3(home, ".config");
+    candidates.push(join3(xdgConfig, "opencode", "opencode.json"));
+    candidates.push(join3(xdgConfig, "opencode", "opencode.jsonc"));
+    candidates.push(join3(xdgConfig, "opencode", "config.json"));
+    candidates.push(join3(home, ".opencode", "opencode.json"));
+    candidates.push(join3(home, ".opencode", "opencode.jsonc"));
+    candidates.push(join3(home, ".opencode", "config.json"));
   }
   return Array.from(new Set(candidates.map((candidate) => resolve(candidate))));
 }
@@ -15780,7 +15822,7 @@ async function discoverOpenCodeConfigFiles(cwd = process.cwd()) {
     } catch {}
   }
   if (results.length === 0) {
-    const defaultGlobal = platform3() === "win32" ? join2(homedir2(), ".config", "opencode", "opencode.json") : join2(process.env.XDG_CONFIG_HOME || join2(homedir2(), ".config"), "opencode", "opencode.json");
+    const defaultGlobal = platform3() === "win32" ? join3(homedir3(), ".config", "opencode", "opencode.json") : join3(process.env.XDG_CONFIG_HOME || join3(homedir3(), ".config"), "opencode", "opencode.json");
     results.push({
       path: resolve(defaultGlobal),
       exists: false,
@@ -15833,7 +15875,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
     if (!item.exists)
       continue;
     try {
-      const content = await readFile3(item.path, "utf8");
+      const content = await readFile4(item.path, "utf8");
       const json2 = parseJsonc(content);
       if (Array.isArray(json2.plugin)) {
         for (const entry of json2.plugin) {
@@ -15876,8 +15918,8 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
   }
   try {
     const stateDir = defaultStateDirectory();
-    const fallbackPath = join2(stateDir, "opencode-notifier.json");
-    const content = await readFile3(fallbackPath, "utf8");
+    const fallbackPath = join3(stateDir, "opencode-notifier.json");
+    const content = await readFile4(fallbackPath, "utf8");
     const json2 = JSON.parse(content);
     const parsed = NotifierConfigSchema.safeParse(json2);
     if (parsed.success)
@@ -15885,8 +15927,8 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
   } catch {}
   try {
     const stateDir = defaultStateDirectory();
-    const identityPath = join2(stateDir, "telegram-identity.json");
-    const content = await readFile3(identityPath, "utf8");
+    const identityPath = join3(stateDir, "telegram-identity.json");
+    const content = await readFile4(identityPath, "utf8");
     const idJson = JSON.parse(content);
     if (idJson.userId && idJson.chatId) {
       return NotifierConfigSchema.parse({
@@ -15894,7 +15936,7 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
         role: "gateway",
         locale: idJson.locale || "auto",
         telegram: {
-          tokenFile: idJson.tokenFile || join2(stateDir, "telegram-bot-token"),
+          tokenFile: idJson.tokenFile || join3(stateDir, "telegram-bot-token"),
           userId: String(idJson.userId),
           chatId: String(idJson.chatId)
         },
@@ -15913,18 +15955,18 @@ async function injectOpenCodeConfig(targetPath, config2) {
   let existingJson = {};
   let backupPath;
   try {
-    const existingContent = await readFile3(targetPath, "utf8");
+    const existingContent = await readFile4(targetPath, "utf8");
     try {
       existingJson = parseJsonc(existingContent);
     } catch (parseErr) {
       throw new Error(`Failed to parse existing OpenCode config at ${targetPath}: ${parseErr.message}. Preserving file to prevent data loss.`);
     }
     backupPath = `${targetPath}.bak`;
-    await copyFile(targetPath, backupPath);
+    await copyFile2(targetPath, backupPath);
     await chmod2(backupPath, 384);
   } catch (err) {
     if (err.code === "ENOENT") {
-      await mkdir2(dirname(targetPath), { recursive: true });
+      await mkdir3(dirname(targetPath), { recursive: true });
     } else {
       throw err;
     }
@@ -16044,7 +16086,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
     ["opencode-telegram-link", mergePluginOptions(preservedOptions, pluginConfig)]
   ];
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
+  await writeFile2(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -16054,7 +16096,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
 }
 async function removeOpenCodeConfig(targetPath) {
   try {
-    const existingContent = await readFile3(targetPath, "utf8");
+    const existingContent = await readFile4(targetPath, "utf8");
     const existingJson = parseJsonc(existingContent);
     let modified = false;
     if ("opencode-telegram-link" in existingJson) {
@@ -16094,10 +16136,10 @@ async function removeOpenCodeConfig(targetPath) {
       return { modified: false };
     }
     const backupPath = `${targetPath}.bak`;
-    await copyFile(targetPath, backupPath);
+    await copyFile2(targetPath, backupPath);
     await chmod2(backupPath, 384);
     const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
+    await writeFile2(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
 `, {
       encoding: "utf8",
       mode: 384
@@ -16109,10 +16151,10 @@ async function removeOpenCodeConfig(targetPath) {
   }
 }
 // src/service.ts
-import { existsSync as existsSync2 } from "fs";
-import { chmod as chmod3, copyFile as copyFile2, mkdir as mkdir3, rename as rename3, rm as rm2, writeFile as writeFile2 } from "fs/promises";
-import { homedir as homedir3, platform as platform4 } from "os";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "path";
+import { existsSync as existsSync3 } from "fs";
+import { chmod as chmod3, copyFile as copyFile3, mkdir as mkdir4, rename as rename3, rm as rm3, writeFile as writeFile3 } from "fs/promises";
+import { homedir as homedir4, platform as platform4 } from "os";
+import { dirname as dirname2, join as join4, resolve as resolve2 } from "path";
 function isSystemdAvailable() {
   if (platform4() !== "linux")
     return false;
@@ -16125,7 +16167,7 @@ function isSystemdAvailable() {
 }
 function generateSystemdService(options = {}) {
   const user = options.user || process.env.USER || "root";
-  const home = options.home || process.env.HOME || homedir3();
+  const home = options.home || process.env.HOME || homedir4();
   const envPath = options.envPath || process.env.PATH || "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
   const execPath = options.execPath || process.execPath;
   const binScript = options.binScript || process.argv[1] || "opencode-telegram-link";
@@ -16164,13 +16206,13 @@ WantedBy=multi-user.target
 async function installSystemdService(options = {}) {
   try {
     const spawnSync = options.spawnSync ?? ((command) => Bun.spawnSync(command));
-    const stateDirectory = options.stateDirectory ?? join3(homedir3(), ".local", "state", "opencode-telegram-link");
-    const serviceDirectory = join3(stateDirectory, "service");
-    await mkdir3(serviceDirectory, { recursive: true, mode: 448 });
+    const stateDirectory = options.stateDirectory ?? join4(homedir4(), ".local", "state", "opencode-telegram-link");
+    const serviceDirectory = join4(stateDirectory, "service");
+    await mkdir4(serviceDirectory, { recursive: true, mode: 448 });
     const sourceEntry = resolveBrokerEntry();
-    const installedEntry = join3(serviceDirectory, "opencode-telegram-broker.js");
+    const installedEntry = join4(serviceDirectory, "opencode-telegram-broker.js");
     const temporaryEntry = `${installedEntry}.${process.pid}.tmp`;
-    await copyFile2(sourceEntry, temporaryEntry);
+    await copyFile3(sourceEntry, temporaryEntry);
     await chmod3(temporaryEntry, 384);
     const serviceContent = generateSystemdService({
       ...options,
@@ -16179,32 +16221,32 @@ async function installSystemdService(options = {}) {
       ...options.xdgStateHome ?? process.env.XDG_STATE_HOME ? { xdgStateHome: options.xdgStateHome ?? process.env.XDG_STATE_HOME } : {},
       ...options.xdgConfigHome ?? process.env.XDG_CONFIG_HOME ? { xdgConfigHome: options.xdgConfigHome ?? process.env.XDG_CONFIG_HOME } : {}
     });
-    const tmpServicePath = join3(serviceDirectory, `opencode-gateway.${process.pid}.service`);
-    await writeFile2(tmpServicePath, serviceContent, "utf8");
+    const tmpServicePath = join4(serviceDirectory, `opencode-gateway.${process.pid}.service`);
+    await writeFile3(tmpServicePath, serviceContent, "utf8");
     await chmod3(tmpServicePath, 420);
     const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
     const serviceFile = options.serviceFile ?? "/etc/systemd/system/opencode-gateway.service";
-    const previousServiceFile = join3(serviceDirectory, "opencode-gateway.previous.service");
-    const hadServiceFile = existsSync2(serviceFile);
+    const previousServiceFile = join4(serviceDirectory, "opencode-gateway.previous.service");
+    const hadServiceFile = existsSync3(serviceFile);
     const wasEnabled = hadServiceFile && spawnSync(isRoot ? ["systemctl", "is-enabled", "opencode-gateway"] : ["sudo", "systemctl", "is-enabled", "opencode-gateway"]).exitCode === 0;
     if (hadServiceFile)
-      await copyFile2(serviceFile, previousServiceFile);
+      await copyFile3(serviceFile, previousServiceFile);
     const cpCmd = isRoot ? ["cp", tmpServicePath, serviceFile] : ["sudo", "cp", tmpServicePath, serviceFile];
     const cpResult = spawnSync(cpCmd);
     if (cpResult.exitCode !== 0) {
       const err = cpResult.stderr ? new TextDecoder().decode(cpResult.stderr) : "Failed to copy service file";
-      await rm2(tmpServicePath, { force: true });
-      await rm2(temporaryEntry, { force: true });
-      await rm2(previousServiceFile, { force: true });
+      await rm3(tmpServicePath, { force: true });
+      await rm3(temporaryEntry, { force: true });
+      await rm3(previousServiceFile, { force: true });
       return { success: false, error: err.trim() };
     }
     const reloadCmd = isRoot ? ["systemctl", "daemon-reload"] : ["sudo", "systemctl", "daemon-reload"];
     const reloadResult = spawnSync(reloadCmd);
     if (reloadResult.exitCode !== 0) {
       const rollbackError = rollbackSystemdUnit(spawnSync, isRoot, serviceFile, previousServiceFile, hadServiceFile, wasEnabled);
-      await rm2(tmpServicePath, { force: true });
-      await rm2(temporaryEntry, { force: true });
-      await rm2(previousServiceFile, { force: true });
+      await rm3(tmpServicePath, { force: true });
+      await rm3(temporaryEntry, { force: true });
+      await rm3(previousServiceFile, { force: true });
       return {
         success: false,
         error: withRollbackError(decodeSpawnError(reloadResult, "Failed to reload systemd"), rollbackError)
@@ -16215,15 +16257,15 @@ async function installSystemdService(options = {}) {
     if (enableResult.exitCode !== 0) {
       const err = enableResult.stderr ? new TextDecoder().decode(enableResult.stderr) : "Failed to enable service";
       const rollbackError = rollbackSystemdUnit(spawnSync, isRoot, serviceFile, previousServiceFile, hadServiceFile, wasEnabled);
-      await rm2(tmpServicePath, { force: true });
-      await rm2(temporaryEntry, { force: true });
-      await rm2(previousServiceFile, { force: true });
+      await rm3(tmpServicePath, { force: true });
+      await rm3(temporaryEntry, { force: true });
+      await rm3(previousServiceFile, { force: true });
       return { success: false, error: withRollbackError(err.trim(), rollbackError) };
     }
     const backupEntry = `${installedEntry}.previous`;
-    const hadInstalledEntry = existsSync2(installedEntry);
+    const hadInstalledEntry = existsSync3(installedEntry);
     if (hadInstalledEntry)
-      await copyFile2(installedEntry, backupEntry);
+      await copyFile3(installedEntry, backupEntry);
     await rename3(temporaryEntry, installedEntry);
     const restartCmd = isRoot ? ["systemctl", "restart", "opencode-gateway"] : ["sudo", "systemctl", "restart", "opencode-gateway"];
     const restartResult = spawnSync(restartCmd);
@@ -16233,19 +16275,19 @@ async function installSystemdService(options = {}) {
       if (hadInstalledEntry)
         await rename3(backupEntry, installedEntry);
       else
-        await rm2(installedEntry, { force: true });
+        await rm3(installedEntry, { force: true });
       const rollbackError = rollbackSystemdUnit(spawnSync, isRoot, serviceFile, previousServiceFile, hadServiceFile, wasEnabled);
       const recoveryRestart = hadServiceFile ? spawnSync(restartCmd) : undefined;
-      await rm2(tmpServicePath, { force: true });
-      await rm2(previousServiceFile, { force: true });
+      await rm3(tmpServicePath, { force: true });
+      await rm3(previousServiceFile, { force: true });
       return {
         success: false,
         error: withRollbackError(restartResult.exitCode !== 0 ? decodeSpawnError(restartResult, "Failed to restart systemd service") : decodeSpawnError(activeResult ?? {}, "Systemd service did not remain active"), rollbackError ?? (recoveryRestart && recoveryRestart.exitCode !== 0 ? decodeSpawnError(recoveryRestart, "Failed to restart restored systemd service") : undefined))
       };
     }
-    await rm2(backupEntry, { force: true });
-    await rm2(previousServiceFile, { force: true });
-    await rm2(tmpServicePath, { force: true });
+    await rm3(backupEntry, { force: true });
+    await rm3(previousServiceFile, { force: true });
+    await rm3(tmpServicePath, { force: true });
     return { success: true };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -16253,7 +16295,7 @@ async function installSystemdService(options = {}) {
 }
 async function uninstallSystemdService(options = {}) {
   const serviceFile = options.serviceFile ?? "/etc/systemd/system/opencode-gateway.service";
-  if (!existsSync2(serviceFile)) {
+  if (!existsSync3(serviceFile)) {
     return { success: true, removed: false };
   }
   try {
@@ -16307,10 +16349,10 @@ function escapeSystemdPath(value) {
 }
 function resolveBrokerEntry() {
   const current = resolve2(process.argv[1] ?? "");
-  if (current.endsWith(join3("dist", "broker", "main.js")) && existsSync2(current))
+  if (current.endsWith(join4("dist", "broker", "main.js")) && existsSync3(current))
     return current;
   const built = resolve2(dirname2(import.meta.path), "..", "dist", "broker", "main.js");
-  if (existsSync2(built))
+  if (existsSync3(built))
     return built;
   throw new Error("built broker entry was not found; run setup from the published package or after build");
 }
@@ -16344,8 +16386,8 @@ function withRollbackError(error51, rollbackError) {
 
 // src/state/database.ts
 import { Database } from "bun:sqlite";
-import { chmod as chmod4, copyFile as copyFile3, lstat as lstat4, rename as rename4 } from "fs/promises";
-import { join as join4 } from "path";
+import { chmod as chmod4, copyFile as copyFile4, lstat as lstat4, rename as rename4 } from "fs/promises";
+import { join as join5 } from "path";
 var CURRENT_SCHEMA_VERSION = 2;
 var DATABASE_FILENAME = "state.sqlite";
 var DEFAULT_RETENTION_POLICY = {
@@ -16368,7 +16410,7 @@ class StateDatabase {
     this.#database = database;
   }
   static async open(input) {
-    const path = join4(input.stateDirectory, DATABASE_FILENAME);
+    const path = join5(input.stateDirectory, DATABASE_FILENAME);
     const existed = await validateExistingDatabase(path);
     const database = new Database(path, { create: true, strict: true });
     try {
@@ -16681,7 +16723,7 @@ async function validateExistingDatabase(path) {
 async function backupDatabase(database, path, version2) {
   database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   const timestamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
-  await copyFile3(path, `${path}.v${version2}.${timestamp}.backup`);
+  await copyFile4(path, `${path}.v${version2}.${timestamp}.backup`);
 }
 function messageRouteFromRow(row) {
   return {
@@ -16839,8 +16881,8 @@ var SCHEMA_VERSION_2 = `
 `;
 // src/state/discovery.ts
 import { randomUUID as randomUUID2 } from "crypto";
-import { readFile as readFile4, rename as rename5, rm as rm3, writeFile as writeFile3 } from "fs/promises";
-import { join as join5 } from "path";
+import { readFile as readFile5, rename as rename5, rm as rm4, writeFile as writeFile4 } from "fs/promises";
+import { join as join6 } from "path";
 var DiscoveryRecordSchema = exports_external.object({
   port: exports_external.number().int().min(1).max(65535),
   pid: exports_external.number().int().positive(),
@@ -16861,7 +16903,7 @@ async function writeDiscoveryRecord(stateDirectory, port) {
   };
   const destination = discoveryRecordPath(stateDirectory);
   const temporary = `${destination}.${record2.nonce}.tmp`;
-  await writeFile3(temporary, `${JSON.stringify(record2)}
+  await writeFile4(temporary, `${JSON.stringify(record2)}
 `, { encoding: "utf8", mode: 384 });
   await rename5(temporary, destination);
   return record2;
@@ -16869,13 +16911,13 @@ async function writeDiscoveryRecord(stateDirectory, port) {
 async function removeDiscoveryRecord(stateDirectory, expectedNonce) {
   const path = discoveryRecordPath(stateDirectory);
   try {
-    const record2 = DiscoveryRecordSchema.parse(JSON.parse(await readFile4(path, "utf8")));
+    const record2 = DiscoveryRecordSchema.parse(JSON.parse(await readFile5(path, "utf8")));
     if (record2.nonce === expectedNonce)
-      await rm3(path, { force: true });
+      await rm4(path, { force: true });
   } catch {}
 }
 function discoveryRecordPath(stateDirectory) {
-  return join5(stateDirectory, "broker.json");
+  return join6(stateDirectory, "broker.json");
 }
 // src/telegram/api.ts
 var TelegramUserSchema = exports_external.object({
@@ -17108,20 +17150,20 @@ class TelegramApiError extends Error {
 
 // src/setup.ts
 function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
-  if (explicitComposePath && existsSync3(explicitComposePath)) {
+  if (explicitComposePath && existsSync4(explicitComposePath)) {
     return {
       composeFile: explicitComposePath,
       projectDir: dirname3(explicitComposePath)
     };
   }
   const packageCandidates = [
-    join6(resolve3(import.meta.dir, ".."), "docker-compose.yml"),
-    join6(resolve3(import.meta.dir, "../.."), "docker-compose.yml"),
-    join6(import.meta.dir, "docker-compose.yml")
+    join7(resolve3(import.meta.dir, ".."), "docker-compose.yml"),
+    join7(resolve3(import.meta.dir, "../.."), "docker-compose.yml"),
+    join7(import.meta.dir, "docker-compose.yml")
   ];
   for (const file2 of packageCandidates) {
     try {
-      if (existsSync3(file2)) {
+      if (existsSync4(file2)) {
         return {
           composeFile: file2,
           projectDir: dirname3(file2)
@@ -17129,9 +17171,9 @@ function resolveDockerComposeContext(cwd = process.cwd(), explicitComposePath) {
       }
     } catch {}
   }
-  const cwdCompose = join6(cwd, "docker-compose.yml");
+  const cwdCompose = join7(cwd, "docker-compose.yml");
   try {
-    if (existsSync3(cwdCompose)) {
+    if (existsSync4(cwdCompose)) {
       const content = readFileSync(cwdCompose, "utf8");
       if (content.includes("opencode-telegram-broker") || content.includes("broker.Dockerfile")) {
         return {
@@ -17196,7 +17238,7 @@ class AsyncPromptReader {
 async function runGuidedSetup(options) {
   const now = options.now ?? Date.now;
   const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
-  const tokenFile = join6(stateDirectory, "telegram-bot-token");
+  const tokenFile = join7(stateDirectory, "telegram-bot-token");
   const api2 = new TelegramBotApi({
     token: options.botToken,
     ...options.baseUrl ? { baseUrl: options.baseUrl } : {},
@@ -17240,7 +17282,7 @@ async function runGuidedSetup(options) {
   }
   await writePrivateTokenFile(stateDirectory, tokenFile, options.botToken);
   await persistGatewayConfig(stateDirectory, parsed.data);
-  await writePrivateJsonFile(join6(stateDirectory, "deployment.json"), {
+  await writePrivateJsonFile(join7(stateDirectory, "deployment.json"), {
     mode: "native",
     bindHost: parsed.data.broker.host,
     port: parsed.data.broker.port
@@ -17504,7 +17546,7 @@ async function runInteractiveSetup(options = {}) {
 `);
         return 1;
       }
-      const tokenFile = join6(stateDirectory, "telegram-bot-token");
+      const tokenFile = join7(stateDirectory, "telegram-bot-token");
       await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
       stdout.write(isZh ? `\u2502  \u2714 \u5B89\u5168 Token \u6A94\u6848\u5DF2\u5132\u5B58 (${tokenFile})
 ` : `\u2502  \u2714 Secure token file saved (${tokenFile})
@@ -17553,9 +17595,9 @@ async function runInteractiveSetup(options = {}) {
       return 1;
     }
     if (isNode) {
-      const deploymentPath = join6(stateDirectory, "deployment.json");
-      if (existsSync3(deploymentPath)) {
-        const existing = JSON.parse(await readFile5(deploymentPath, "utf8"));
+      const deploymentPath = join7(stateDirectory, "deployment.json");
+      if (existsSync4(deploymentPath)) {
+        const existing = JSON.parse(await readFile6(deploymentPath, "utf8"));
         if (existing.mode !== "node") {
           stderr.write(isZh ? `\u2716 \u6B64\u72C0\u614B\u76EE\u9304\u5C6C\u65BC Gateway\uFF1BNode setup\u5FC5\u9808\u4F7F\u7528\u7368\u7ACB\u7684 --state-dir\u3002
 ` : `\u2716 This state directory belongs to a Gateway; Node setup requires a separate --state-dir.
@@ -17570,17 +17612,17 @@ async function runInteractiveSetup(options = {}) {
           "telegram-identity.json",
           "state.sqlite"
         ];
-        if (gatewayArtifacts.some((name) => existsSync3(join6(stateDirectory, name)))) {
+        if (gatewayArtifacts.some((name) => existsSync4(join7(stateDirectory, name)))) {
           stderr.write(isZh ? `\u2716 \u6B64\u7121\u6A19\u8A18\u72C0\u614B\u76EE\u9304\u5305\u542BGateway\u8CC7\u7522\uFF1BNode setup\u5FC5\u9808\u4F7F\u7528\u7368\u7ACB\u7684 --state-dir\u3002
 ` : `\u2716 This unmarked state directory contains Gateway assets; Node setup requires a separate --state-dir.
 `);
           return 1;
         }
       }
-      await writePrivateJsonFile(join6(stateDirectory, "deployment.json"), { mode: "node" });
+      await writePrivateJsonFile(join7(stateDirectory, "deployment.json"), { mode: "node" });
     } else {
       await persistGatewayConfig(stateDirectory, configData, isDocker ? "/state/telegram-bot-token" : undefined);
-      await writePrivateJsonFile(join6(stateDirectory, "deployment.json"), {
+      await writePrivateJsonFile(join7(stateDirectory, "deployment.json"), {
         mode: isDocker ? "docker" : "native",
         ...!isDocker ? { bindHost: configData.broker.host, port: configData.broker.port } : {},
         ...dockerComposeContext ? {
@@ -17589,8 +17631,8 @@ async function runInteractiveSetup(options = {}) {
         } : {}
       });
       await loadOrCreateStateIdentity(stateDirectory);
-      stdout.write(isZh ? `\u2502  \u2714 Node \u9023\u7DDA\u6191\u8B49\u4F4D\u65BC ${join6(stateDirectory, "gateway-secret")}\uFF08\u8ACB\u52FF\u516C\u958B\uFF09
-` : `\u2502  \u2714 Node credential stored at ${join6(stateDirectory, "gateway-secret")} (keep it private)
+      stdout.write(isZh ? `\u2502  \u2714 Node \u9023\u7DDA\u6191\u8B49\u4F4D\u65BC ${join7(stateDirectory, "gateway-secret")}\uFF08\u8ACB\u52FF\u516C\u958B\uFF09
+` : `\u2502  \u2714 Node credential stored at ${join7(stateDirectory, "gateway-secret")} (keep it private)
 `);
     }
     stdout.write(`\u2502
@@ -17630,6 +17672,24 @@ ${generatePluginConfigSnippet(configData)}
         if (configData.role === "node") {
           stdout.write(isZh ? `\u2502  \u8ACB\u5728\u5BEB\u5165\u6A94\u6848\u524D\uFF0C\u4EE5\u79C1\u5BC6\u53D6\u5F97\u7684Node\u6191\u8B49\u53D6\u4EE3 REPLACE_WITH_GATEWAY_SECRET\u3002
 ` : `\u2502  Replace REPLACE_WITH_GATEWAY_SECRET with the privately obtained Node credential before writing the file.
+`);
+        }
+      }
+    }
+    const omoAgentDir = options.omoAgentDirectory ?? omoAgentDirectory(env);
+    if (existsSync4(omoAgentDir)) {
+      stdout.write(`\u2502
+`);
+      const installOmo = await reader.ask(isZh ? "\u25C7  \u5075\u6E2C\u5230 OMO Native\uFF0C\u662F\u5426\u4E00\u4F75\u5B89\u88DD Telegram \u901A\u77E5 extension\uFF1F [Y/n]: " : "\u25C7  OMO Native detected. Install the Telegram notification extension too? [Y/n]: ", stdout, "Y");
+      if (installOmo.toLowerCase() !== "n" && installOmo.toLowerCase() !== "no") {
+        try {
+          const { directory } = await installOmoExtension({ agentDirectory: omoAgentDir });
+          stdout.write(isZh ? `\u2502  \u2714 OMO extension \u5DF2\u5B89\u88DD\u81F3 ${directory}\uFF08\u8ACB\u91CD\u958B OMO \u8996\u7A97\u751F\u6548\uFF09
+` : `\u2502  \u2714 OMO extension installed at ${directory} (restart OMO windows to load it)
+`);
+        } catch (error51) {
+          stdout.write(isZh ? `\u2502  \u2716 OMO extension \u5B89\u88DD\u5931\u6557: ${error51 instanceof Error ? error51.message : String(error51)}
+` : `\u2502  \u2716 OMO extension install failed: ${error51 instanceof Error ? error51.message : String(error51)}
 `);
         }
       }
@@ -17881,7 +17941,7 @@ function pairingCandidate(update, nonce) {
 }
 async function writePrivateTokenFile(stateDirectory, tokenFile, token) {
   await ensurePrivateDirectory(stateDirectory);
-  const temporaryPath = join6(stateDirectory, `.telegram-bot-token.${process.pid}.${randomUUID3()}.tmp`);
+  const temporaryPath = join7(stateDirectory, `.telegram-bot-token.${process.pid}.${randomUUID3()}.tmp`);
   const handle = await open2(temporaryPath, "wx", 384);
   try {
     await handle.writeFile(`${token}
@@ -17894,20 +17954,20 @@ async function writePrivateTokenFile(stateDirectory, tokenFile, token) {
     await rename6(temporaryPath, tokenFile);
     await assertPrivateFile(tokenFile);
   } catch (error51) {
-    await rm4(temporaryPath, { force: true });
+    await rm5(temporaryPath, { force: true });
     throw error51;
   }
 }
 async function persistGatewayConfig(stateDirectory, config2, daemonTokenFile) {
   if (config2.role !== "gateway" || !config2.telegram)
     return;
-  await writePrivateJsonFile(join6(stateDirectory, "telegram-identity.json"), {
+  await writePrivateJsonFile(join7(stateDirectory, "telegram-identity.json"), {
     userId: config2.telegram.userId,
     chatId: config2.telegram.chatId,
     tokenFile: config2.telegram.tokenFile,
     locale: config2.locale
   });
-  await writePrivateJsonFile(join6(stateDirectory, "opencode-notifier.json"), {
+  await writePrivateJsonFile(join7(stateDirectory, "opencode-notifier.json"), {
     ...config2,
     telegram: {
       ...config2.telegram,
@@ -17916,7 +17976,7 @@ async function persistGatewayConfig(stateDirectory, config2, daemonTokenFile) {
   });
 }
 async function writePrivateJsonFile(path, value) {
-  await mkdir4(dirname3(path), { recursive: true, mode: 448 });
+  await mkdir5(dirname3(path), { recursive: true, mode: 448 });
   const temporaryPath = `${path}.${process.pid}.${randomUUID3()}.tmp`;
   const handle = await open2(temporaryPath, "wx", 384);
   try {
@@ -17929,7 +17989,7 @@ async function writePrivateJsonFile(path, value) {
   await rename6(temporaryPath, path);
 }
 async function ensurePrivateDirectory(path) {
-  await mkdir4(path, { recursive: true, mode: 448 });
+  await mkdir5(path, { recursive: true, mode: 448 });
   const stats = await lstat5(path);
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new SetupError("SETUP_STATE_UNSAFE", "setup state path must be a regular directory");
@@ -17988,7 +18048,7 @@ function parseSetupArgs(argv) {
 }
 async function readBotToken(env) {
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE) {
-    return (await readFile5(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
+    return (await readFile6(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
   }
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN)
     return env.OPENCODE_TELEGRAM_BOT_TOKEN.trim();
@@ -18052,10 +18112,10 @@ function publicBot(bot) {
 }
 
 // src/uninstall.ts
-import { existsSync as existsSync5 } from "fs";
-import { readFile as readFile8, rm as rm7 } from "fs/promises";
-import { homedir as homedir4, tmpdir } from "os";
-import { isAbsolute, join as join9 } from "path";
+import { existsSync as existsSync6 } from "fs";
+import { readFile as readFile9, rm as rm8 } from "fs/promises";
+import { homedir as homedir5, tmpdir } from "os";
+import { isAbsolute, join as join10 } from "path";
 
 // src/broker/registry.ts
 class RouteRegistry {
@@ -18368,9 +18428,9 @@ function sameSessionRoute(left, right) {
 }
 // src/broker/server.ts
 import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
-import { chmod as chmod6, lstat as lstat6, mkdir as mkdir5, open as open3, readFile as readFile6, rename as rename7, rm as rm5 } from "fs/promises";
+import { chmod as chmod6, lstat as lstat6, mkdir as mkdir6, open as open3, readFile as readFile7, rename as rename7, rm as rm6 } from "fs/promises";
 import { platform as platform6 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/i18n/catalogs.ts
 var en = {
@@ -20606,22 +20666,22 @@ function normalizePersistedSettings(s) {
   };
 }
 async function loadDaemonNotifierConfig(stateDirectory) {
-  const configPath = join7(stateDirectory, "opencode-notifier.json");
+  const configPath = join8(stateDirectory, "opencode-notifier.json");
   if (await ensurePrivateSettingsFile(configPath)) {
     try {
-      const parsed = NotifierConfigSchema.safeParse(JSON.parse(await readFile6(configPath, "utf8")));
+      const parsed = NotifierConfigSchema.safeParse(JSON.parse(await readFile7(configPath, "utf8")));
       if (parsed.success && parsed.data.role === "gateway")
         return parsed.data;
     } catch {}
   }
   try {
-    const identity = JSON.parse(await readFile6(join7(stateDirectory, "telegram-identity.json"), "utf8"));
+    const identity = JSON.parse(await readFile7(join8(stateDirectory, "telegram-identity.json"), "utf8"));
     const parsed = NotifierConfigSchema.safeParse({
       mode: "local",
       role: "gateway",
       locale: identity.locale ?? "auto",
       telegram: {
-        tokenFile: identity.tokenFile ?? join7(stateDirectory, "telegram-bot-token"),
+        tokenFile: identity.tokenFile ?? join8(stateDirectory, "telegram-bot-token"),
         userId: String(identity.userId ?? ""),
         chatId: String(identity.chatId ?? "")
       }
@@ -20699,19 +20759,19 @@ function isMaskedOrEmpty(val) {
   return !trimmed || trimmed.includes("\u2022\u2022") || trimmed.includes("\u25CF\u25CF") || trimmed.includes("****");
 }
 async function loadDashboardSettings(stateDirectory) {
-  const filePath = join7(stateDirectory, "dashboard-settings.json");
+  const filePath = join8(stateDirectory, "dashboard-settings.json");
   if (!await ensurePrivateSettingsFile(filePath))
     return normalizePersistedSettings({});
   try {
-    const raw = await readFile6(filePath, "utf-8");
+    const raw = await readFile7(filePath, "utf-8");
     return normalizePersistedSettings(JSON.parse(raw));
   } catch {
     return normalizePersistedSettings({});
   }
 }
 async function saveDashboardSettings(stateDirectory, settings) {
-  const filePath = join7(stateDirectory, "dashboard-settings.json");
-  await mkdir5(stateDirectory, { recursive: true, mode: 448 });
+  const filePath = join8(stateDirectory, "dashboard-settings.json");
+  await mkdir6(stateDirectory, { recursive: true, mode: 448 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID6()}.tmp`;
   let committed = false;
   try {
@@ -20728,7 +20788,7 @@ async function saveDashboardSettings(stateDirectory, settings) {
     await ensurePrivateSettingsFile(filePath);
   } finally {
     if (!committed)
-      await rm5(temporaryPath, { force: true });
+      await rm6(temporaryPath, { force: true });
   }
 }
 async function ensurePrivateSettingsFile(path) {
@@ -22067,10 +22127,10 @@ function isAddressInUseError(error51) {
   return error51 instanceof Error && "code" in error51 && error51.code === "EADDRINUSE";
 }
 // src/broker/commands.ts
-import { existsSync as existsSync4 } from "fs";
-import { chmod as chmod7, lstat as lstat7, mkdir as mkdir6, open as open4, readFile as readFile7, rename as rename8, rm as rm6 } from "fs/promises";
+import { existsSync as existsSync5 } from "fs";
+import { chmod as chmod7, lstat as lstat7, mkdir as mkdir7, open as open4, readFile as readFile8, rename as rename8, rm as rm7 } from "fs/promises";
 import { isIP as isIP3 } from "net";
-import { dirname as dirname4, join as join8 } from "path";
+import { dirname as dirname4, join as join9 } from "path";
 
 // src/doctor.ts
 async function runDoctor(options = {}) {
@@ -22428,7 +22488,7 @@ async function assertDeploymentOwnsStartEndpoint(options, env) {
   }
 }
 async function readDeploymentOwnership(stateDirectory) {
-  const markerPath = join8(stateDirectory, "deployment.json");
+  const markerPath = join9(stateDirectory, "deployment.json");
   let stats;
   try {
     stats = await lstat7(markerPath);
@@ -22440,7 +22500,7 @@ async function readDeploymentOwnership(stateDirectory) {
   if (!stats.isFile() || stats.isSymbolicLink() || process.platform !== "win32" && (stats.mode & 63) !== 0 || typeof process.getuid === "function" && stats.uid !== process.getuid()) {
     throw new ConfigValidationError("DEPLOYMENT_MARKER_UNSAFE", "deployment ownership marker is not a private current-user regular file");
   }
-  const value = JSON.parse(await readFile7(markerPath, "utf8"));
+  const value = JSON.parse(await readFile8(markerPath, "utf8"));
   if (value.mode !== "native" && value.mode !== "docker" && value.mode !== "node") {
     throw new ConfigValidationError("DEPLOYMENT_MODE_INVALID", "deployment ownership mode is invalid");
   }
@@ -22511,7 +22571,7 @@ async function runPurgeStateCommand(options, streams) {
 async function runRotateCredentialCommand(flags, env, streams) {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const state = await loadOrCreateStateIdentity(stateDirectory);
-  const tokenFile = stringFlag(flags, "token-file") ?? join8(state.stateDirectory, "telegram-bot-token");
+  const tokenFile = stringFlag(flags, "token-file") ?? join9(state.stateDirectory, "telegram-bot-token");
   const token = await readSecretToken(env);
   await writePrivateTokenFile2(tokenFile, token);
   streams.stdout.write(`Credential rotated at ${tokenFile}. Restart the broker to use it.
@@ -22522,7 +22582,7 @@ async function runRotateGatewaySecretCommand(flags, env, streams) {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const state = await loadOrCreateStateIdentity(stateDirectory);
   await rotateGatewaySecret(state.stateDirectory);
-  streams.stdout.write(`Gateway credential rotated at ${join8(state.stateDirectory, "gateway-secret")}. Update every node and restart the broker.
+  streams.stdout.write(`Gateway credential rotated at ${join9(state.stateDirectory, "gateway-secret")}. Update every node and restart the broker.
 `);
   return 0;
 }
@@ -22575,8 +22635,8 @@ function parseBindHost(value) {
   throw new ConfigValidationError("BIND_HOST_INSECURE", "public bind hosts require a TLS reverse proxy and cannot receive plaintext lifecycle credentials");
 }
 async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
-  const path = join8(stateDirectory, "opencode-notifier.json");
-  if (!existsSync4(path))
+  const path = join9(stateDirectory, "opencode-notifier.json");
+  if (!existsSync5(path))
     return;
   const stats = await lstat7(path);
   if (!stats.isFile() || stats.isSymbolicLink()) {
@@ -22588,7 +22648,7 @@ async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
     throw new ConfigValidationError("PERSISTED_CONFIG_OWNER_UNSAFE", "persisted Gateway configuration must be owned by the current user");
   }
-  const value = JSON.parse(await readFile7(path, "utf8"));
+  const value = JSON.parse(await readFile8(path, "utf8"));
   const bindHost = overrides.bindHost ?? parseBindHost(typeof value.broker?.host === "string" ? value.broker.host : undefined);
   const port = overrides.port ?? value.broker?.port;
   if (!bindHost || typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -22599,7 +22659,7 @@ async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
 async function readSecretToken(env) {
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE) {
     await assertSecureTokenFile(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE);
-    return (await readFile7(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
+    return (await readFile8(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
   }
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN)
     return env.OPENCODE_TELEGRAM_BOT_TOKEN.trim();
@@ -22607,7 +22667,7 @@ async function readSecretToken(env) {
 }
 async function writePrivateTokenFile2(path, token) {
   const directory = dirname4(path);
-  await mkdir6(directory, { recursive: true, mode: 448 });
+  await mkdir7(directory, { recursive: true, mode: 448 });
   const temporaryPath = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
   const handle = await open4(temporaryPath, "wx", 384);
   try {
@@ -22621,7 +22681,7 @@ async function writePrivateTokenFile2(path, token) {
     await rename8(temporaryPath, path);
     await assertSecureTokenFile(path);
   } catch (error51) {
-    await rm6(temporaryPath, { force: true });
+    await rm7(temporaryPath, { force: true });
     throw error51;
   }
 }
@@ -22730,7 +22790,7 @@ async function runInteractiveUninstall(options = {}) {
     stdout.write(isZh ? `\u25C7  [1/4] \u6B63\u5728\u6AA2\u67E5\u4E26\u505C\u6B62\u57F7\u884C\u4E2D\u7684 Broker (\u672C\u6A5F\u7A0B\u5E8F\u6216 Docker \u5BB9\u5668)...
 ` : `\u25C7  [1/4] Checking and stopping running Broker (native process or Docker container)...
 `);
-    const composeContext = deploymentMode === "docker" && deployment?.composeFile && deployment.projectDir ? existsSync5(deployment.composeFile) && existsSync5(deployment.projectDir) ? { composeFile: deployment.composeFile, projectDir: deployment.projectDir } : undefined : deploymentMode === "docker" && deployment ? undefined : resolveDockerComposeContext(cwd);
+    const composeContext = deploymentMode === "docker" && deployment?.composeFile && deployment.projectDir ? existsSync6(deployment.composeFile) && existsSync6(deployment.projectDir) ? { composeFile: deployment.composeFile, projectDir: deployment.projectDir } : undefined : deploymentMode === "docker" && deployment ? undefined : resolveDockerComposeContext(cwd);
     if (deploymentMode === "docker" && !composeContext) {
       stderr.write(isZh ? `\u2716 \u627E\u4E0D\u5230 Docker Compose \u8A2D\u5B9A\uFF0C\u7121\u6CD5\u78BA\u8A8D Broker \u5DF2\u505C\u6B62\u3002
 ` : `\u2716 Docker Compose configuration was not found; cannot confirm Broker shutdown.
@@ -22858,14 +22918,24 @@ async function runInteractiveUninstall(options = {}) {
         }
       }
       const symlinkLocations = [
-        join9(cwd, "node_modules", "opencode-telegram-link"),
-        join9(homedir4(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
-        join9(homedir4(), ".opencode", "node_modules", "opencode-telegram-link")
+        join10(cwd, "node_modules", "opencode-telegram-link"),
+        join10(homedir5(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+        join10(homedir5(), ".opencode", "node_modules", "opencode-telegram-link")
       ];
       for (const symlink of symlinkLocations) {
         try {
-          await rm7(symlink, { recursive: true, force: true });
+          await rm8(symlink, { recursive: true, force: true });
         } catch {}
+      }
+      const omoResult = await removeOmoExtension(options.omoAgentDirectory);
+      if (omoResult === "removed") {
+        stdout.write(isZh ? `\u2502  \u2714 \u5DF2\u79FB\u9664 OMO extension\u3002
+` : `\u2502  \u2714 Removed the OMO extension.
+`);
+      } else if (omoResult === "foreign") {
+        stdout.write(isZh ? `\u2502  - OMO extension \u4E0D\u662F\u7531 setup \u5B89\u88DD\uFF0C\u672A\u79FB\u9664\u3002
+` : `\u2502  - The OMO extension was not installed by setup; left in place.
+`);
       }
     } else {
       stdout.write(isZh ? `\u2502  \u2714 \u672A\u627E\u5230\u4EFB\u4F55 opencode.json \u8A2D\u5B9A\u6A94\u3002
@@ -22878,14 +22948,14 @@ async function runInteractiveUninstall(options = {}) {
       const cleanState = await reader.ask(isZh ? "\u25C7  [3/4] \u662F\u5426\u6E05\u9664\u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u8A0A\u606F\u8DEF\u7531\u72C0\u614B (SQLite)\uFF1F [Y/n]: " : "\u25C7  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ", stdout, "Y");
       if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
         try {
-          const dbPath = join9(stateDirectory, "state.sqlite");
-          await rm7(dbPath, { force: true });
-          await rm7(`${dbPath}-wal`, { force: true });
-          await rm7(`${dbPath}-shm`, { force: true });
-          await rm7(discoveryRecordPath(stateDirectory), { force: true });
-          await rm7(join9(stateDirectory, "dashboard-settings.json"), { force: true });
+          const dbPath = join10(stateDirectory, "state.sqlite");
+          await rm8(dbPath, { force: true });
+          await rm8(`${dbPath}-wal`, { force: true });
+          await rm8(`${dbPath}-shm`, { force: true });
+          await rm8(discoveryRecordPath(stateDirectory), { force: true });
+          await rm8(join10(stateDirectory, "dashboard-settings.json"), { force: true });
           try {
-            await rm7(join9(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+            await rm8(join10(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
           } catch {}
           stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u63A7\u5236\u53F0\u8A2D\u5B9A\u6A94 (dashboard-settings.json) \u5DF2\u6E05\u9664\u3002
 ` : `\u2502  \u2714 Operational state database & dashboard settings cleared.
@@ -22901,8 +22971,8 @@ async function runInteractiveUninstall(options = {}) {
       const cleanToken = await reader.ask(isZh ? "\u25C7  [4/4] \u662F\u5426\u522A\u9664\u5132\u5B58\u7684 Telegram Bot Token \u6A94\u6848\uFF1F [y/N]: " : "\u25C7  [4/4] Delete saved Telegram Bot Token file? [y/N]: ", stdout, "N");
       if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
         try {
-          const tokenPath = join9(stateDirectory, "telegram-bot-token");
-          await rm7(tokenPath, { force: true });
+          const tokenPath = join10(stateDirectory, "telegram-bot-token");
+          await rm8(tokenPath, { force: true });
           stdout.write(isZh ? `\u2502  \u2714 Token \u6A94\u6848\u5DF2\u5B89\u5168\u522A\u9664\u3002
 ` : `\u2502  \u2714 Token file securely removed.
 `);
@@ -22914,7 +22984,7 @@ async function runInteractiveUninstall(options = {}) {
         const cleanAll = await reader.ask(isZh ? `\u2502  \u662F\u5426\u9023\u540C\u91D1\u9470\u76EE\u9304 ${stateDirectory} \u4E00\u4F75\u5B8C\u5168\u522A\u9664\uFF1F [y/N]: ` : `\u2502  Delete entire state directory (${stateDirectory})? [y/N]: `, stdout, "N");
         if (cleanAll.toLowerCase() === "y" || cleanAll.toLowerCase() === "yes") {
           try {
-            await rm7(stateDirectory, { recursive: true, force: true });
+            await rm8(stateDirectory, { recursive: true, force: true });
             stdout.write(isZh ? `\u2502  \u2714 \u91D1\u9470\u8207\u72C0\u614B\u76EE\u9304\u5DF2\u5B8C\u5168\u79FB\u9664\u3002
 ` : `\u2502  \u2714 State directory completely removed.
 `);
@@ -22984,10 +23054,10 @@ Options:
   });
 }
 async function readDeploymentRecord(stateDirectory) {
-  const path = join9(stateDirectory, "deployment.json");
-  if (!existsSync5(path))
+  const path = join10(stateDirectory, "deployment.json");
+  if (!existsSync6(path))
     return;
-  const parsed = JSON.parse(await readFile8(path, "utf8"));
+  const parsed = JSON.parse(await readFile9(path, "utf8"));
   if (parsed.mode !== "native" && parsed.mode !== "docker" && parsed.mode !== "node") {
     throw new Error("persisted deployment mode is invalid");
   }
@@ -23024,4 +23094,4 @@ export {
   runBroker
 };
 
-//# debugId=9CB2630E420A5D0864756E2164756E21
+//# debugId=4F3CBB4821E3F5C164756E2164756E21

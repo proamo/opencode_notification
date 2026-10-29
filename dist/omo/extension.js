@@ -14519,7 +14519,7 @@ var DiagnosticSchema = exports_external.object({
 // src/omo/extension.ts
 import { randomUUID as randomUUID3 } from "crypto";
 import { appendFileSync } from "fs";
-import { readdir, readFile as readFile4 } from "fs/promises";
+import { readdir, readFile as readFile5 } from "fs/promises";
 import { createConnection } from "net";
 import { homedir as homedir4, tmpdir } from "os";
 import { basename as basename2, join as join4 } from "path";
@@ -16256,6 +16256,7 @@ async function removeOpenCodeConfig(targetPath) {
 import { spawn } from "child_process";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
 import { existsSync as existsSync2, realpathSync } from "fs";
+import { readFile as readFile4 } from "fs/promises";
 import { homedir as homedir3 } from "os";
 import { basename, join as join3 } from "path";
 import { fileURLToPath } from "url";
@@ -16403,6 +16404,27 @@ class BrokerClient {
       await this.#request({ type: "route.unregister", payload: { route } });
     }
   }
+  async setRouteActivity(projectId, sessionId, active) {
+    const key = routeIntentKey({ projectId, sessionId });
+    const intent = this.#routes.get(key);
+    const route = this.#activeRoutes.get(key);
+    if (!intent || !route)
+      return false;
+    if (intent.active === active)
+      return true;
+    this.#routes.set(key, { ...intent, active });
+    const response = await this.#request({
+      type: "route.register",
+      payload: {
+        route,
+        ...this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {},
+        projectLabel: intent.projectLabel,
+        sessionLabel: intent.sessionLabel,
+        active
+      }
+    });
+    return response.type === "route.registered";
+  }
   activeRoute(projectId, sessionId) {
     return this.#activeRoutes.get(routeIntentKey({ projectId, sessionId }));
   }
@@ -16446,6 +16468,12 @@ class BrokerClient {
     const identity = this.#requireIdentity();
     if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host))
       return;
+    const persisted = await readNativeDeploymentEndpoint(identity.stateDirectory);
+    if (persisted && persisted.port === this.#options.port && persisted.host !== this.#options.host && isLoopbackGatewayHost(this.#options.host) && await probeBroker(persisted.port, identity.brokerSecret, persisted.host)) {
+      this.#options.onDiagnostic("BROKER_HOST_FROM_DEPLOYMENT", `configured Gateway host ${this.#options.host} is unreachable; using the native deployment endpoint ${persisted.host}`);
+      this.#options.host = persisted.host;
+      return;
+    }
     if (!isLoopbackGatewayHost(normalizeClientHost(this.#options.host))) {
       throw new ManagedBrokerUnavailableError;
     }
@@ -16689,6 +16717,18 @@ function spawnDetachedBroker(input) {
   });
   child.unref();
 }
+async function readNativeDeploymentEndpoint(stateDirectory) {
+  try {
+    const value = JSON.parse(await readFile4(join3(stateDirectory, "deployment.json"), "utf8"));
+    if (value.mode !== "native" || typeof value.bindHost !== "string")
+      return;
+    if (typeof value.port !== "number" || !Number.isInteger(value.port))
+      return;
+    return { host: normalizeClientHost(value.bindHost), port: value.port };
+  } catch {
+    return;
+  }
+}
 function normalizeClientHost(host) {
   if (host === "0.0.0.0")
     return "127.0.0.1";
@@ -16878,6 +16918,18 @@ function buildQuestionAnswers(target, answers) {
 async function handleOmoCommand(command, targets) {
   if (command.type === "question.reply")
     return await answerOmoQuestion(command, targets);
+  if (command.type === "session.cancel") {
+    try {
+      const interrupted = await targets.interrupt(command.route.sessionId);
+      return interrupted ? { commandId: command.commandId, status: "accepted" } : { commandId: command.commandId, status: "rejected", reason: "OMO session is idle" };
+    } catch (error51) {
+      return {
+        commandId: command.commandId,
+        status: "rejected",
+        reason: (error51 instanceof Error ? error51.message : "OMO cancel failed").slice(0, 256)
+      };
+    }
+  }
   if (command.type !== "session.prompt") {
     return {
       commandId: command.commandId,
@@ -16970,13 +17022,8 @@ function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map, ques
           return;
         const sessionId = session.getSessionId();
         const sessionLabel = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(0, 256);
-        const route = gateway.broker.activeRoute?.(gateway.projectId, sessionId) ?? await gateway.broker.upsertRoute({
-          projectId: gateway.projectId,
-          sessionId,
-          projectLabel: gateway.projectLabel,
-          sessionLabel,
-          active: false
-        });
+        const active = outcome.kind === "question.pending" ? undefined : false;
+        const route = await ensureRoute(gateway, sessionId, sessionLabel, active);
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
           return;
@@ -16996,6 +17043,21 @@ function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map, ques
         onDiagnostic(`OMO notification failed: ${error51 instanceof Error ? error51.message : String(error51)}`);
       }
     };
+    pi.on("agent_start", async (_event, ctx) => {
+      try {
+        const session = ctx.sessionManager;
+        if (session.getHeader()?.spawnedBy)
+          return;
+        const gateway = await connect(ctx.cwd);
+        if (!gateway)
+          return;
+        const sessionId = session.getSessionId();
+        const label = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(0, 256);
+        await ensureRoute(gateway, sessionId, label, true);
+      } catch (error51) {
+        onDiagnostic(`OMO activity update failed: ${error51 instanceof Error ? error51.message : String(error51)}`);
+      }
+    });
     pi.on("agent_settled", (_event, ctx) => notify(ctx, () => {
       const outcome = resolveSettledOutcome(ctx.sessionManager.getBranch());
       if (!outcome)
@@ -17040,7 +17102,8 @@ var processState = {
     const result = await handleOmoCommand(command, {
       inbox: processState.inbox,
       questions: processState.questions,
-      answerQuestion: answerThroughControlEndpoint
+      answerQuestion: answerThroughControlEndpoint,
+      interrupt: interruptThroughControlEndpoint
     });
     trace(`command ${command.type} for ${commandSession(command)}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`);
     return result;
@@ -17150,7 +17213,40 @@ function trace(message) {
 `);
   } catch {}
 }
+async function ensureRoute(gateway, sessionId, sessionLabel, active) {
+  const existing = gateway.broker.activeRoute?.(gateway.projectId, sessionId);
+  if (!existing) {
+    return await gateway.broker.upsertRoute({
+      projectId: gateway.projectId,
+      sessionId,
+      projectLabel: gateway.projectLabel,
+      sessionLabel,
+      active: active ?? false
+    });
+  }
+  if (active !== undefined) {
+    await gateway.broker.setRouteActivity?.(gateway.projectId, sessionId, active);
+  }
+  return existing;
+}
 async function answerThroughControlEndpoint(sessionId, requestId, answers) {
+  const socket = await findControlSocket(sessionId);
+  const response = await controlRequest(socket, {
+    type: "extension_ui_response",
+    uiRequestId: requestId,
+    answers
+  });
+  if (response.success !== true) {
+    throw new Error(String(response.error ?? "question answer was refused"));
+  }
+}
+async function interruptThroughControlEndpoint(sessionId) {
+  const response = await controlRequest(await findControlSocket(sessionId), { type: "interrupt" });
+  if (response.success !== true)
+    throw new Error(String(response.error ?? "interrupt was refused"));
+  return response.data?.interrupted === true;
+}
+async function findControlSocket(sessionId) {
   const agentDir = process.env.OMO_CODING_AGENT_DIR ?? process.env.SENPI_CODING_AGENT_DIR ?? join4(homedir4(), ".omo", "agent");
   const directory = join4(agentDir, "rpc", "tui");
   const sockets = (await readdir(directory).catch(() => [])).filter((name) => name.endsWith(".sock")).map((name) => join4(directory, name));
@@ -17159,22 +17255,13 @@ async function answerThroughControlEndpoint(sessionId, requestId, answers) {
       return;
     });
     const sessions = listed?.data?.sessions;
-    if (!sessions?.some((session) => session.sessionId === sessionId))
-      continue;
-    const response = await controlRequest(socket, {
-      type: "extension_ui_response",
-      uiRequestId: requestId,
-      answers
-    });
-    if (response.success !== true) {
-      throw new Error(String(response.error ?? "question answer was refused"));
-    }
-    return;
+    if (sessions?.some((session) => session.sessionId === sessionId))
+      return socket;
   }
   throw new Error("terminal intervention required");
 }
 async function controlRequest(socketPath, frame) {
-  const secret = await readFile4(`${socketPath}.secret`);
+  const secret = await readFile5(`${socketPath}.secret`);
   const id = randomUUID3();
   return await new Promise((resolve2, reject) => {
     const socket = createConnection(socketPath);
@@ -17227,4 +17314,4 @@ export {
   askUserQuestionTarget
 };
 
-//# debugId=F12A821C7F79BC9964756E2164756E21
+//# debugId=9D6A1284C1DA1BF064756E2164756E21

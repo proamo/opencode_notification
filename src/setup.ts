@@ -6,6 +6,7 @@ import { hostname, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
 import type { SupportedLocale } from "./i18n";
+import { installOmoExtension, omoAgentDirectory } from "./omo/install";
 import {
   discoverOpenCodeConfigFiles,
   generatePluginConfigSnippet,
@@ -118,6 +119,7 @@ export type InteractiveSetupOptions = {
   now?: (() => number) | undefined;
   systemdAvailable?: (() => boolean) | undefined;
   installSystemd?: typeof installSystemdService | undefined;
+  omoAgentDirectory?: string | undefined;
   uninstallSystemd?: typeof import("./service").uninstallSystemdService | undefined;
   dockerSpawnSync?:
     | ((
@@ -697,6 +699,34 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
             isZh
               ? "│  請在寫入檔案前，以私密取得的Node憑證取代 REPLACE_WITH_GATEWAY_SECRET。\n"
               : "│  Replace REPLACE_WITH_GATEWAY_SECRET with the privately obtained Node credential before writing the file.\n",
+          );
+        }
+      }
+    }
+
+    const omoAgentDir = options.omoAgentDirectory ?? omoAgentDirectory(env);
+    if (existsSync(omoAgentDir)) {
+      stdout.write("│\n");
+      const installOmo = await reader.ask(
+        isZh
+          ? "◇  偵測到 OMO Native，是否一併安裝 Telegram 通知 extension？ [Y/n]: "
+          : "◇  OMO Native detected. Install the Telegram notification extension too? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (installOmo.toLowerCase() !== "n" && installOmo.toLowerCase() !== "no") {
+        try {
+          const { directory } = await installOmoExtension({ agentDirectory: omoAgentDir });
+          stdout.write(
+            isZh
+              ? `│  ✔ OMO extension 已安裝至 ${directory}（請重開 OMO 視窗生效）\n`
+              : `│  ✔ OMO extension installed at ${directory} (restart OMO windows to load it)\n`,
+          );
+        } catch (error) {
+          stdout.write(
+            isZh
+              ? `│  ✖ OMO extension 安裝失敗: ${error instanceof Error ? error.message : String(error)}\n`
+              : `│  ✖ OMO extension install failed: ${error instanceof Error ? error.message : String(error)}\n`,
           );
         }
       }

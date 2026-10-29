@@ -192,6 +192,23 @@ Notifications from Machine B will automatically display `🖥️ [MacBook]` in T
 
 ---
 
+## OMO Native Integration
+
+OMO Native sessions can use the same Gateway and Telegram bot as OpenCode. When `bun run setup` detects an OMO agent directory (`~/.omo/agent`, or `OMO_CODING_AGENT_DIR`), it offers to install the extension into `~/.omo/agent/extensions/opencode-telegram-link/`. Restart OMO windows afterwards to load it. The extension reads the same `opencode-telegram-link` entry from your OpenCode configuration and never starts a Gateway itself.
+
+| Capability | OMO behavior |
+|---|---|
+| Completion and final error notifications | Sent once OMO settles (no retry, compaction, or queued follow-up left). User-cancelled runs, child tasks, and worker sessions are not notified. |
+| Waiting-for-answer notifications | Sent for `ask_user` questions (with option buttons) and for dialogs that appear while the agent is working. |
+| Reply to continue | Replying to a notification queues the text as a follow-up message in that exact session. |
+| Answer a question | Option buttons and typed answers work for non-blocking questions. Blocking (full-screen) questions can only be answered in the terminal in OMO 5.1.51; Telegram reports that terminal intervention is required. |
+| Cancel | `/cancel <sessionId>` and the Dashboard cancel button interrupt a running OMO turn. |
+| Start a new session | Not supported for OMO. |
+
+The Gateway connection belongs to the OMO process, so it survives `/reload`. After upgrading the package, re-run setup and restart OMO windows to load the new extension.
+
+---
+
 ## Non-Interactive & Scripted Setup (CI / Automated Environments)
 
 If you prefer scripted setup with environment variables or flags:
@@ -432,7 +449,7 @@ opencode-telegram-broker uninstall
 
 The uninstaller will safely:
 1. Stop the running broker process.
-2. Search and remove the plugin configuration from `opencode.json` files (with `.bak` backup).
+2. Search and remove the plugin configuration from `opencode.json` files (with `.bak` backup), and remove the OMO extension when setup installed it.
 3. Clear SQLite database and message routing state.
 4. Prompt to remove the private token file and state directory.
 
@@ -444,6 +461,7 @@ The uninstaller will safely:
 - [Local instance routing](openspec/specs/local-instance-routing/spec.md)
 - [Telegram session interaction](openspec/specs/telegram-session-interaction/spec.md)
 - [Setup and diagnostics](openspec/specs/setup-and-diagnostics/spec.md)
+- [OMO Native integration](openspec/specs/omo-native-integration/spec.md)
 - [Original implementation tasks](openspec/changes/archive/2026-08-19-design-telegram-notifier/tasks.md)
 - [Future Architecture & Roadmap (V2/V3)](docs/future-architecture-spec.md)
 - [Compatibility policy](docs/compatibility.md)

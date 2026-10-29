@@ -198,6 +198,23 @@ http://<gateway-ip>:42617/dashboard
 
 ---
 
+## OMO Native 整合
+
+OMO Native 的 session 可以和 OpenCode 共用同一個 Gateway 與 Telegram Bot。執行 `bun run setup` 時，如果偵測到 OMO agent 目錄（`~/.omo/agent` 或 `OMO_CODING_AGENT_DIR`），會詢問是否把 extension 安裝到 `~/.omo/agent/extensions/opencode-telegram-link/`。安裝後請重開 OMO 視窗載入。extension 沿用 OpenCode 設定中的 `opencode-telegram-link` 設定，自己不會啟動 Gateway。
+
+| 功能 | OMO 的行為 |
+|---|---|
+| 完成與最終錯誤通知 | OMO 完全結束（沒有重試、壓縮或排隊中的後續訊息）才發送。使用者手動中斷、子任務與 worker session 不發通知。 |
+| 等待回答通知 | `ask_user` 問題（附選項按鈕），以及工作中跳出的確認、選擇視窗。 |
+| 回覆接續工作 | 回覆通知後，文字會排入該 session 的後續訊息。 |
+| 回答問題 | 非阻塞式問題可用選項按鈕或打字回答。OMO 5.1.51 的阻塞式（全畫面）問題只能在終端機回答，Telegram 會提示需回終端機。 |
+| 取消工作 | `/cancel <sessionId>` 與 Dashboard 的取消按鈕可中斷執行中的 OMO 工作。 |
+| 開新 session | OMO 不支援。 |
+
+Gateway 連線屬於整個 OMO process，`/reload` 後仍會保留。升級套件後，請重新執行 setup 並重開 OMO 視窗以載入新版 extension。
+
+---
+
 ## 非互動 / 腳本化設定（CI 或自動化環境）
 
 若需在無人值守或自訂腳本環境執行，可使用參數模式：
@@ -449,7 +466,7 @@ opencode-telegram-broker uninstall
 
 移除精靈會安全自動：
 1. 停止執行中的本機 Broker 程序或 Docker 容器。
-2. 搜尋並從 `opencode.json` 清除外掛配置（保留 `.bak` 備份）。
+2. 搜尋並從 `opencode.json` 清除外掛配置（保留 `.bak` 備份），並移除由 setup 安裝的 OMO extension。
 3. 清除 SQLite 資料庫與訊息路由狀態。
 4. 詢問並刪除 Token 金鑰檔案與狀態目錄。
 
@@ -463,6 +480,7 @@ opencode-telegram-broker uninstall
 - [本機實例路由規格](../openspec/specs/local-instance-routing/spec.md)
 - [Telegram 互動規格](../openspec/specs/telegram-session-interaction/spec.md)
 - [安裝與診斷規格](../openspec/specs/setup-and-diagnostics/spec.md)
+- [OMO Native 整合規格](../openspec/specs/omo-native-integration/spec.md)
 - [原始實作工作清單](../openspec/changes/archive/2026-08-19-design-telegram-notifier/tasks.md)
 - [未來架構與演進規格書 (V2/V3 Roadmap)](future-architecture-spec.md)
 - [相容性政策](compatibility.md)
