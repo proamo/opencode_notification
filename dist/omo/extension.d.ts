@@ -39,6 +39,9 @@ export type OmoExtensionApi = {
     on(event: "ui_prompt_start", handler: (event: UiPromptEvent, ctx: OmoContext) => Promise<void>): void;
     events?: {
         on(channel: "ask-user:asked", handler: (data: AskUserAskedEvent) => void): unknown;
+        on(channel: "ask-user:closed", handler: (data: {
+            requestId?: unknown;
+        }) => void): unknown;
     };
     sendUserMessage?(text: string, options?: {
         deliverAs?: "steer" | "followUp";
@@ -68,6 +71,7 @@ export type OmoGateway = {
     broker: {
         readonly connected?: boolean;
         stop?(): Promise<void>;
+        activeRoute?(projectId: string, sessionId: string): RouteKey | undefined;
         upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
         publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
     };
@@ -75,8 +79,30 @@ export type OmoGateway = {
 export declare function resolveSettledOutcome(entries: readonly OmoEntry[]): SettledOutcome | undefined;
 export declare function normalizeAskUserRequest(request: unknown): PendingQuestion | undefined;
 export declare function uiPromptQuestion(event: UiPromptEvent, interactionId: string): PendingQuestion;
-export declare function handleOmoCommand(command: BrokerCommand, inbox: OmoSessionInbox): CommandResult;
-export declare function createOmoExtension(connect: (cwd: string) => Promise<OmoGateway | undefined>, onDiagnostic?: (message: string) => void, inbox?: OmoSessionInbox): (pi: OmoExtensionApi) => void;
+export type OmoQuestionTarget = {
+    sessionId: string;
+    blocking: boolean;
+    questions: Array<{
+        id: string;
+        labels: string[];
+    }>;
+};
+export type OmoQuestionAnswers = Record<string, {
+    selected: string[];
+    text?: string;
+}>;
+export type OmoCommandTargets = {
+    inbox: OmoSessionInbox;
+    questions: Map<string, OmoQuestionTarget>;
+    answerQuestion: (sessionId: string, requestId: string, answers: OmoQuestionAnswers) => Promise<void>;
+};
+export declare function askUserQuestionTarget(request: unknown, sessionId: string): {
+    requestId: string;
+    target: OmoQuestionTarget;
+} | undefined;
+export declare function buildQuestionAnswers(target: OmoQuestionTarget, answers: string[][]): OmoQuestionAnswers | undefined;
+export declare function handleOmoCommand(command: BrokerCommand, targets: OmoCommandTargets): Promise<CommandResult>;
+export declare function createOmoExtension(connect: (cwd: string) => Promise<OmoGateway | undefined>, onDiagnostic?: (message: string) => void, inbox?: OmoSessionInbox, questions?: Map<string, OmoQuestionTarget>): (pi: OmoExtensionApi) => void;
 declare const _default: (pi: OmoExtensionApi) => void;
 export default _default;
 //# sourceMappingURL=extension.d.ts.map

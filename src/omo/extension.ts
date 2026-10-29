@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdir, readFile } from "node:fs/promises";
+import { createConnection } from "node:net";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { computeNotifierConfigFingerprint, type NotifierConfig } from "../config";
 import { resolveLocale, type SupportedLocale } from "../i18n";
@@ -56,6 +59,7 @@ export type OmoExtensionApi = {
   ): void;
   events?: {
     on(channel: "ask-user:asked", handler: (data: AskUserAskedEvent) => void): unknown;
+    on(channel: "ask-user:closed", handler: (data: { requestId?: unknown }) => void): unknown;
   };
   sendUserMessage?(text: string, options?: { deliverAs?: "steer" | "followUp" }): void;
 };
@@ -85,6 +89,7 @@ export type OmoGateway = {
   broker: {
     readonly connected?: boolean;
     stop?(): Promise<void>;
+    activeRoute?(projectId: string, sessionId: string): RouteKey | undefined;
     upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
   };
@@ -104,13 +109,26 @@ export function resolveSettledOutcome(entries: readonly OmoEntry[]): SettledOutc
   return undefined;
 }
 
+function askUserItems(request: unknown): Array<Record<string, unknown>> {
+  const questions = (request as { questions?: unknown } | null)?.questions;
+  if (!Array.isArray(questions)) return [];
+  return questions
+    .slice(0, 20)
+    .filter(
+      (raw): raw is Record<string, unknown> =>
+        typeof raw === "object" &&
+        raw !== null &&
+        Boolean(
+          text((raw as Record<string, unknown>).question) ??
+            text((raw as Record<string, unknown>).header),
+        ),
+    );
+}
+
 export function normalizeAskUserRequest(request: unknown): PendingQuestion | undefined {
-  if (typeof request !== "object" || request === null) return undefined;
-  const { requestId, questions } = request as { requestId?: unknown; questions?: unknown };
-  if (typeof requestId !== "string" || !requestId || !Array.isArray(questions)) return undefined;
-  const normalized = questions.slice(0, 20).flatMap((raw): NormalizedQuestion[] => {
-    if (typeof raw !== "object" || raw === null) return [];
-    const item = raw as Record<string, unknown>;
+  const requestId = (request as { requestId?: unknown } | null)?.requestId;
+  if (typeof requestId !== "string" || !requestId) return undefined;
+  const normalized = askUserItems(request).flatMap((item): NormalizedQuestion[] => {
     const question = text(item.question) ?? text(item.header);
     if (!question) return [];
     const options = Array.isArray(item.options) ? item.options : [];
@@ -154,7 +172,62 @@ export function uiPromptQuestion(event: UiPromptEvent, interactionId: string): P
   };
 }
 
-export function handleOmoCommand(command: BrokerCommand, inbox: OmoSessionInbox): CommandResult {
+export type OmoQuestionTarget = {
+  sessionId: string;
+  blocking: boolean;
+  questions: Array<{ id: string; labels: string[] }>;
+};
+
+export type OmoQuestionAnswers = Record<string, { selected: string[]; text?: string }>;
+
+export type OmoCommandTargets = {
+  inbox: OmoSessionInbox;
+  questions: Map<string, OmoQuestionTarget>;
+  answerQuestion: (
+    sessionId: string,
+    requestId: string,
+    answers: OmoQuestionAnswers,
+  ) => Promise<void>;
+};
+
+export function askUserQuestionTarget(
+  request: unknown,
+  sessionId: string,
+): { requestId: string; target: OmoQuestionTarget } | undefined {
+  const requestId = (request as { requestId?: unknown } | null)?.requestId;
+  if (typeof requestId !== "string" || !requestId) return undefined;
+  const questions = askUserItems(request).map((item) => ({
+    id: typeof item.id === "string" ? item.id : "",
+    labels: (Array.isArray(item.options) ? item.options : []).flatMap((option) => {
+      const label = text((option as { label?: unknown } | null)?.label);
+      return label ? [label] : [];
+    }),
+  }));
+  if (questions.length === 0) return undefined;
+  const blocking = (request as { waitForAnswer?: unknown }).waitForAnswer !== false;
+  return { requestId, target: { sessionId, blocking, questions } };
+}
+
+export function buildQuestionAnswers(
+  target: OmoQuestionTarget,
+  answers: string[][],
+): OmoQuestionAnswers | undefined {
+  const result: OmoQuestionAnswers = {};
+  for (const [index, values] of answers.entries()) {
+    const question = target.questions[index];
+    if (!question?.id) continue;
+    const selected = values.filter((value) => question.labels.includes(value));
+    const typed = values.filter((value) => !question.labels.includes(value)).join("\n");
+    result[question.id] = { selected, ...(typed ? { text: typed } : {}) };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export async function handleOmoCommand(
+  command: BrokerCommand,
+  targets: OmoCommandTargets,
+): Promise<CommandResult> {
+  if (command.type === "question.reply") return await answerOmoQuestion(command, targets);
   if (command.type !== "session.prompt") {
     return {
       commandId: command.commandId,
@@ -162,7 +235,7 @@ export function handleOmoCommand(command: BrokerCommand, inbox: OmoSessionInbox)
       reason: "not supported for OMO sessions yet",
     };
   }
-  const deliver = inbox.get(command.route.sessionId);
+  const deliver = targets.inbox.get(command.route.sessionId);
   if (!deliver) {
     return { commandId: command.commandId, status: "rejected", reason: "OMO session is not open" };
   }
@@ -178,10 +251,47 @@ export function handleOmoCommand(command: BrokerCommand, inbox: OmoSessionInbox)
   }
 }
 
+async function answerOmoQuestion(
+  command: Extract<BrokerCommand, { type: "question.reply" }>,
+  targets: OmoCommandTargets,
+): Promise<CommandResult> {
+  const target = targets.questions.get(command.interactionId);
+  if (!target || target.sessionId !== command.route.sessionId) {
+    return {
+      commandId: command.commandId,
+      status: "stale",
+      reason: "question is no longer pending",
+    };
+  }
+  if (target.blocking) {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "terminal intervention required",
+    };
+  }
+  const answers = buildQuestionAnswers(target, command.answers);
+  if (!answers) {
+    return { commandId: command.commandId, status: "rejected", reason: "invalid question answer" };
+  }
+  try {
+    await targets.answerQuestion(target.sessionId, command.interactionId, answers);
+    targets.questions.delete(command.interactionId);
+    return { commandId: command.commandId, status: "accepted" };
+  } catch (error) {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: (error instanceof Error ? error.message : "question answer failed").slice(0, 256),
+    };
+  }
+}
+
 export function createOmoExtension(
   connect: (cwd: string) => Promise<OmoGateway | undefined>,
   onDiagnostic: (message: string) => void = trace,
   inbox: OmoSessionInbox = new Map(),
+  questions: Map<string, OmoQuestionTarget> = new Map(),
 ): (pi: OmoExtensionApi) => void {
   return (pi) => {
     if (pi.sessionKind === "worker") return;
@@ -221,13 +331,15 @@ export function createOmoExtension(
           0,
           256,
         );
-        const route = await gateway.broker.upsertRoute({
-          projectId: gateway.projectId,
-          sessionId,
-          projectLabel: gateway.projectLabel,
-          sessionLabel,
-          active: outcome.kind === "question.pending",
-        });
+        const route =
+          gateway.broker.activeRoute?.(gateway.projectId, sessionId) ??
+          (await gateway.broker.upsertRoute({
+            projectId: gateway.projectId,
+            sessionId,
+            projectLabel: gateway.projectLabel,
+            sessionLabel,
+            active: false,
+          }));
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
           return;
@@ -261,10 +373,19 @@ export function createOmoExtension(
 
     pi.events?.on("ask-user:asked", (data) => {
       if (!data.ctx) return;
+      const session = data.ctx.sessionManager;
+      const answerable = session.getHeader()?.spawnedBy
+        ? undefined
+        : askUserQuestionTarget(data.request, session.getSessionId());
+      if (answerable) questions.set(answerable.requestId, answerable.target);
       void notify(data.ctx, () => {
         const outcome = normalizeAskUserRequest(data.request);
         return outcome && { outcome, eventId: `omo:ask:${outcome.interactionId}` };
       });
+    });
+
+    pi.events?.on("ask-user:closed", (data) => {
+      if (typeof data.requestId === "string") questions.delete(data.requestId);
     });
 
     pi.on("ui_prompt_start", (event, ctx) =>
@@ -282,13 +403,28 @@ export function createOmoExtension(
 type ProcessState = {
   gateways: Map<string, Promise<OmoGateway | undefined>>;
   inbox: OmoSessionInbox;
+  questions: Map<string, OmoQuestionTarget>;
+  handleCommand: (command: BrokerCommand) => Promise<CommandResult>;
 };
 
 const PROCESS_STATE_KEY = Symbol.for("opencode-telegram-link.omo");
-const processGlobals = globalThis as Record<symbol, ProcessState | undefined>;
-const processState: ProcessState = processGlobals[PROCESS_STATE_KEY] ?? {
-  gateways: new Map(),
-  inbox: new Map(),
+const processGlobals = globalThis as Record<symbol, Partial<ProcessState> | undefined>;
+const previousState = processGlobals[PROCESS_STATE_KEY];
+const processState: ProcessState = {
+  gateways: previousState?.gateways ?? new Map(),
+  inbox: previousState?.inbox ?? new Map(),
+  questions: previousState?.questions ?? new Map(),
+  handleCommand: async (command) => {
+    const result = await handleOmoCommand(command, {
+      inbox: processState.inbox,
+      questions: processState.questions,
+      answerQuestion: answerThroughControlEndpoint,
+    });
+    trace(
+      `command ${command.type} for ${commandSession(command)}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`,
+    );
+    return result;
+  },
 };
 processGlobals[PROCESS_STATE_KEY] = processState;
 const { gateways } = processState;
@@ -335,9 +471,9 @@ async function connectGateway(cwd: string): Promise<OmoGateway | undefined> {
     },
     onDiagnostic: (code, message) => trace(`BrokerClient ${code}: ${message}`),
     onCommand: (command) => {
-      const result = handleOmoCommand(command, processState.inbox);
-      trace(`command ${command.type} for ${commandSession(command)}: ${result.status}`);
-      return result;
+      const current =
+        processGlobals[PROCESS_STATE_KEY]?.handleCommand ?? processState.handleCommand;
+      return current(command);
     },
   });
   await broker.start();
@@ -401,6 +537,82 @@ function trace(message: string): void {
   } catch {}
 }
 
+async function answerThroughControlEndpoint(
+  sessionId: string,
+  requestId: string,
+  answers: OmoQuestionAnswers,
+): Promise<void> {
+  const agentDir =
+    process.env.OMO_CODING_AGENT_DIR ??
+    process.env.SENPI_CODING_AGENT_DIR ??
+    join(homedir(), ".omo", "agent");
+  const directory = join(agentDir, "rpc", "tui");
+  const sockets = (await readdir(directory).catch(() => [] as string[]))
+    .filter((name) => name.endsWith(".sock"))
+    .map((name) => join(directory, name));
+  for (const socket of sockets) {
+    const listed = await controlRequest(socket, { type: "list_sessions" }).catch(() => undefined);
+    const sessions = (listed?.data as { sessions?: Array<{ sessionId?: unknown }> } | undefined)
+      ?.sessions;
+    if (!sessions?.some((session) => session.sessionId === sessionId)) continue;
+    const response = await controlRequest(socket, {
+      type: "extension_ui_response",
+      uiRequestId: requestId,
+      answers,
+    });
+    if (response.success !== true) {
+      throw new Error(String(response.error ?? "question answer was refused"));
+    }
+    return;
+  }
+  throw new Error("terminal intervention required");
+}
+
+async function controlRequest(
+  socketPath: string,
+  frame: Record<string, unknown>,
+): Promise<{ success?: unknown; error?: unknown; data?: unknown }> {
+  const secret = await readFile(`${socketPath}.secret`);
+  const id = randomUUID();
+  return await new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let buffer = "";
+    const finish = (
+      error?: Error,
+      value?: { success?: unknown; error?: unknown; data?: unknown },
+    ) => {
+      clearTimeout(timeout);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(value ?? {});
+    };
+    const timeout = setTimeout(() => finish(new Error("OMO control endpoint timed out")), 5_000);
+    socket.on("connect", () => {
+      socket.write(secret);
+      socket.write(`${JSON.stringify({ ...frame, id })}\n`);
+    });
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        try {
+          const message = JSON.parse(line) as {
+            id?: unknown;
+            type?: unknown;
+            success?: unknown;
+            error?: unknown;
+            data?: unknown;
+          };
+          if (message.id === id && message.type === "response") return finish(undefined, message);
+        } catch {}
+      }
+    });
+    socket.on("error", (error) => finish(error));
+    socket.on("close", () => finish(new Error("OMO control endpoint closed")));
+  });
+}
+
 function commandSession(command: BrokerCommand): string {
   return "route" in command ? command.route.sessionId : "new session";
 }
@@ -412,4 +624,4 @@ connectOnce(process.cwd()).catch((error: unknown) =>
   trace(`Gateway connect failed: ${error instanceof Error ? error.message : String(error)}`),
 );
 
-export default createOmoExtension(connectOnce, trace, processState.inbox);
+export default createOmoExtension(connectOnce, trace, processState.inbox, processState.questions);

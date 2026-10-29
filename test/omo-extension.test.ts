@@ -7,6 +7,7 @@ import {
   type OmoEntry,
   type OmoExtensionApi,
   type OmoGateway,
+  type OmoQuestionTarget,
   type OmoSessionInbox,
   resolveSettledOutcome,
   type UiPromptEvent,
@@ -37,6 +38,7 @@ function harness(options: {
   const published: NormalizedNotification[] = [];
   const settled = Promise.withResolvers<void>();
   let connects = 0;
+  let registrations = 0;
   const gateway: OmoGateway = {
     projectId: ROUTE.projectId,
     projectLabel: "demo",
@@ -46,7 +48,11 @@ function harness(options: {
     notifyError: true,
     notifyQuestion: options.notifyQuestion ?? true,
     broker: {
-      upsertRoute: async () => ROUTE,
+      activeRoute: () => (registrations > 0 ? ROUTE : undefined),
+      upsertRoute: async () => {
+        registrations += 1;
+        return ROUTE;
+      },
       publishNotification: async (notification) => {
         published.push(notification);
         settled.resolve();
@@ -57,7 +63,9 @@ function harness(options: {
   const handlers = new Map<string, (event: never, ctx: OmoContext) => Promise<void> | void>();
   const sent: Array<{ text: string; options: unknown }> = [];
   const inbox: OmoSessionInbox = new Map();
-  let askUser: ((data: { ctx?: OmoContext; request?: unknown }) => void) | undefined;
+  const questions = new Map<string, OmoQuestionTarget>();
+  const answered: Array<{ sessionId: string; requestId: string; answers: unknown }> = [];
+  const busHandlers = new Map<string, (data: never) => void>();
   const pi: OmoExtensionApi = {
     ...(options.sessionKind ? { sessionKind: options.sessionKind } : {}),
     on: (event: string, registered: (event: never, ctx: OmoContext) => Promise<void> | void) => {
@@ -67,8 +75,8 @@ function harness(options: {
       sent.push({ text, options: sendOptions });
     },
     events: {
-      on: (_channel, registered) => {
-        askUser = registered;
+      on: (channel: string, registered: (data: never) => void) => {
+        busHandlers.set(channel, registered);
       },
     },
   };
@@ -83,6 +91,7 @@ function harness(options: {
       settled.resolve();
     },
     inbox,
+    questions,
   )(pi);
   const ctx: OmoContext = {
     cwd: "/tmp/demo",
@@ -100,9 +109,20 @@ function harness(options: {
     uiPrompt: async (event: UiPromptEvent) =>
       handlers.get("ui_prompt_start")?.(event as never, ctx),
     askUser: async (request: unknown) => {
-      askUser?.({ ctx, request });
+      busHandlers.get("ask-user:asked")?.({ ctx, request } as never);
       await settled.promise;
     },
+    closeQuestion: (requestId: string) =>
+      busHandlers.get("ask-user:closed")?.({ requestId, status: "answered" } as never),
+    targets: {
+      inbox,
+      questions,
+      answerQuestion: async (sessionId: string, requestId: string, answers: unknown) => {
+        answered.push({ sessionId, requestId, answers });
+      },
+    },
+    answered,
+    questions,
     start: () => handlers.get("session_start")?.({} as never, ctx),
     shutdown: () => handlers.get("session_shutdown")?.({} as never, ctx),
     inbox,
@@ -110,6 +130,7 @@ function harness(options: {
     published,
     diagnostics,
     connects: () => connects,
+    registrations: () => registrations,
     registered: () => handlers.size > 0,
   };
 }
@@ -127,7 +148,7 @@ describe("Telegram replies to OMO sessions", () => {
   test("delivers a reply to the open session as a follow-up user message", async () => {
     const run = harness({ entries: [] });
     await run.start();
-    expect(handleOmoCommand(prompt("continue please"), run.inbox)).toEqual({
+    expect(await handleOmoCommand(prompt("continue please"), run.targets)).toEqual({
       commandId: "44444444-4444-4444-8444-444444444444",
       status: "accepted",
     });
@@ -138,7 +159,7 @@ describe("Telegram replies to OMO sessions", () => {
     const run = harness({ entries: [] });
     await run.start();
     await run.shutdown();
-    expect(handleOmoCommand(prompt("hello"), run.inbox)).toMatchObject({
+    expect(await handleOmoCommand(prompt("hello"), run.targets)).toMatchObject({
       status: "rejected",
       reason: "OMO session is not open",
     });
@@ -154,16 +175,110 @@ describe("Telegram replies to OMO sessions", () => {
   test("rejects commands other than session prompts", async () => {
     const run = harness({ entries: [] });
     await run.start();
-    const result = handleOmoCommand(
+    const result = await handleOmoCommand(
       {
         type: "session.cancel",
         commandId: "44444444-4444-4444-8444-444444444444",
         route: ROUTE,
       },
-      run.inbox,
+      run.targets,
     );
     expect(result).toMatchObject({ status: "rejected" });
     expect(run.sent).toHaveLength(0);
+  });
+});
+
+const COLOR_QUESTION = {
+  requestId: "toolu_1|item_2",
+  waitForAnswer: false,
+  questions: [
+    {
+      id: "q1",
+      header: "Color",
+      question: "Pick a color",
+      options: [{ label: "red" }, { label: "blue" }],
+      multiSelect: false,
+    },
+  ],
+};
+
+function questionReply(answers: string[][], interactionId = COLOR_QUESTION.requestId) {
+  return {
+    type: "question.reply" as const,
+    commandId: "44444444-4444-4444-8444-444444444444",
+    route: ROUTE,
+    interactionId,
+    answers,
+  };
+}
+
+describe("Telegram answers to OMO questions", () => {
+  test("asks for a terminal answer when OMO shows a blocking question", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser({ ...COLOR_QUESTION, waitForAnswer: true });
+    expect(await handleOmoCommand(questionReply([["red"]]), run.targets)).toMatchObject({
+      status: "rejected",
+      reason: "terminal intervention required",
+    });
+    expect(run.answered).toHaveLength(0);
+  });
+
+  test("answers a pending question with the selected option by question id", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser(COLOR_QUESTION);
+    const result = await handleOmoCommand(questionReply([["blue"]]), run.targets);
+    expect(result.status).toBe("accepted");
+    expect(run.answered).toEqual([
+      {
+        sessionId: "omo-session",
+        requestId: "toolu_1|item_2",
+        answers: { q1: { selected: ["blue"] } },
+      },
+    ]);
+    expect(run.questions.size).toBe(0);
+  });
+
+  test("keeps one route per session so earlier question buttons stay valid", async () => {
+    const run = harness({
+      entries: [assistant({ stopReason: "stop", content: [{ type: "text", text: "asked" }] })],
+    });
+    await run.askUser(COLOR_QUESTION);
+    await run.settle();
+    expect(run.published.map((notification) => notification.kind)).toEqual([
+      "question.pending",
+      "session.completed",
+    ]);
+    expect(run.registrations()).toBe(1);
+  });
+
+  test("sends typed text that matches no option as a free-form answer", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser(COLOR_QUESTION);
+    await handleOmoCommand(questionReply([["green please"]]), run.targets);
+    expect(run.answered[0]?.answers).toEqual({ q1: { selected: [], text: "green please" } });
+  });
+
+  test("reports closed or unknown questions as stale", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser(COLOR_QUESTION);
+    run.closeQuestion(COLOR_QUESTION.requestId);
+    expect(await handleOmoCommand(questionReply([["red"]]), run.targets)).toMatchObject({
+      status: "stale",
+    });
+    expect(run.answered).toHaveLength(0);
+  });
+
+  test("keeps the question pending when the terminal refuses the answer", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser(COLOR_QUESTION);
+    const result = await handleOmoCommand(questionReply([["red"]]), {
+      ...run.targets,
+      answerQuestion: async () => {
+        throw new Error("terminal intervention required");
+      },
+    });
+    expect(result).toMatchObject({ status: "rejected", reason: "terminal intervention required" });
+    expect(run.questions.size).toBe(1);
   });
 });
 

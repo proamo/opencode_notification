@@ -14517,8 +14517,11 @@ var DiagnosticSchema = exports_external.object({
 });
 
 // src/omo/extension.ts
+import { randomUUID as randomUUID3 } from "crypto";
 import { appendFileSync } from "fs";
-import { tmpdir } from "os";
+import { readdir, readFile as readFile4 } from "fs/promises";
+import { createConnection } from "net";
+import { homedir as homedir4, tmpdir } from "os";
 import { basename as basename2, join as join4 } from "path";
 
 // src/config.ts
@@ -16788,16 +16791,17 @@ function resolveSettledOutcome(entries) {
   }
   return;
 }
+function askUserItems(request) {
+  const questions = request?.questions;
+  if (!Array.isArray(questions))
+    return [];
+  return questions.slice(0, 20).filter((raw) => typeof raw === "object" && raw !== null && Boolean(text(raw.question) ?? text(raw.header)));
+}
 function normalizeAskUserRequest(request) {
-  if (typeof request !== "object" || request === null)
+  const requestId = request?.requestId;
+  if (typeof requestId !== "string" || !requestId)
     return;
-  const { requestId, questions } = request;
-  if (typeof requestId !== "string" || !requestId || !Array.isArray(questions))
-    return;
-  const normalized = questions.slice(0, 20).flatMap((raw) => {
-    if (typeof raw !== "object" || raw === null)
-      return [];
-    const item = raw;
+  const normalized = askUserItems(request).flatMap((item) => {
     const question = text(item.question) ?? text(item.header);
     if (!question)
       return [];
@@ -16842,7 +16846,38 @@ function uiPromptQuestion(event, interactionId) {
     ]
   };
 }
-function handleOmoCommand(command, inbox) {
+function askUserQuestionTarget(request, sessionId) {
+  const requestId = request?.requestId;
+  if (typeof requestId !== "string" || !requestId)
+    return;
+  const questions = askUserItems(request).map((item) => ({
+    id: typeof item.id === "string" ? item.id : "",
+    labels: (Array.isArray(item.options) ? item.options : []).flatMap((option) => {
+      const label = text(option?.label);
+      return label ? [label] : [];
+    })
+  }));
+  if (questions.length === 0)
+    return;
+  const blocking = request.waitForAnswer !== false;
+  return { requestId, target: { sessionId, blocking, questions } };
+}
+function buildQuestionAnswers(target, answers) {
+  const result = {};
+  for (const [index, values] of answers.entries()) {
+    const question = target.questions[index];
+    if (!question?.id)
+      continue;
+    const selected = values.filter((value) => question.labels.includes(value));
+    const typed = values.filter((value) => !question.labels.includes(value)).join(`
+`);
+    result[question.id] = { selected, ...typed ? { text: typed } : {} };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+async function handleOmoCommand(command, targets) {
+  if (command.type === "question.reply")
+    return await answerOmoQuestion(command, targets);
   if (command.type !== "session.prompt") {
     return {
       commandId: command.commandId,
@@ -16850,7 +16885,7 @@ function handleOmoCommand(command, inbox) {
       reason: "not supported for OMO sessions yet"
     };
   }
-  const deliver = inbox.get(command.route.sessionId);
+  const deliver = targets.inbox.get(command.route.sessionId);
   if (!deliver) {
     return { commandId: command.commandId, status: "rejected", reason: "OMO session is not open" };
   }
@@ -16865,7 +16900,39 @@ function handleOmoCommand(command, inbox) {
     };
   }
 }
-function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map) {
+async function answerOmoQuestion(command, targets) {
+  const target = targets.questions.get(command.interactionId);
+  if (!target || target.sessionId !== command.route.sessionId) {
+    return {
+      commandId: command.commandId,
+      status: "stale",
+      reason: "question is no longer pending"
+    };
+  }
+  if (target.blocking) {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: "terminal intervention required"
+    };
+  }
+  const answers = buildQuestionAnswers(target, command.answers);
+  if (!answers) {
+    return { commandId: command.commandId, status: "rejected", reason: "invalid question answer" };
+  }
+  try {
+    await targets.answerQuestion(target.sessionId, command.interactionId, answers);
+    targets.questions.delete(command.interactionId);
+    return { commandId: command.commandId, status: "accepted" };
+  } catch (error51) {
+    return {
+      commandId: command.commandId,
+      status: "rejected",
+      reason: (error51 instanceof Error ? error51.message : "question answer failed").slice(0, 256)
+    };
+  }
+}
+function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map, questions = new Map) {
   return (pi) => {
     if (pi.sessionKind === "worker")
       return;
@@ -16903,12 +16970,12 @@ function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map) {
           return;
         const sessionId = session.getSessionId();
         const sessionLabel = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(0, 256);
-        const route = await gateway.broker.upsertRoute({
+        const route = gateway.broker.activeRoute?.(gateway.projectId, sessionId) ?? await gateway.broker.upsertRoute({
           projectId: gateway.projectId,
           sessionId,
           projectLabel: gateway.projectLabel,
           sessionLabel,
-          active: outcome.kind === "question.pending"
+          active: false
         });
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
@@ -16939,10 +17006,18 @@ function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map) {
     pi.events?.on("ask-user:asked", (data) => {
       if (!data.ctx)
         return;
+      const session = data.ctx.sessionManager;
+      const answerable = session.getHeader()?.spawnedBy ? undefined : askUserQuestionTarget(data.request, session.getSessionId());
+      if (answerable)
+        questions.set(answerable.requestId, answerable.target);
       notify(data.ctx, () => {
         const outcome = normalizeAskUserRequest(data.request);
         return outcome && { outcome, eventId: `omo:ask:${outcome.interactionId}` };
       });
+    });
+    pi.events?.on("ask-user:closed", (data) => {
+      if (typeof data.requestId === "string")
+        questions.delete(data.requestId);
     });
     pi.on("ui_prompt_start", (event, ctx) => notify(ctx, () => {
       if (event.kind === "question" || ctx.isIdle?.() !== false)
@@ -16956,9 +17031,20 @@ function createOmoExtension(connect, onDiagnostic = trace, inbox = new Map) {
 }
 var PROCESS_STATE_KEY = Symbol.for("opencode-telegram-link.omo");
 var processGlobals = globalThis;
-var processState = processGlobals[PROCESS_STATE_KEY] ?? {
-  gateways: new Map,
-  inbox: new Map
+var previousState = processGlobals[PROCESS_STATE_KEY];
+var processState = {
+  gateways: previousState?.gateways ?? new Map,
+  inbox: previousState?.inbox ?? new Map,
+  questions: previousState?.questions ?? new Map,
+  handleCommand: async (command) => {
+    const result = await handleOmoCommand(command, {
+      inbox: processState.inbox,
+      questions: processState.questions,
+      answerQuestion: answerThroughControlEndpoint
+    });
+    trace(`command ${command.type} for ${commandSession(command)}: ${result.status}${result.reason ? ` (${result.reason})` : ""}`);
+    return result;
+  }
 };
 processGlobals[PROCESS_STATE_KEY] = processState;
 var { gateways } = processState;
@@ -17007,9 +17093,8 @@ async function connectGateway(cwd) {
     },
     onDiagnostic: (code, message) => trace(`BrokerClient ${code}: ${message}`),
     onCommand: (command) => {
-      const result = handleOmoCommand(command, processState.inbox);
-      trace(`command ${command.type} for ${commandSession(command)}: ${result.status}`);
-      return result;
+      const current = processGlobals[PROCESS_STATE_KEY]?.handleCommand ?? processState.handleCommand;
+      return current(command);
     }
   });
   await broker.start();
@@ -17065,18 +17150,81 @@ function trace(message) {
 `);
   } catch {}
 }
+async function answerThroughControlEndpoint(sessionId, requestId, answers) {
+  const agentDir = process.env.OMO_CODING_AGENT_DIR ?? process.env.SENPI_CODING_AGENT_DIR ?? join4(homedir4(), ".omo", "agent");
+  const directory = join4(agentDir, "rpc", "tui");
+  const sockets = (await readdir(directory).catch(() => [])).filter((name) => name.endsWith(".sock")).map((name) => join4(directory, name));
+  for (const socket of sockets) {
+    const listed = await controlRequest(socket, { type: "list_sessions" }).catch(() => {
+      return;
+    });
+    const sessions = listed?.data?.sessions;
+    if (!sessions?.some((session) => session.sessionId === sessionId))
+      continue;
+    const response = await controlRequest(socket, {
+      type: "extension_ui_response",
+      uiRequestId: requestId,
+      answers
+    });
+    if (response.success !== true) {
+      throw new Error(String(response.error ?? "question answer was refused"));
+    }
+    return;
+  }
+  throw new Error("terminal intervention required");
+}
+async function controlRequest(socketPath, frame) {
+  const secret = await readFile4(`${socketPath}.secret`);
+  const id = randomUUID3();
+  return await new Promise((resolve2, reject) => {
+    const socket = createConnection(socketPath);
+    let buffer = "";
+    const finish = (error51, value) => {
+      clearTimeout(timeout);
+      socket.destroy();
+      if (error51)
+        reject(error51);
+      else
+        resolve2(value ?? {});
+    };
+    const timeout = setTimeout(() => finish(new Error("OMO control endpoint timed out")), 5000);
+    socket.on("connect", () => {
+      socket.write(secret);
+      socket.write(`${JSON.stringify({ ...frame, id })}
+`);
+    });
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      for (let end = buffer.indexOf(`
+`);end >= 0; end = buffer.indexOf(`
+`)) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        try {
+          const message = JSON.parse(line);
+          if (message.id === id && message.type === "response")
+            return finish(undefined, message);
+        } catch {}
+      }
+    });
+    socket.on("error", (error51) => finish(error51));
+    socket.on("close", () => finish(new Error("OMO control endpoint closed")));
+  });
+}
 function commandSession(command) {
   return "route" in command ? command.route.sessionId : "new session";
 }
 connectOnce(process.cwd()).catch((error51) => trace(`Gateway connect failed: ${error51 instanceof Error ? error51.message : String(error51)}`));
-var extension_default = createOmoExtension(connectOnce, trace, processState.inbox);
+var extension_default = createOmoExtension(connectOnce, trace, processState.inbox, processState.questions);
 export {
   uiPromptQuestion,
   resolveSettledOutcome,
   normalizeAskUserRequest,
   handleOmoCommand,
   extension_default as default,
-  createOmoExtension
+  createOmoExtension,
+  buildQuestionAnswers,
+  askUserQuestionTarget
 };
 
-//# debugId=F8B7FB762C6973F664756E2164756E21
+//# debugId=F12A821C7F79BC9964756E2164756E21
