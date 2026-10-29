@@ -47,6 +47,7 @@ export declare class BrokerClient {
     waitUntilConnected(timeoutMs?: number): Promise<void>;
     upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
     removeRoute(projectId: string, sessionId: string): Promise<void>;
+    setRouteActivity(projectId: string, sessionId: string, active: boolean): Promise<boolean>;
     activeRoute(projectId: string, sessionId: string): RouteKey | undefined;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
 }

@@ -16253,6 +16253,7 @@ async function removeOpenCodeConfig(targetPath) {
 import { spawn } from "child_process";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
 import { existsSync as existsSync2, realpathSync } from "fs";
+import { readFile as readFile4 } from "fs/promises";
 import { homedir as homedir3 } from "os";
 import { basename, join as join3 } from "path";
 import { fileURLToPath } from "url";
@@ -16400,6 +16401,27 @@ class BrokerClient {
       await this.#request({ type: "route.unregister", payload: { route } });
     }
   }
+  async setRouteActivity(projectId, sessionId, active) {
+    const key = routeIntentKey({ projectId, sessionId });
+    const intent = this.#routes.get(key);
+    const route = this.#activeRoutes.get(key);
+    if (!intent || !route)
+      return false;
+    if (intent.active === active)
+      return true;
+    this.#routes.set(key, { ...intent, active });
+    const response = await this.#request({
+      type: "route.register",
+      payload: {
+        route,
+        ...this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {},
+        projectLabel: intent.projectLabel,
+        sessionLabel: intent.sessionLabel,
+        active
+      }
+    });
+    return response.type === "route.registered";
+  }
   activeRoute(projectId, sessionId) {
     return this.#activeRoutes.get(routeIntentKey({ projectId, sessionId }));
   }
@@ -16443,6 +16465,12 @@ class BrokerClient {
     const identity = this.#requireIdentity();
     if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host))
       return;
+    const persisted = await readNativeDeploymentEndpoint(identity.stateDirectory);
+    if (persisted && persisted.port === this.#options.port && persisted.host !== this.#options.host && isLoopbackGatewayHost(this.#options.host) && await probeBroker(persisted.port, identity.brokerSecret, persisted.host)) {
+      this.#options.onDiagnostic("BROKER_HOST_FROM_DEPLOYMENT", `configured Gateway host ${this.#options.host} is unreachable; using the native deployment endpoint ${persisted.host}`);
+      this.#options.host = persisted.host;
+      return;
+    }
     if (!isLoopbackGatewayHost(normalizeClientHost(this.#options.host))) {
       throw new ManagedBrokerUnavailableError;
     }
@@ -16685,6 +16713,18 @@ function spawnDetachedBroker(input) {
     }
   });
   child.unref();
+}
+async function readNativeDeploymentEndpoint(stateDirectory) {
+  try {
+    const value = JSON.parse(await readFile4(join3(stateDirectory, "deployment.json"), "utf8"));
+    if (value.mode !== "native" || typeof value.bindHost !== "string")
+      return;
+    if (typeof value.port !== "number" || !Number.isInteger(value.port))
+      return;
+    return { host: normalizeClientHost(value.bindHost), port: value.port };
+  } catch {
+    return;
+  }
 }
 function normalizeClientHost(host) {
   if (host === "0.0.0.0")
@@ -17181,4 +17221,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=CF5981C7CADF068C64756E2164756E21
+//# debugId=BA6B555AAB754FB264756E2164756E21

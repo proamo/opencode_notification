@@ -222,6 +222,22 @@ describe("BrokerClient lifecycle", () => {
     expect(brokers[0]?.registry.routeCount).toBe(0);
   });
 
+  test("toggles route activity without changing its generation", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    const client = createClient(stateDirectory, port);
+    clients.push(client);
+    await client.start();
+    const route = await client.upsertRoute({ ...routeIntent(), active: false });
+    const registry = brokers[0]?.registry;
+    expect(registry?.resolveBySessionId("ses_123", undefined, true)).toBeUndefined();
+
+    expect(await client.setRouteActivity("opaque-project-id", "ses_123", true)).toBe(true);
+
+    expect(registry?.resolveBySessionId("ses_123", undefined, true)).toEqual(route);
+    expect(client.activeRoute("opaque-project-id", "ses_123")).toEqual(route);
+  });
+
   test("publishes normalized notifications through the broker", async () => {
     const stateDirectory = await createTemporaryDirectory();
     const port = await availablePort();
@@ -512,6 +528,30 @@ describe("BrokerClient lifecycle", () => {
     expect(client.connected).toBe(true);
   });
 
+  test("follows the native deployment endpoint when the configured loopback host is stale", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const broker = await startBroker({ stateDirectory, bindHost: "127.0.0.2", port: 0 });
+    brokers.push(broker);
+    await Bun.write(
+      join(stateDirectory, "deployment.json"),
+      JSON.stringify({ mode: "native", bindHost: "127.0.0.2", port: broker.port }),
+    );
+    const diagnostics: string[] = [];
+    const client = createClient(stateDirectory, broker.port, {
+      host: "127.0.0.1",
+      spawnBroker: () => {
+        throw new Error("must not spawn a competing Broker");
+      },
+      onDiagnostic: (code) => diagnostics.push(code),
+    });
+    clients.push(client);
+
+    await client.start();
+
+    expect(client.connected).toBe(true);
+    expect(diagnostics).toContain("BROKER_HOST_FROM_DEPLOYMENT");
+  });
+
   test("writes and safely removes the informational discovery record", async () => {
     const stateDirectory = await createTemporaryDirectory();
     const broker = await startBroker({ stateDirectory, port: 0 });
@@ -584,7 +624,13 @@ function createClient(
   port: number,
   options: Pick<
     BrokerClientOptions,
-    "host" | "instanceId" | "onCommand" | "spawnBroker" | "startupTimeoutMs" | "telegram"
+    | "host"
+    | "instanceId"
+    | "onCommand"
+    | "onDiagnostic"
+    | "spawnBroker"
+    | "startupTimeoutMs"
+    | "telegram"
   > & {
     brokerOptions?: Pick<StartBrokerOptions, "telegramApiFactory">;
   } = {},

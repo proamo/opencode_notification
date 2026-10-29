@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -250,6 +251,26 @@ export class BrokerClient {
     }
   }
 
+  async setRouteActivity(projectId: string, sessionId: string, active: boolean): Promise<boolean> {
+    const key = routeIntentKey({ projectId, sessionId });
+    const intent = this.#routes.get(key);
+    const route = this.#activeRoutes.get(key);
+    if (!intent || !route) return false;
+    if (intent.active === active) return true;
+    this.#routes.set(key, { ...intent, active });
+    const response = await this.#request({
+      type: "route.register",
+      payload: {
+        route,
+        ...(this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {}),
+        projectLabel: intent.projectLabel,
+        sessionLabel: intent.sessionLabel,
+        active,
+      },
+    });
+    return response.type === "route.registered";
+  }
+
   activeRoute(projectId: string, sessionId: string): RouteKey | undefined {
     return this.#activeRoutes.get(routeIntentKey({ projectId, sessionId }));
   }
@@ -296,6 +317,21 @@ export class BrokerClient {
     if (this.#options.gatewayUrl) return;
     const identity = this.#requireIdentity();
     if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host)) return;
+    const persisted = await readNativeDeploymentEndpoint(identity.stateDirectory);
+    if (
+      persisted &&
+      persisted.port === this.#options.port &&
+      persisted.host !== this.#options.host &&
+      isLoopbackGatewayHost(this.#options.host) &&
+      (await probeBroker(persisted.port, identity.brokerSecret, persisted.host))
+    ) {
+      this.#options.onDiagnostic(
+        "BROKER_HOST_FROM_DEPLOYMENT",
+        `configured Gateway host ${this.#options.host} is unreachable; using the native deployment endpoint ${persisted.host}`,
+      );
+      this.#options.host = persisted.host;
+      return;
+    }
     if (!isLoopbackGatewayHost(normalizeClientHost(this.#options.host))) {
       throw new ManagedBrokerUnavailableError();
     }
@@ -576,6 +612,23 @@ export function spawnDetachedBroker(input: {
     },
   });
   child.unref();
+}
+
+async function readNativeDeploymentEndpoint(
+  stateDirectory: string,
+): Promise<{ host: string; port: number } | undefined> {
+  try {
+    const value = JSON.parse(await readFile(join(stateDirectory, "deployment.json"), "utf8")) as {
+      mode?: unknown;
+      bindHost?: unknown;
+      port?: unknown;
+    };
+    if (value.mode !== "native" || typeof value.bindHost !== "string") return undefined;
+    if (typeof value.port !== "number" || !Number.isInteger(value.port)) return undefined;
+    return { host: normalizeClientHost(value.bindHost), port: value.port };
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeClientHost(host: string): string {
