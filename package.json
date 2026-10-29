@@ -39,7 +39,7 @@
   ],
   "scripts": {
     "build": "bun run build:js && bun run build:types",
-    "build:js": "bun build src/plugin.ts src/protocol/index.ts src/broker/main.ts --outdir dist --target bun --format esm --sourcemap=external",
+    "build:js": "bun build src/plugin.ts src/protocol/index.ts src/broker/main.ts src/omo/extension.ts --outdir dist --target bun --format esm --sourcemap=external",
     "build:types": "tsc --project tsconfig.build.json",
     "check": "biome check . && tsc --noEmit",
     "check:fix": "biome check --write .",
