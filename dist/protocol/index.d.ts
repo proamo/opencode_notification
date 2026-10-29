@@ -91,6 +91,7 @@ export declare const RouteRegisterEnvelopeSchema: z.ZodObject<{
         hostLabel: z.ZodOptional<z.ZodString>;
         projectLabel: z.ZodString;
         sessionLabel: z.ZodString;
+        active: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>;
     protocol: z.ZodObject<{
         major: z.ZodLiteral<1>;
@@ -622,6 +623,7 @@ export declare const ClientEnvelopeSchema: z.ZodDiscriminatedUnion<[z.ZodObject<
         hostLabel: z.ZodOptional<z.ZodString>;
         projectLabel: z.ZodString;
         sessionLabel: z.ZodString;
+        active: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>;
     protocol: z.ZodObject<{
         major: z.ZodLiteral<1>;

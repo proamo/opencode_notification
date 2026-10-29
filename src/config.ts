@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { platform } from "node:os";
 import { z } from "zod";
+import { isPrivateGatewayHost, parseGatewayWebSocketUrl } from "./network";
 
 const TelegramIdSchema = z.string().regex(/^[1-9]\d*$/, "must be a positive Telegram numeric ID");
 const TelegramBotTokenSchema = z
@@ -20,7 +21,17 @@ export const NotifierConfigSchema = z
     locale: LocalePreferenceSchema.default("auto"),
     gateway: z
       .object({
-        url: z.string().min(1),
+        url: z
+          .string()
+          .min(1)
+          .refine((value) => {
+            try {
+              parseGatewayWebSocketUrl(value);
+              return true;
+            } catch {
+              return false;
+            }
+          }, "public gateway URLs must use wss://"),
         secret: z.string().min(1),
       })
       .optional(),
@@ -84,7 +95,14 @@ export const NotifierConfigSchema = z
       .optional(),
   })
   .strict()
-  .superRefine(({ role, gateway, telegram }, context) => {
+  .superRefine(({ role, gateway, telegram, broker, voice }, context) => {
+    if (broker.host !== "0.0.0.0" && broker.host !== "::" && !isPrivateGatewayHost(broker.host)) {
+      context.addIssue({
+        code: "custom",
+        message: "local broker host must be loopback or a private IP address",
+        path: ["broker", "host"],
+      });
+    }
     if (role === "node") {
       if (!gateway) {
         context.addIssue({
@@ -93,7 +111,22 @@ export const NotifierConfigSchema = z
           path: ["gateway"],
         });
       }
+      if (telegram || voice) {
+        context.addIssue({
+          code: "custom",
+          message: "node role cannot configure Telegram or voice credentials",
+          path: [telegram ? "telegram" : "voice"],
+        });
+      }
       return;
+    }
+
+    if (gateway) {
+      context.addIssue({
+        code: "custom",
+        message: "gateway role cannot configure a remote gateway URL",
+        path: ["gateway"],
+      });
     }
 
     if (!telegram) {

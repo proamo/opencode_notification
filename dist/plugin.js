@@ -14351,7 +14351,8 @@ var RouteRegisterEnvelopeSchema = exports_external.object({
     route: RouteKeySchema,
     hostLabel: exports_external.string().min(1).max(128).optional(),
     projectLabel: exports_external.string().min(1).max(128),
-    sessionLabel: exports_external.string().min(1).max(256)
+    sessionLabel: exports_external.string().min(1).max(256),
+    active: exports_external.boolean().optional()
   })
 });
 var RouteUnregisterEnvelopeSchema = exports_external.object({
@@ -14524,6 +14525,46 @@ import { basename as basename2, join as join4 } from "path";
 import { createHash } from "crypto";
 import { lstat, readFile } from "fs/promises";
 import { platform } from "os";
+
+// src/network.ts
+import { isIP } from "net";
+function parseGatewayWebSocketUrl(value) {
+  const base = value.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  const parsed = new URL(base.includes("://") ? base : `ws://${base}`);
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    throw new Error("gateway URL must use ws:// or wss://");
+  }
+  if (!parsed.pathname || parsed.pathname === "/")
+    parsed.pathname = "/v1/connect";
+  if (parsed.protocol === "ws:" && !isPrivateGatewayHost(parsed.hostname)) {
+    throw new Error("public gateway URLs must use wss://");
+  }
+  return parsed;
+}
+function isPrivateGatewayHost(hostname3) {
+  const host = hostname3.replace(/^\[|\]$/g, "").toLowerCase();
+  if (isLoopbackGatewayHost(host))
+    return true;
+  const addressFamily = isIP(host);
+  if (addressFamily === 0)
+    return false;
+  const parts = host.split(".").map(Number);
+  if (addressFamily === 4) {
+    const [first = -1, second = -1] = parts;
+    return first === 10 || first === 127 || first === 169 && second === 254 || first === 172 && second >= 16 && second <= 31 || first === 192 && second === 168 || first === 100 && second >= 64 && second <= 127;
+  }
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8") || host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb");
+}
+function isLoopbackGatewayHost(hostname3) {
+  const host = hostname3.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host === "::1")
+    return true;
+  if (isIP(host) !== 4)
+    return false;
+  return Number(host.split(".")[0]) === 127;
+}
+
+// src/config.ts
 var TelegramIdSchema2 = exports_external.string().regex(/^[1-9]\d*$/, "must be a positive Telegram numeric ID");
 var TelegramBotTokenSchema2 = exports_external.string().regex(/^\d+:[A-Za-z0-9_-]{20,}$/, "Telegram bot token format is invalid");
 var ConfigFingerprintSchema2 = exports_external.string().regex(/^[a-f0-9]{64}$/);
@@ -14534,7 +14575,14 @@ var NotifierConfigSchema = exports_external.object({
   hostLabel: exports_external.string().min(1).max(128).optional(),
   locale: LocalePreferenceSchema.default("auto"),
   gateway: exports_external.object({
-    url: exports_external.string().min(1),
+    url: exports_external.string().min(1).refine((value) => {
+      try {
+        parseGatewayWebSocketUrl(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "public gateway URLs must use wss://"),
     secret: exports_external.string().min(1)
   }).optional(),
   telegram: exports_external.object({
@@ -14570,7 +14618,14 @@ var NotifierConfigSchema = exports_external.object({
     endpoint: exports_external.string().url().optional(),
     language: exports_external.string().default("zh")
   }).strict().optional()
-}).strict().superRefine(({ role, gateway, telegram }, context) => {
+}).strict().superRefine(({ role, gateway, telegram, broker, voice }, context) => {
+  if (broker.host !== "0.0.0.0" && broker.host !== "::" && !isPrivateGatewayHost(broker.host)) {
+    context.addIssue({
+      code: "custom",
+      message: "local broker host must be loopback or a private IP address",
+      path: ["broker", "host"]
+    });
+  }
   if (role === "node") {
     if (!gateway) {
       context.addIssue({
@@ -14579,7 +14634,21 @@ var NotifierConfigSchema = exports_external.object({
         path: ["gateway"]
       });
     }
+    if (telegram || voice) {
+      context.addIssue({
+        code: "custom",
+        message: "node role cannot configure Telegram or voice credentials",
+        path: [telegram ? "telegram" : "voice"]
+      });
+    }
     return;
+  }
+  if (gateway) {
+    context.addIssue({
+      code: "custom",
+      message: "gateway role cannot configure a remote gateway URL",
+      path: ["gateway"]
+    });
   }
   if (!telegram) {
     context.addIssue({
@@ -15094,6 +15163,7 @@ class OpenCodeEventBridge {
   #onNotification;
   #onDiagnostic;
   #sessions = new Map;
+  #deletedSessions = new Set;
   #fallbackEventIds = new Map;
   #dedupe = new Map;
   #pendingCompletions = new Map;
@@ -15154,11 +15224,23 @@ class OpenCodeEventBridge {
     }
     if (result.status === "session") {
       if (result.event.kind === "session.busy") {
+        if (this.#deletedSessions.has(result.event.sessionId))
+          return;
         this.#cancelCompletion(result.event.sessionId);
+        let session2 = this.#sessions.get(result.event.sessionId);
+        if (!session2) {
+          session2 = { title: "OpenCode Session", active: true };
+          this.#sessions.set(result.event.sessionId, session2);
+          await this.#upsertSessionRoute(result.event.sessionId, session2);
+        } else if (!session2.active) {
+          session2.active = true;
+          await this.#upsertSessionRoute(result.event.sessionId, session2);
+        }
         return;
       }
       if (result.event.kind === "session.delete") {
         this.#sessions.delete(result.event.sessionId);
+        this.#deletedSessions.add(result.event.sessionId);
         this.#cancelCompletion(result.event.sessionId);
         this.#deleteFallbackTransitions(result.event.sessionId);
         this.#removeBufferedSources(result.event.sessionId);
@@ -15166,20 +15248,41 @@ class OpenCodeEventBridge {
         return;
       }
       this.#deleteFallbackTransitions(result.event.sessionId);
-      this.#sessions.set(result.event.sessionId, {
+      this.#deletedSessions.delete(result.event.sessionId);
+      const previous = this.#sessions.get(result.event.sessionId);
+      const session = {
         title: result.event.title,
-        ...result.event.parentId ? { parentId: result.event.parentId } : {}
-      });
-      await this.#broker.upsertRoute({
-        projectId: this.#projectId,
-        sessionId: result.event.sessionId,
-        projectLabel: this.#projectLabel,
-        sessionLabel: result.event.title
-      });
+        ...result.event.parentId ? { parentId: result.event.parentId } : {},
+        active: previous?.active ?? false
+      };
+      this.#sessions.set(result.event.sessionId, session);
+      await this.#upsertSessionRoute(result.event.sessionId, session);
       this.#scheduleSourceFlush(0);
       return;
     }
+    if (result.event.kind === "session.completed" || result.event.kind === "session.error") {
+      if (this.#deletedSessions.has(result.event.sessionId))
+        return;
+      let session = this.#sessions.get(result.event.sessionId);
+      if (!session) {
+        session = { title: "OpenCode Session", active: false };
+        this.#sessions.set(result.event.sessionId, session);
+        await this.#upsertSessionRoute(result.event.sessionId, session);
+      } else if (session.active) {
+        session.active = false;
+        await this.#upsertSessionRoute(result.event.sessionId, session);
+      }
+    }
     this.#handleSourceEvent(result.event, this.#now());
+  }
+  async#upsertSessionRoute(sessionId, session) {
+    await this.#broker.upsertRoute({
+      projectId: this.#projectId,
+      sessionId,
+      projectLabel: this.#projectLabel,
+      sessionLabel: session.title,
+      active: session.active
+    });
   }
   #handleSourceEvent(event, occurredAt) {
     if (!this.#isEnabled(event) || !this.#passesRootPolicy(event))
@@ -15197,6 +15300,8 @@ class OpenCodeEventBridge {
         summary = await this.#fetchSummary(event.sessionId);
       } catch {}
     }
+    if (this.#deletedSessions.has(event.sessionId))
+      return true;
     const result = this.#createNotification(event, occurredAt, summary);
     if (result.status === "drop")
       return true;
@@ -15211,15 +15316,21 @@ class OpenCodeEventBridge {
     return true;
   }
   #createNotification(event, occurredAt, summary) {
+    if (this.#deletedSessions.has(event.sessionId))
+      return { status: "drop" };
     let session = this.#sessions.get(event.sessionId);
     if (!session) {
-      session = { title: "OpenCode Session" };
+      session = {
+        title: "OpenCode Session",
+        active: event.kind !== "session.completed" && event.kind !== "session.error"
+      };
       this.#sessions.set(event.sessionId, session);
       this.#broker.upsertRoute({
         projectId: this.#projectId,
         sessionId: event.sessionId,
         projectLabel: this.#projectLabel,
-        sessionLabel: session.title
+        sessionLabel: session.title,
+        active: session.active
       });
       return { status: "retry" };
     }
@@ -15229,7 +15340,8 @@ class OpenCodeEventBridge {
         projectId: this.#projectId,
         sessionId: event.sessionId,
         projectLabel: this.#projectLabel,
-        sessionLabel: session.title
+        sessionLabel: session.title,
+        active: session.active
       });
       return { status: "retry" };
     }
@@ -15532,17 +15644,20 @@ function removeExpired(items, now) {
   }
 }
 // src/opencode/config-helper.ts
-import { copyFile, lstat as lstat3, mkdir as mkdir2, readFile as readFile3, rename, writeFile } from "fs/promises";
+import { chmod as chmod2, copyFile, lstat as lstat3, mkdir as mkdir2, readFile as readFile3, rename as rename2, writeFile } from "fs/promises";
 import { homedir as homedir2, platform as platform3 } from "os";
 import { dirname, join as join2, resolve } from "path";
 
 // src/state/identity.ts
 import { createHmac, randomBytes, randomUUID } from "crypto";
-import { chmod, lstat as lstat2, mkdir, open, readFile as readFile2, realpath } from "fs/promises";
+import { existsSync } from "fs";
+import { chmod, lstat as lstat2, mkdir, open, readFile as readFile2, realpath, rename, rm } from "fs/promises";
 import { homedir, platform as platform2 } from "os";
 import { join } from "path";
 var UUIDSchema = exports_external.uuid();
 var SECRET_BYTES = 32;
+var IDENTITY_MODE_LEGACY = "2:legacy";
+var IDENTITY_MODE_SEPARATE = "2:separate";
 function defaultStateDirectory(environment = process.env) {
   if (environment.XDG_STATE_HOME) {
     return join(environment.XDG_STATE_HOME, "opencode-telegram-link");
@@ -15559,9 +15674,43 @@ async function loadOrCreateStateIdentity(stateDirectory = defaultStateDirectory(
   await mkdir(stateDirectory, { recursive: true, mode: 448 });
   await assertPrivatePath(stateDirectory, "directory", 448);
   const machineId = await loadOrCreatePrivateValue(join(stateDirectory, "machine-id"), () => randomUUID(), (value) => UUIDSchema.parse(value));
-  const brokerSecret = await loadOrCreatePrivateValue(join(stateDirectory, "broker-secret"), () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
+  const brokerSecretPath = join(stateDirectory, "broker-secret");
+  const versionPath = join(stateDirectory, "identity-version");
+  const identityMode = await loadOrCreatePrivateValue(versionPath, () => existsSync(brokerSecretPath) ? IDENTITY_MODE_LEGACY : IDENTITY_MODE_SEPARATE, (value) => {
+    if (value === "2")
+      return IDENTITY_MODE_SEPARATE;
+    if (value !== IDENTITY_MODE_LEGACY && value !== IDENTITY_MODE_SEPARATE) {
+      throw new Error("unsupported state identity version");
+    }
+    return value;
+  });
+  const legacyIdentity = identityMode === IDENTITY_MODE_LEGACY;
+  const brokerSecret = await loadOrCreatePrivateValue(brokerSecretPath, () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
+  const gatewaySecret = await loadOrCreatePrivateValue(join(stateDirectory, "gateway-secret"), () => legacyIdentity ? brokerSecret : randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
   const routeSalt = await loadOrCreatePrivateValue(join(stateDirectory, "route-salt"), () => randomBytes(SECRET_BYTES).toString("base64url"), validateSecret);
-  return { stateDirectory, machineId, brokerSecret, routeSalt };
+  return { stateDirectory, machineId, brokerSecret, gatewaySecret, routeSalt };
+}
+async function rotateGatewaySecret(stateDirectory = defaultStateDirectory()) {
+  await mkdir(stateDirectory, { recursive: true, mode: 448 });
+  await assertPrivatePath(stateDirectory, "directory", 448);
+  const secret = randomBytes(SECRET_BYTES).toString("base64url");
+  const path = join(stateDirectory, "gateway-secret");
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(temporaryPath, "wx", 384);
+  try {
+    await handle.writeFile(`${secret}
+`, "utf8");
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(temporaryPath, path);
+    await assertPrivatePath(path, "file", 384);
+  } catch (error51) {
+    await rm(temporaryPath, { force: true });
+    throw error51;
+  }
+  return secret;
 }
 function createRouteGeneration() {
   return randomUUID();
@@ -15635,6 +15784,21 @@ function isAlreadyExistsError(error51) {
 }
 
 // src/opencode/config-helper.ts
+function isTelegramLinkSpecifier(value) {
+  const raw = typeof value === "string" ? value : Array.isArray(value) && typeof value[0] === "string" ? value[0] : "";
+  const normalized = raw.replaceAll("\\", "/").replace(/\/$/, "");
+  if (/^opencode-telegram-link(?:@[^/]+)?$/.test(normalized))
+    return true;
+  return /(?:^|\/)(?:opencode-telegram-link|opencode_notification(?:-master)?)(?:\/dist\/plugin\.js)?$/.test(normalized);
+}
+function mergeRecords(base, next) {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(next)) {
+    const previous = merged[key];
+    merged[key] = previous && value && typeof previous === "object" && typeof value === "object" && !Array.isArray(previous) && !Array.isArray(value) ? mergeRecords(previous, value) : value;
+  }
+  return merged;
+}
 function parseJsonc(content) {
   let insideString = false;
   let stringChar = "";
@@ -15772,6 +15936,7 @@ function generatePluginConfigSnippet(config2) {
     role: config2.role,
     ...config2.hostLabel ? { hostLabel: config2.hostLabel } : {},
     locale: config2.locale,
+    broker: config2.broker,
     notifications: {
       completion: config2.notifications.completion,
       error: config2.notifications.error,
@@ -15782,7 +15947,7 @@ function generatePluginConfigSnippet(config2) {
   if (config2.role === "node" && config2.gateway) {
     pluginConfig.gateway = {
       url: config2.gateway.url,
-      secret: config2.gateway.secret
+      secret: "REPLACE_WITH_GATEWAY_SECRET"
     };
   } else if (config2.telegram) {
     pluginConfig.telegram = {
@@ -15792,18 +15957,17 @@ function generatePluginConfigSnippet(config2) {
     };
   }
   const snippet = {
-    plugin: {
-      "opencode-telegram-link": pluginConfig
-    }
+    plugin: [["opencode-telegram-link", pluginConfig]]
   };
   return JSON.stringify(snippet, null, 2);
 }
 async function loadResolvedNotifierConfig(explicitOptions, cwd) {
-  if (explicitOptions && typeof explicitOptions === "object") {
+  if (explicitOptions !== undefined) {
     const directParse = NotifierConfigSchema.safeParse(explicitOptions);
     if (directParse.success) {
       return directParse.data;
     }
+    return;
   }
   const discovered = await discoverOpenCodeConfigFiles(cwd);
   for (const item of discovered) {
@@ -15814,34 +15978,40 @@ async function loadResolvedNotifierConfig(explicitOptions, cwd) {
       const json2 = parseJsonc(content);
       if (Array.isArray(json2.plugin)) {
         for (const entry of json2.plugin) {
-          if (Array.isArray(entry) && entry.length >= 2) {
+          if (Array.isArray(entry)) {
             const [key, value] = entry;
-            if (typeof key === "string" && (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin"))) {
+            if (isTelegramLinkSpecifier(key)) {
+              if (entry.length < 2)
+                return;
               const parsed = NotifierConfigSchema.safeParse(value);
               if (parsed.success)
                 return parsed.data;
+              return;
             }
           }
         }
       }
       if (json2.plugin && typeof json2.plugin === "object") {
         for (const [key, value] of Object.entries(json2.plugin)) {
-          if (key === "opencode-telegram-link" || key.includes("opencode_notification") || key.includes("telegram") || key.includes("plugin")) {
+          if (isTelegramLinkSpecifier(key)) {
             const parsed = NotifierConfigSchema.safeParse(value);
             if (parsed.success)
               return parsed.data;
+            return;
           }
         }
       }
-      if (json2["opencode-telegram-link"]) {
+      if (Object.hasOwn(json2, "opencode-telegram-link")) {
         const parsed = NotifierConfigSchema.safeParse(json2["opencode-telegram-link"]);
         if (parsed.success)
           return parsed.data;
+        return;
       }
-      if (json2["telegram-link"]) {
+      if (Object.hasOwn(json2, "telegram-link")) {
         const parsed = NotifierConfigSchema.safeParse(json2["telegram-link"]);
         if (parsed.success)
           return parsed.data;
+        return;
       }
     } catch {}
   }
@@ -15892,6 +16062,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
     }
     backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
+    await chmod2(backupPath, 384);
   } catch (err) {
     if (err.code === "ENOENT") {
       await mkdir2(dirname(targetPath), { recursive: true });
@@ -15904,6 +16075,7 @@ async function injectOpenCodeConfig(targetPath, config2) {
     role: config2.role,
     ...config2.hostLabel ? { hostLabel: config2.hostLabel } : {},
     locale: config2.locale,
+    broker: config2.broker,
     notifications: {
       completion: config2.notifications.completion,
       error: config2.notifications.error,
@@ -15923,55 +16095,102 @@ async function injectOpenCodeConfig(targetPath, config2) {
       chatId: config2.telegram.chatId
     };
   }
+  const optionSources = [];
+  for (const legacyKey of ["opencode-telegram-link", "telegram-link"]) {
+    const legacy = existingJson[legacyKey];
+    if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+      optionSources.push(legacy);
+    }
+  }
+  const retainedPlugins = [];
+  if (Array.isArray(existingJson.plugin)) {
+    for (const entry of existingJson.plugin) {
+      if (isTelegramLinkSpecifier(entry)) {
+        if (Array.isArray(entry) && entry[1] && typeof entry[1] === "object") {
+          optionSources.push(entry[1]);
+        }
+      } else {
+        retainedPlugins.push(entry);
+      }
+    }
+  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
+    for (const [name, options] of Object.entries(existingJson.plugin)) {
+      if (isTelegramLinkSpecifier(name)) {
+        if (options && typeof options === "object" && !Array.isArray(options)) {
+          optionSources.push(options);
+        }
+      } else {
+        retainedPlugins.push([name, options]);
+      }
+    }
+  }
+  if (Array.isArray(existingJson.plugins)) {
+    for (const entry of existingJson.plugins) {
+      if (!isTelegramLinkSpecifier(entry))
+        retainedPlugins.push(entry);
+    }
+  }
   delete existingJson["opencode-telegram-link"];
   delete existingJson["telegram-link"];
-  const isMatch = (entry) => {
-    const name = typeof entry === "string" ? entry : Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : "";
-    return name === "opencode-telegram-link" || name.startsWith("opencode-telegram-link") || name.includes("opencode-telegram-link") || name.includes("opencode_notification") || name.includes("telegram-link");
-  };
+  delete existingJson.plugins;
   function mergePluginOptions(existing, updated) {
     const existingObj = existing && typeof existing === "object" && !Array.isArray(existing) ? existing : {};
-    const merged = {
-      ...existingObj,
-      ...updated
-    };
+    const merged = mergeRecords(existingObj, updated);
     if (updated.role === "node") {
       delete merged.telegram;
+      delete merged.voice;
     } else if (updated.role === "gateway") {
       delete merged.gateway;
-      delete merged.hostLabel;
+      if (!("hostLabel" in updated))
+        delete merged.hostLabel;
     }
-    if (typeof existingObj.notifications === "object" && existingObj.notifications !== null && typeof updated.notifications === "object" && updated.notifications !== null) {
-      merged.notifications = {
-        ...existingObj.notifications,
-        ...updated.notifications
-      };
+    return normalizePluginOptions(merged, updated);
+  }
+  function normalizePluginOptions(candidate, fallback) {
+    for (let attempt = 0;attempt < 20; attempt += 1) {
+      const parsed = NotifierConfigSchema.safeParse(candidate);
+      if (parsed.success)
+        return parsed.data;
+      let changed = false;
+      for (const issue2 of parsed.error.issues) {
+        let parent = candidate;
+        const parentPath = issue2.code === "unrecognized_keys" ? issue2.path : issue2.path.slice(0, -1);
+        for (const segment of parentPath) {
+          if (!parent || typeof parent !== "object" || Array.isArray(parent))
+            break;
+          parent = parent[String(segment)];
+        }
+        if (!parent || typeof parent !== "object" || Array.isArray(parent))
+          continue;
+        if (issue2.code === "unrecognized_keys") {
+          for (const key of issue2.keys) {
+            if (key in parent) {
+              delete parent[key];
+              changed = true;
+            }
+          }
+        } else if (issue2.path.length > 0) {
+          delete parent[String(issue2.path.at(-1))];
+          changed = true;
+        }
+      }
+      if (!changed)
+        break;
     }
-    return merged;
+    return NotifierConfigSchema.parse(fallback);
   }
-  if (Array.isArray(existingJson.plugin)) {
-    const existingEntry = existingJson.plugin.find(isMatch);
-    const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
-    const mergedOptions = mergePluginOptions(existingOptions, pluginConfig);
-    const cleanedPlugins = existingJson.plugin.filter((p) => !isMatch(p));
-    cleanedPlugins.push(["opencode-telegram-link", mergedOptions]);
-    existingJson.plugin = cleanedPlugins;
-  } else if (Array.isArray(existingJson.plugins)) {
-    const plugins = existingJson.plugins;
-    existingJson.plugins = [...plugins.filter((p) => !isMatch(p)), "opencode-telegram-link"];
-    const existingPluginMap = existingJson.plugin && typeof existingJson.plugin === "object" ? existingJson.plugin : {};
-    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
-    existingJson.plugin = existingPluginMap;
-  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
-    const existingPluginMap = existingJson.plugin;
-    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(existingPluginMap["opencode-telegram-link"], pluginConfig);
-  } else {
-    existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
-  }
+  const preservedOptions = optionSources.reduce((merged, source) => mergeRecords(merged, source), {});
+  existingJson.plugin = [
+    ...retainedPlugins,
+    ["opencode-telegram-link", mergePluginOptions(preservedOptions, pluginConfig)]
+  ];
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
-`, "utf8");
-  await rename(temporaryPath, targetPath);
+`, {
+    encoding: "utf8",
+    mode: 384
+  });
+  await rename2(temporaryPath, targetPath);
   return backupPath ? { targetPath, backupPath } : { targetPath };
 }
 async function removeOpenCodeConfig(targetPath) {
@@ -15979,10 +16198,6 @@ async function removeOpenCodeConfig(targetPath) {
     const existingContent = await readFile3(targetPath, "utf8");
     const existingJson = parseJsonc(existingContent);
     let modified = false;
-    const isPluginMatch = (entry) => {
-      const name = typeof entry === "string" ? entry : Array.isArray(entry) && typeof entry[0] === "string" ? entry[0] : "";
-      return name === "opencode-telegram-link" || name.startsWith("opencode-telegram-link") || name.includes("opencode-telegram-link") || name.includes("opencode_notification") || name.includes("telegram-link");
-    };
     if ("opencode-telegram-link" in existingJson) {
       delete existingJson["opencode-telegram-link"];
       modified = true;
@@ -15993,7 +16208,7 @@ async function removeOpenCodeConfig(targetPath) {
     }
     if (Array.isArray(existingJson.plugin)) {
       const originalLength = existingJson.plugin.length;
-      const filtered = existingJson.plugin.filter((p) => !isPluginMatch(p));
+      const filtered = existingJson.plugin.filter((p) => !isTelegramLinkSpecifier(p));
       if (filtered.length !== originalLength) {
         existingJson.plugin = filtered;
         modified = true;
@@ -16001,7 +16216,7 @@ async function removeOpenCodeConfig(targetPath) {
     }
     if (Array.isArray(existingJson.plugins)) {
       const originalLength = existingJson.plugins.length;
-      const filtered = existingJson.plugins.filter((p) => !isPluginMatch(p));
+      const filtered = existingJson.plugins.filter((p) => !isTelegramLinkSpecifier(p));
       if (filtered.length !== originalLength) {
         existingJson.plugins = filtered;
         modified = true;
@@ -16010,7 +16225,7 @@ async function removeOpenCodeConfig(targetPath) {
     if (existingJson.plugin && typeof existingJson.plugin === "object" && !Array.isArray(existingJson.plugin)) {
       const map2 = existingJson.plugin;
       for (const key of Object.keys(map2)) {
-        if (isPluginMatch(key)) {
+        if (isTelegramLinkSpecifier(key)) {
           delete map2[key];
           modified = true;
         }
@@ -16021,10 +16236,14 @@ async function removeOpenCodeConfig(targetPath) {
     }
     const backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
+    await chmod2(backupPath, 384);
     const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}
-`, "utf8");
-    await rename(temporaryPath, targetPath);
+`, {
+      encoding: "utf8",
+      mode: 384
+    });
+    await rename2(temporaryPath, targetPath);
     return { modified: true, backupPath };
   } catch {
     return { modified: false };
@@ -16032,15 +16251,16 @@ async function removeOpenCodeConfig(targetPath) {
 }
 // src/plugin/client.ts
 import { spawn } from "child_process";
-import { randomUUID as randomUUID2 } from "crypto";
-import { existsSync } from "fs";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
+import { existsSync as existsSync2, realpathSync } from "fs";
 import { homedir as homedir3 } from "os";
 import { basename, join as join3 } from "path";
 import { fileURLToPath } from "url";
 var sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms));
-async function probeBroker(port, brokerSecret) {
+async function probeBroker(port, brokerSecret, host = "127.0.0.1") {
+  const normalizedHost = normalizeClientHost(host);
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+    const response = await fetch(`http://${urlHost(normalizedHost)}:${port}/v1/health`, {
       headers: { authorization: `Bearer ${brokerSecret}` },
       signal: AbortSignal.timeout(2000)
     });
@@ -16061,8 +16281,15 @@ var DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 var DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;
 var DEFAULT_CONFIG_FINGERPRINT = "0".repeat(64);
 
+class ManagedBrokerUnavailableError extends Error {
+  constructor() {
+    super("managed private Broker is not reachable");
+    this.name = "ManagedBrokerUnavailableError";
+  }
+}
+
 class BrokerClient {
-  instanceId = randomUUID2();
+  instanceId;
   #options;
   #routes = new Map;
   #activeRoutes = new Map;
@@ -16077,8 +16304,12 @@ class BrokerClient {
   #resolveFirstConnection;
   #rejectFirstConnection;
   constructor(options) {
+    this.instanceId = options.instanceId ?? randomUUID2();
+    const configuredHost = options.host ?? "127.0.0.1";
     this.#options = {
       stateDirectory: options.stateDirectory ?? defaultStateDirectory(),
+      host: normalizeClientHost(configuredHost),
+      spawnHost: configuredHost,
       port: options.port ?? DEFAULT_PORT,
       hostLabel: options.hostLabel,
       projectLabel: options.projectLabel,
@@ -16165,7 +16396,7 @@ class BrokerClient {
     this.#routes.delete(key);
     const route = this.#activeRoutes.get(key);
     this.#activeRoutes.delete(key);
-    if (route && this.#connected) {
+    if (route && this.#socket?.readyState === WebSocket.OPEN) {
       await this.#request({ type: "route.unregister", payload: { route } });
     }
   }
@@ -16194,7 +16425,7 @@ class BrokerClient {
           break;
         const message = error51 instanceof Error ? error51.message : "unknown broker client error";
         this.#options.onDiagnostic("BROKER_RECONNECT", message);
-        if (this.#rejectFirstConnection) {
+        if (this.#rejectFirstConnection && !(error51 instanceof ManagedBrokerUnavailableError)) {
           const reject = this.#rejectFirstConnection;
           this.#resolveFirstConnection = undefined;
           this.#rejectFirstConnection = undefined;
@@ -16210,15 +16441,19 @@ class BrokerClient {
     if (this.#options.gatewayUrl)
       return;
     const identity = this.#requireIdentity();
-    if (await probeBroker(this.#options.port, identity.brokerSecret))
+    if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host))
       return;
+    if (!isLoopbackGatewayHost(normalizeClientHost(this.#options.host))) {
+      throw new ManagedBrokerUnavailableError;
+    }
     await (this.#options.spawnBroker ?? spawnDetachedBroker)({
       stateDirectory: identity.stateDirectory,
+      host: this.#options.spawnHost,
       port: this.#options.port
     });
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (!this.#stopped && Date.now() < deadline) {
-      if (await probeBroker(this.#options.port, identity.brokerSecret))
+      if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host))
         return;
       await sleep(25);
     }
@@ -16228,19 +16463,17 @@ class BrokerClient {
     const identity = this.#requireIdentity();
     let url2;
     if (this.#options.gatewayUrl) {
-      const base = this.#options.gatewayUrl.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-      const parsedUrl = new URL(base.includes("://") ? base : `ws://${base}`);
-      if (!parsedUrl.pathname || parsedUrl.pathname === "/") {
-        parsedUrl.pathname = "/v1/connect";
-      }
-      if (this.#options.gatewaySecret) {
-        parsedUrl.searchParams.set("token", this.#options.gatewaySecret);
-      }
-      url2 = parsedUrl.toString();
+      url2 = parseGatewayWebSocketUrl(this.#options.gatewayUrl).toString();
     } else {
-      url2 = `ws://127.0.0.1:${this.#options.port}/v1/connect?token=${encodeURIComponent(identity.brokerSecret)}`;
+      url2 = `ws://${urlHost(this.#options.host)}:${this.#options.port}/v1/connect`;
     }
-    const socket = new WebSocket(url2);
+    const connectionSecret = this.#options.gatewayUrl ? this.#options.gatewaySecret : identity.gatewaySecret;
+    const socket = new WebSocket(url2, {
+      headers: {
+        ...connectionSecret ? { authorization: `Bearer ${connectionSecret}` } : {},
+        ...!this.#options.gatewayUrl ? { "x-opencode-telegram-admin": `Bearer ${identity.brokerSecret}` } : {}
+      }
+    });
     try {
       await waitForOpen(socket, this.#options.requestTimeoutMs);
     } catch (error51) {
@@ -16304,11 +16537,20 @@ class BrokerClient {
         route,
         ...this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {},
         projectLabel: intent.projectLabel,
-        sessionLabel: intent.sessionLabel
+        sessionLabel: intent.sessionLabel,
+        ...intent.active !== undefined ? { active: intent.active } : {}
       }
     });
     if (response.type !== "route.registered")
       throw new Error("route registration was rejected");
+    if (this.#routes.get(key) !== intent) {
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        await this.#request({ type: "route.unregister", payload: { route } }).catch(() => {
+          return;
+        });
+      }
+      return;
+    }
     this.#activeRoutes.set(key, route);
     return route;
   }
@@ -16422,6 +16664,13 @@ class BrokerClient {
     return this.#identity;
   }
 }
+function derivePluginInstanceId(directory, machineId, pid = process.pid) {
+  const bytes = createHash3("sha256").update(`${machineId}\x00${pid}\x00${realpathSync(directory)}`).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] ?? 0) & 15 | 80;
+  bytes[8] = (bytes[8] ?? 0) & 63 | 128;
+  const hex3 = bytes.toString("hex");
+  return `${hex3.slice(0, 8)}-${hex3.slice(8, 12)}-${hex3.slice(12, 16)}-${hex3.slice(16, 20)}-${hex3.slice(20)}`;
+}
 function spawnDetachedBroker(input) {
   const brokerEntry = fileURLToPath(new URL("./broker/main.js", import.meta.url));
   const runtime = brokerRuntimeCommand();
@@ -16432,10 +16681,23 @@ function spawnDetachedBroker(input) {
       ...process.env,
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
-      OPENCODE_TELEGRAM_BROKER_BIND_HOST: process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "0.0.0.0"
+      OPENCODE_TELEGRAM_BROKER_BIND_HOST: process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? input.host
     }
   });
   child.unref();
+}
+function normalizeClientHost(host) {
+  if (host === "0.0.0.0")
+    return "127.0.0.1";
+  if (host === "::")
+    return "::1";
+  if (!isPrivateGatewayHost(host)) {
+    throw new Error("local broker host must be loopback or a private IP address");
+  }
+  return host;
+}
+function urlHost(host) {
+  return host.includes(":") ? `[${host}]` : host;
 }
 function brokerRuntimeCommand() {
   if (process.versions.bun && basename(process.execPath).startsWith("bun")) {
@@ -16453,7 +16715,7 @@ function brokerRuntimeCommand() {
   ];
   for (const candidate of candidateBunPaths) {
     try {
-      if (existsSync(candidate)) {
+      if (existsSync2(candidate)) {
         return { command: candidate, args: [] };
       }
     } catch {}
@@ -16717,7 +16979,7 @@ async function runSessionSpawnCommand(client, directory, command) {
 }
 
 // src/version.ts
-var PACKAGE_VERSION = "1.0.0-rc.8";
+var PACKAGE_VERSION = "1.0.0-rc.9";
 
 // src/plugin.ts
 function trace(msg) {
@@ -16763,7 +17025,21 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
     localeInput.system = systemLocale;
   const locale = resolveLocale(localeInput);
   const voiceApiKey = await readVoiceApiKey(configData);
+  const identity = await loadOrCreateStateIdentity().catch(async (error51) => {
+    await client.app.log({
+      body: {
+        service: "opencode-telegram-link",
+        level: "error",
+        message: `Plugin identity could not be loaded: ${error51 instanceof Error ? error51.message : String(error51)}`
+      }
+    });
+    return;
+  });
+  if (!identity)
+    return {};
   const broker = new BrokerClient({
+    instanceId: derivePluginInstanceId(directory, identity.machineId),
+    host: configData.broker.host,
     port: configData.broker.port,
     hostLabel: configData.hostLabel,
     projectLabel: basename2(directory),
@@ -16803,7 +17079,6 @@ var TelegramLinkPlugin = async ({ client, directory }, options) => {
     trace("Starting BrokerClient...");
     await broker.start();
     trace("BrokerClient started successfully!");
-    const identity = await loadOrCreateStateIdentity();
     const projectId = await deriveProjectId(directory, identity.routeSalt);
     const fetchSummary = async (sessionId) => {
       try {
@@ -16906,4 +17181,4 @@ export {
   plugin_default as default
 };
 
-//# debugId=DF7E0CF54D3C786964756E2164756E21
+//# debugId=CF5981C7CADF068C64756E2164756E21

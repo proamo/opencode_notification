@@ -10,11 +10,11 @@ Compatibility rules:
 
 - Major version mismatch is incompatible and must fail closed.
 - Minor version is forward-compatible only when both sides negotiate required capabilities.
-- Current broker capabilities are `route-registration` and `heartbeat`.
+- Current broker capabilities are `route-registration`, `heartbeat`, and `notification-publish`.
 
 ## Transport
 
-Native mode listens on `127.0.0.1:42617` by default. Container mode binds inside the container to `0.0.0.0`, but the Docker port must be published to `127.0.0.1` on the host.
+Native mode listens on `127.0.0.1:42617` by default. An administrator may explicitly bind a ZeroTier, NetBird, Tailscale, or other private interface IP. Public access must use an HTTPS/WSS reverse proxy. Container mode binds inside the container to `0.0.0.0`, but the Docker port must be published to `127.0.0.1` on the host.
 
 HTTP endpoints:
 
@@ -25,7 +25,7 @@ HTTP endpoints:
 | `/v1/connect` | WebSocket upgrade | Authenticated plugin protocol connection. |
 | `/v1/control/stop` | `POST` | Authenticated graceful broker stop. |
 
-Every endpoint requires `Authorization: Bearer <brokerSecret>`. The broker compares SHA-256 digests with constant-time comparison and does not accept credentials in URLs.
+Health, status, dashboard, settings, dispatch, and control endpoints require `Authorization: Bearer <brokerSecret>`. `/v1/connect` requires `Authorization: Bearer <gatewaySecret>`. The broker compares credentials in constant time. For RC.8 migration only, a query-string credential is accepted from loopback or a private source while `gateway-secret` still equals the migrated `broker-secret`; rotating the Gateway credential disables this compatibility path.
 
 ## State Identity
 
@@ -34,10 +34,15 @@ The state directory contains:
 | File | Purpose |
 |---|---|
 | `machine-id` | Stable UUID for this computer/user state. |
-| `broker-secret` | Local bearer secret shared by plugins and broker. |
+| `broker-secret` | Local administrator secret for health, dashboard, settings, dispatch, and control. |
+| `gateway-secret` | Node secret accepted only by the WebSocket connection endpoint. |
 | `route-salt` | Secret HMAC key used to derive opaque project IDs. |
 | `broker.json` | Informational discovery record with port, pid, nonce, protocol, and start time. |
 | `state.sqlite` | Durable route, delivery, update offset, and idempotency state. |
+| `opencode-notifier.json` | Private daemon configuration persisted by setup. |
+| `dashboard-settings.json` | Private voice provider settings and API credentials. |
+| `deployment.json` | Native, Docker, or Node deployment marker used by uninstall. |
+| `service/opencode-telegram-broker.js` | Stable broker bundle installed for systemd. |
 
 On non-Windows platforms, state files must be owned by the current user and must not allow group or other access.
 
@@ -63,7 +68,7 @@ Maximum frame size is `256 KiB`. Frames above that limit, invalid JSON, or schem
 {
   "type": "register",
   "payload": {
-    "packageVersion": "1.0.0-rc.8",
+    "packageVersion": "1.0.0-rc.9",
     "openCodeVersion": "1.18.x",
     "machineId": "uuid",
     "instanceId": "uuid",

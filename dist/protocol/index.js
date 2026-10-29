@@ -14351,7 +14351,8 @@ var RouteRegisterEnvelopeSchema = exports_external.object({
     route: RouteKeySchema,
     hostLabel: exports_external.string().min(1).max(128).optional(),
     projectLabel: exports_external.string().min(1).max(128),
-    sessionLabel: exports_external.string().min(1).max(256)
+    sessionLabel: exports_external.string().min(1).max(256),
+    active: exports_external.boolean().optional()
   })
 });
 var RouteUnregisterEnvelopeSchema = exports_external.object({
@@ -14537,4 +14538,4 @@ export {
   BROKER_CAPABILITIES
 };
 
-//# debugId=587F33196EA7F75464756E2164756E21
+//# debugId=0A101C506706C38964756E2164756E21

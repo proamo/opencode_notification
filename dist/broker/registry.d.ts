@@ -4,6 +4,7 @@ export type BrokerConnectionData = {
     connectionId: string;
     connectedAt: number;
     lastHeartbeatAt: number;
+    canConfigureTelegram: boolean;
     instanceId?: string;
 };
 export type RegisteredRoute = {
@@ -12,6 +13,7 @@ export type RegisteredRoute = {
     projectLabel: string;
     sessionLabel: string;
     connectionId: string;
+    active: boolean;
 };
 type OwnedConnection = {
     socket: ServerWebSocket<BrokerConnectionData>;
@@ -46,11 +48,12 @@ export declare class RouteRegistry {
         hostLabel?: string | undefined;
         projectLabel: string;
         sessionLabel: string;
+        active?: boolean | undefined;
     }): RegisteredRoute;
     unregisterRoute(connectionId: string, route: RouteKey): boolean;
     resolve(route: RouteKey): RegisteredRoute | undefined;
-    lookupSession(sessionIdOrPrefix: string, target?: string): SessionLookupResult;
-    resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined;
+    lookupSession(sessionIdOrPrefix: string, target?: string, activeOnly?: boolean): SessionLookupResult;
+    resolveBySessionId(sessionId: string, target?: string, activeOnly?: boolean): RouteKey | undefined;
     owner(route: RouteKey): ServerWebSocket<BrokerConnectionData> | undefined;
     ownerByInstance(instanceId: string): ServerWebSocket<BrokerConnectionData> | undefined;
     removeConnection(connectionId: string): void;

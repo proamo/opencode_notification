@@ -6,6 +6,7 @@ import { type BrokerServer, startBroker } from "../src/broker/server";
 import { formatDoctorReport, runDoctor } from "../src/doctor";
 import { BROKER_CAPABILITIES, BrokerEnvelopeSchema, PROTOCOL_VERSION } from "../src/protocol";
 import { loadOrCreateStateIdentity } from "../src/state";
+import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "../src/telegram";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCD";
 const temporaryDirectories: string[] = [];
@@ -23,13 +24,21 @@ afterEach(async () => {
 describe("doctor checks", () => {
   test("reports a healthy installation without exposing credentials", async () => {
     const stateDirectory = await createTemporaryDirectory();
-    const broker = await startBroker({ stateDirectory, port: 0, idleTimeoutMs: 5_000 });
+    const bindHost = "127.0.0.2";
+    const broker = await startBroker({
+      stateDirectory,
+      port: 0,
+      bindHost,
+      idleTimeoutMs: 5_000,
+      telegramApiFactory: () => new DoctorTelegramApi(),
+    });
     brokers.push(broker);
-    await registerPluginConnection(broker, stateDirectory);
+    await registerPluginConnection(broker, stateDirectory, bindHost);
 
     const report = await runDoctor({
       stateDirectory,
       port: broker.port,
+      bindHost,
       rawConfig: validConfig(),
       fetch: telegramFetch(),
       env: { OPENCODE_VERSION: "1.18.18" },
@@ -83,6 +92,95 @@ describe("doctor checks", () => {
       expect.objectContaining({ name: "telegram-api", status: "fail" }),
     );
     expect(formatDoctorReport(report)).not.toContain(TOKEN);
+  });
+
+  test("validates a Node Gateway without requiring Telegram or admin credentials", async () => {
+    const requests: Request[] = [];
+    const report = await runDoctor({
+      rawConfig: {
+        role: "node",
+        hostLabel: "laptop",
+        gateway: { url: "ws://127.0.0.2:42617", secret: "node-secret" },
+      },
+      fetch: (async (input, init) => {
+        requests.push(new Request(String(input), init));
+        return new Response("unauthorized", { status: 401 });
+      }) as typeof fetch,
+      env: { OPENCODE_VERSION: "1.18.18" },
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ name: "gateway-reachability", status: "pass" }),
+    );
+    expect(report.checks.some((check) => check.name === "telegram-api")).toBe(false);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.has("authorization")).toBe(false);
+    expect(requests[0]?.url).toBe("http://127.0.0.2:42617/v1/health");
+  });
+
+  test("discovers Node role configuration when notifier environment variables are absent", async () => {
+    const workspace = await createTemporaryDirectory();
+    await writeFile(
+      join(workspace, "opencode.json"),
+      JSON.stringify({
+        plugin: [
+          [
+            "opencode-telegram-link",
+            {
+              role: "node",
+              hostLabel: "laptop",
+              gateway: { url: "ws://127.0.0.2:42617", secret: "node-secret" },
+            },
+          ],
+        ],
+      }),
+    );
+    let requestedUrl = "";
+    const report = await runDoctor({
+      cwd: workspace,
+      fetch: (async (input: string | URL | Request) => {
+        requestedUrl = String(input);
+        return new Response("unauthorized", { status: 401 });
+      }) as unknown as typeof fetch,
+      env: {
+        OPENCODE_VERSION: "1.18.18",
+        OPENCODE_TELEGRAM_BROKER_PORT: "49999",
+        OPENCODE_TELEGRAM_LOCALE: "en",
+      },
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ name: "gateway-reachability", status: "pass" }),
+    );
+    expect(report.checks.some((check) => check.name === "telegram-api")).toBe(false);
+    expect(requestedUrl).toBe("http://127.0.0.2:49999/v1/health");
+  });
+
+  test("fails Gateway doctor before sending admin credentials to a public address", async () => {
+    let publicAddressRequested = false;
+    const report = await runDoctor({
+      rawConfig: {
+        broker: { host: "8.8.8.8", port: 42617 },
+        telegram: { botToken: TOKEN, userId: "123456789", chatId: "123456789" },
+      },
+      port: await availablePort(),
+      fetch: (async (input) => {
+        if (String(input).includes("8.8.8.8")) publicAddressRequested = true;
+        return Response.json({
+          ok: true,
+          result: { id: 42, is_bot: true, first_name: "Bot" },
+        });
+      }) as typeof fetch,
+      env: { OPENCODE_VERSION: "1.18.18" },
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ name: "configuration", status: "fail" }),
+    );
+    expect(publicAddressRequested).toBe(false);
   });
 
   test.skipIf(process.platform === "win32")(
@@ -167,10 +265,14 @@ function validConfig() {
 async function registerPluginConnection(
   broker: BrokerServer,
   stateDirectory: string,
+  bindHost = "127.0.0.1",
 ): Promise<void> {
   const identity = await loadOrCreateStateIdentity(stateDirectory);
-  const socket = new WebSocket(`ws://127.0.0.1:${broker.port}/v1/connect`, {
-    headers: { authorization: `Bearer ${identity.brokerSecret}` },
+  const socket = new WebSocket(`ws://${bindHost}:${broker.port}/v1/connect`, {
+    headers: {
+      authorization: `Bearer ${identity.gatewaySecret}`,
+      "x-opencode-telegram-admin": `Bearer ${identity.brokerSecret}`,
+    },
   });
   sockets.push(socket);
   await new Promise<void>((resolve, reject) => {
@@ -193,10 +295,36 @@ async function registerPluginConnection(
         instanceId: crypto.randomUUID(),
         configFingerprint: "a".repeat(64),
         capabilities: [...BROKER_CAPABILITIES],
+        telegram: {
+          botToken: TOKEN,
+          userId: "123456789",
+          chatId: "123456789",
+          locale: "en",
+          sessionPromptTtlMinutes: 60,
+          questionTtlMinutes: 30,
+        },
       },
     }),
   );
   expect(await response).toMatchObject({ type: "registered" });
+}
+
+class DoctorTelegramApi extends TelegramBotApi {
+  constructor() {
+    super({ token: TOKEN, baseUrl: "https://telegram.invalid" });
+  }
+
+  override async getMe(): Promise<TelegramBot> {
+    return { id: 42, is_bot: true, first_name: "Bot" };
+  }
+
+  override async deleteWebhook(): Promise<void> {}
+
+  override async getUpdates(input: { signal?: AbortSignal }): Promise<TelegramUpdate[]> {
+    await Bun.sleep(20);
+    if (input.signal?.aborted) return [];
+    return [];
+  }
 }
 
 async function waitForMessage(socket: WebSocket) {

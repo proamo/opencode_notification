@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isLoopbackGatewayHost, isPrivateGatewayHost, parseGatewayWebSocketUrl } from "../network";
 import {
   BROKER_CAPABILITIES,
   type BrokerCommand,
@@ -29,9 +30,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function probeBroker(
   port: number,
   brokerSecret: string,
+  host = "127.0.0.1",
 ): Promise<{ status: "ok"; machineId: string } | undefined> {
+  const normalizedHost = normalizeClientHost(host);
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+    const response = await fetch(`http://${urlHost(normalizedHost)}:${port}/v1/health`, {
       headers: { authorization: `Bearer ${brokerSecret}` },
       signal: AbortSignal.timeout(2_000),
     });
@@ -65,15 +68,18 @@ export type RouteIntent = {
   sessionId: string;
   projectLabel: string;
   sessionLabel: string;
+  active?: boolean;
 };
 
 export type BrokerClientOptions = {
   stateDirectory?: string;
+  host?: string;
   port?: number;
   hostLabel?: string | undefined;
   projectLabel?: string | undefined;
   gatewayUrl?: string | undefined;
   gatewaySecret?: string | undefined;
+  instanceId?: string;
   packageVersion: string;
   openCodeVersion: string;
   startupTimeoutMs?: number;
@@ -82,7 +88,11 @@ export type BrokerClientOptions = {
   reconnectMinDelayMs?: number;
   reconnectMaxDelayMs?: number;
   configFingerprint?: string;
-  spawnBroker?: (input: { stateDirectory: string; port: number }) => void | Promise<void>;
+  spawnBroker?: (input: {
+    stateDirectory: string;
+    host: string;
+    port: number;
+  }) => void | Promise<void>;
   random?: () => number;
   onCommand?: (command: BrokerCommand) => CommandResult | Promise<CommandResult>;
   onDiagnostic?: (code: string, message: string) => void;
@@ -95,8 +105,15 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+class ManagedBrokerUnavailableError extends Error {
+  constructor() {
+    super("managed private Broker is not reachable");
+    this.name = "ManagedBrokerUnavailableError";
+  }
+}
+
 export class BrokerClient {
-  readonly instanceId = randomUUID();
+  readonly instanceId: string;
 
   readonly #options: Required<
     Pick<
@@ -115,6 +132,8 @@ export class BrokerClient {
     >
   > & {
     stateDirectory: string;
+    host: string;
+    spawnHost: string;
     port: number;
     hostLabel: string | undefined;
     projectLabel: string | undefined;
@@ -137,8 +156,12 @@ export class BrokerClient {
   #rejectFirstConnection: ((error: Error) => void) | undefined;
 
   constructor(options: BrokerClientOptions) {
+    this.instanceId = options.instanceId ?? randomUUID();
+    const configuredHost = options.host ?? "127.0.0.1";
     this.#options = {
       stateDirectory: options.stateDirectory ?? defaultStateDirectory(),
+      host: normalizeClientHost(configuredHost),
+      spawnHost: configuredHost,
       port: options.port ?? DEFAULT_PORT,
       hostLabel: options.hostLabel,
       projectLabel: options.projectLabel,
@@ -222,7 +245,7 @@ export class BrokerClient {
     this.#routes.delete(key);
     const route = this.#activeRoutes.get(key);
     this.#activeRoutes.delete(key);
-    if (route && this.#connected) {
+    if (route && this.#socket?.readyState === WebSocket.OPEN) {
       await this.#request({ type: "route.unregister", payload: { route } });
     }
   }
@@ -253,7 +276,7 @@ export class BrokerClient {
         if (this.#stopped) break;
         const message = error instanceof Error ? error.message : "unknown broker client error";
         this.#options.onDiagnostic("BROKER_RECONNECT", message);
-        if (this.#rejectFirstConnection) {
+        if (this.#rejectFirstConnection && !(error instanceof ManagedBrokerUnavailableError)) {
           const reject = this.#rejectFirstConnection;
           this.#resolveFirstConnection = undefined;
           this.#rejectFirstConnection = undefined;
@@ -272,16 +295,20 @@ export class BrokerClient {
   async #ensureBroker(): Promise<void> {
     if (this.#options.gatewayUrl) return;
     const identity = this.#requireIdentity();
-    if (await probeBroker(this.#options.port, identity.brokerSecret)) return;
+    if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host)) return;
+    if (!isLoopbackGatewayHost(normalizeClientHost(this.#options.host))) {
+      throw new ManagedBrokerUnavailableError();
+    }
 
     await (this.#options.spawnBroker ?? spawnDetachedBroker)({
       stateDirectory: identity.stateDirectory,
+      host: this.#options.spawnHost,
       port: this.#options.port,
     });
 
     const deadline = Date.now() + this.#options.startupTimeoutMs;
     while (!this.#stopped && Date.now() < deadline) {
-      if (await probeBroker(this.#options.port, identity.brokerSecret)) return;
+      if (await probeBroker(this.#options.port, identity.brokerSecret, this.#options.host)) return;
       await sleep(25);
     }
     throw new Error("spawned broker did not become healthy");
@@ -291,20 +318,22 @@ export class BrokerClient {
     const identity = this.#requireIdentity();
     let url: string;
     if (this.#options.gatewayUrl) {
-      const base = this.#options.gatewayUrl.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-      const parsedUrl = new URL(base.includes("://") ? base : `ws://${base}`);
-      if (!parsedUrl.pathname || parsedUrl.pathname === "/") {
-        parsedUrl.pathname = "/v1/connect";
-      }
-      if (this.#options.gatewaySecret) {
-        parsedUrl.searchParams.set("token", this.#options.gatewaySecret);
-      }
-      url = parsedUrl.toString();
+      url = parseGatewayWebSocketUrl(this.#options.gatewayUrl).toString();
     } else {
-      url = `ws://127.0.0.1:${this.#options.port}/v1/connect?token=${encodeURIComponent(identity.brokerSecret)}`;
+      url = `ws://${urlHost(this.#options.host)}:${this.#options.port}/v1/connect`;
     }
 
-    const socket = new WebSocket(url);
+    const connectionSecret = this.#options.gatewayUrl
+      ? this.#options.gatewaySecret
+      : identity.gatewaySecret;
+    const socket = new WebSocket(url, {
+      headers: {
+        ...(connectionSecret ? { authorization: `Bearer ${connectionSecret}` } : {}),
+        ...(!this.#options.gatewayUrl
+          ? { "x-opencode-telegram-admin": `Bearer ${identity.brokerSecret}` }
+          : {}),
+      },
+    });
     try {
       await waitForOpen(socket, this.#options.requestTimeoutMs);
     } catch (error) {
@@ -358,7 +387,7 @@ export class BrokerClient {
     }
   }
 
-  async #registerRoute(key: string, intent: RouteIntent): Promise<RouteKey> {
+  async #registerRoute(key: string, intent: RouteIntent): Promise<RouteKey | undefined> {
     const identity = this.#requireIdentity();
     const route = createRouteKey({
       machineId: identity.machineId,
@@ -373,9 +402,18 @@ export class BrokerClient {
         ...(this.#options.hostLabel ? { hostLabel: this.#options.hostLabel } : {}),
         projectLabel: intent.projectLabel,
         sessionLabel: intent.sessionLabel,
+        ...(intent.active !== undefined ? { active: intent.active } : {}),
       },
     });
     if (response.type !== "route.registered") throw new Error("route registration was rejected");
+    if (this.#routes.get(key) !== intent) {
+      if (this.#socket?.readyState === WebSocket.OPEN) {
+        await this.#request({ type: "route.unregister", payload: { route } }).catch(
+          () => undefined,
+        );
+      }
+      return undefined;
+    }
     this.#activeRoutes.set(key, route);
     return route;
   }
@@ -504,7 +542,26 @@ export class BrokerClient {
   }
 }
 
-export function spawnDetachedBroker(input: { stateDirectory: string; port: number }): void {
+export function derivePluginInstanceId(
+  directory: string,
+  machineId: string,
+  pid = process.pid,
+): string {
+  const bytes = createHash("sha256")
+    .update(`${machineId}\0${pid}\0${realpathSync(directory)}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function spawnDetachedBroker(input: {
+  stateDirectory: string;
+  host: string;
+  port: number;
+}): void {
   const brokerEntry = fileURLToPath(new URL("./broker/main.js", import.meta.url));
   const runtime = brokerRuntimeCommand();
   const child = spawn(runtime.command, [...runtime.args, brokerEntry], {
@@ -515,10 +572,23 @@ export function spawnDetachedBroker(input: { stateDirectory: string; port: numbe
       OPENCODE_TELEGRAM_BROKER_STATE_DIR: input.stateDirectory,
       OPENCODE_TELEGRAM_BROKER_PORT: String(input.port),
       OPENCODE_TELEGRAM_BROKER_BIND_HOST:
-        process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? "0.0.0.0",
+        process.env.OPENCODE_TELEGRAM_BROKER_BIND_HOST ?? input.host,
     },
   });
   child.unref();
+}
+
+function normalizeClientHost(host: string): string {
+  if (host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::") return "::1";
+  if (!isPrivateGatewayHost(host)) {
+    throw new Error("local broker host must be loopback or a private IP address");
+  }
+  return host;
+}
+
+function urlHost(host: string): string {
+  return host.includes(":") ? `[${host}]` : host;
 }
 
 export function brokerRuntimeCommand(): { command: string; args: string[] } {

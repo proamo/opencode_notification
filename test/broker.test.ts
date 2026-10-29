@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +20,7 @@ import {
 import { createRouteKey, loadOrCreateStateIdentity } from "../src/state";
 import {
   type SendMessageInput,
+  TelegramApiError,
   type TelegramBot,
   TelegramBotApi,
   type TelegramUpdate,
@@ -50,12 +51,12 @@ async function safeRemove(directory: string): Promise<void> {
 
 describe("local broker", () => {
   test("requires authentication for health and WebSocket upgrade", async () => {
-    const { broker, secret } = await createBroker();
+    const { adminSecret, broker, secret } = await createBroker();
 
     expect((await fetch(`http://127.0.0.1:${broker.port}/v1/health`)).status).toBe(401);
 
     const response = await fetch(`http://127.0.0.1:${broker.port}/v1/health`, {
-      headers: { authorization: `Bearer ${secret}` },
+      headers: { authorization: `Bearer ${adminSecret}` },
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -69,6 +70,22 @@ describe("local broker", () => {
     const close = waitForClose(unauthorized);
     await expect(close).resolves.toBeDefined();
     expect(broker.registry.connectionCount).toBe(0);
+
+    const queryToken = new WebSocket(
+      `ws://127.0.0.1:${broker.port}/v1/connect?token=${encodeURIComponent(secret)}`,
+    );
+    sockets.push(queryToken);
+    await expect(waitForClose(queryToken)).resolves.toBeDefined();
+    expect(queryToken.readyState).toBe(WebSocket.CLOSED);
+
+    const adminSocket = new WebSocket(`ws://127.0.0.1:${broker.port}/v1/connect`, {
+      headers: { authorization: `Bearer ${adminSecret}` },
+    });
+    sockets.push(adminSocket);
+    await expect(waitForClose(adminSocket)).resolves.toBeDefined();
+
+    const gatewaySocket = await connectClient(broker.port, secret);
+    expect(gatewaySocket.readyState).toBe(WebSocket.OPEN);
   });
 
   test("registers multiple instances and keeps identical labels and sessions distinct", async () => {
@@ -97,6 +114,32 @@ describe("local broker", () => {
     expect(broker.registry.resolve(firstRoute)?.connectionId).not.toBe(
       broker.registry.resolve(secondRoute)?.connectionId,
     );
+  });
+
+  test("does not let a node credential configure the Telegram control runtime", async () => {
+    const { broker, secret } = await createBroker();
+    const socket = await connectClient(broker.port, secret);
+    const response = waitForMessage(socket);
+    socket.send(
+      JSON.stringify({
+        ...envelope("register"),
+        payload: {
+          packageVersion: "0.0.0",
+          openCodeVersion: "1.18.18",
+          machineId: broker.machineId,
+          instanceId: crypto.randomUUID(),
+          configFingerprint: "a".repeat(64),
+          capabilities: [...BROKER_CAPABILITIES],
+          telegram: telegramConfig(),
+        },
+      }),
+    );
+
+    expect(await response).toMatchObject({
+      type: "error",
+      payload: { code: "TELEGRAM_LOCAL_ONLY" },
+    });
+    expect(broker.registry.connectionCount).toBe(0);
   });
 
   test("rejects routes owned by a different instance", async () => {
@@ -228,12 +271,12 @@ describe("local broker", () => {
   test("registers multiple remote hosts with different machineIds and routes commands independently", async () => {
     const sent: SendMessageInput[] = [];
     const updates: TelegramUpdate[] = [];
-    const { broker, secret } = await createBroker({
+    const { adminSecret, broker, secret } = await createBroker({
       telegramApiFactory: () => new FakeTelegramBotApi(sent, updates),
       telegramPollLongPollSeconds: 1,
     });
 
-    const hostA = await connectClient(broker.port, secret);
+    const hostA = await connectClient(broker.port, secret, adminSecret);
     const hostB = await connectClient(broker.port, secret);
     const machineA = crypto.randomUUID();
     const machineB = crypto.randomUUID();
@@ -371,14 +414,108 @@ describe("local broker", () => {
     expect(await response.json()).toMatchObject({ bindHost: "0.0.0.0" });
   });
 
+  test("starts from the persisted paired identity and stays alive without WebSocket clients", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+    await writeFile(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+    await writeFile(
+      join(stateDirectory, "telegram-identity.json"),
+      JSON.stringify({
+        userId: "123456789",
+        chatId: "123456789",
+        tokenFile,
+        locale: "en",
+      }),
+      { mode: 0o600 },
+    );
+    let apiFactoryCalls = 0;
+    const broker = await startBroker({
+      stateDirectory,
+      port: 0,
+      idleTimeoutMs: 30,
+      registrationTimeoutMs: 10,
+      heartbeatTimeoutMs: 10,
+      telegramApiFactory: () => {
+        apiFactoryCalls += 1;
+        return new FakeTelegramBotApi([], []);
+      },
+    });
+    brokers.push(broker);
+
+    const stopped = await Promise.race([
+      broker.finished.then(() => true),
+      Bun.sleep(100).then(() => false),
+    ]);
+
+    expect(apiFactoryCalls).toBe(1);
+    expect(stopped).toBe(false);
+  });
+
+  test("does not derive daemon authorization from ambient OpenCode config", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    let apiFactoryCalls = 0;
+    const broker = await startBroker({
+      stateDirectory,
+      port: 0,
+      telegramApiFactory: () => {
+        apiFactoryCalls += 1;
+        return new FakeTelegramBotApi([], []);
+      },
+    });
+    brokers.push(broker);
+    await Bun.sleep(20);
+
+    expect(apiFactoryCalls).toBe(0);
+  });
+
+  test.skipIf(process.platform === "win32")("rejects symlinked credential settings", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    await loadOrCreateStateIdentity(stateDirectory);
+    const target = join(stateDirectory, "outside-settings.json");
+    await writeFile(target, "{}", { mode: 0o600 });
+    await symlink(target, join(stateDirectory, "dashboard-settings.json"));
+
+    await expect(startBroker({ stateDirectory, port: 0 })).rejects.toThrow("regular file");
+  });
+
+  test("reports a terminal daemon poller failure without idling out", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+    await writeFile(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+    await writeFile(
+      join(stateDirectory, "telegram-identity.json"),
+      JSON.stringify({ userId: "123456789", chatId: "123456789", tokenFile, locale: "en" }),
+      { mode: 0o600 },
+    );
+    const broker = await startBroker({
+      stateDirectory,
+      port: 0,
+      idleTimeoutMs: 30,
+      telegramApiFactory: () => new AuthenticationFailureTelegramApi(),
+    });
+    brokers.push(broker);
+    const identity = await loadOrCreateStateIdentity(stateDirectory);
+    await Bun.sleep(40);
+
+    const response = await fetch(`http://127.0.0.1:${broker.port}/v1/status`, {
+      headers: { authorization: `Bearer ${identity.brokerSecret}` },
+    });
+    expect(await response.json()).toMatchObject({ telegram: "degraded" });
+    const stopped = await Promise.race([
+      broker.finished.then(() => true),
+      Bun.sleep(50).then(() => false),
+    ]);
+    expect(stopped).toBe(false);
+  });
+
   test("publishes Telegram notifications and routes replies back to the owning session", async () => {
     const sent: SendMessageInput[] = [];
     const updates: TelegramUpdate[] = [];
-    const { broker, secret } = await createBroker({
+    const { adminSecret, broker, secret } = await createBroker({
       telegramApiFactory: () => new FakeTelegramBotApi(sent, updates),
       telegramPollLongPollSeconds: 1,
     });
-    const socket = await connectClient(broker.port, secret);
+    const socket = await connectClient(broker.port, secret, adminSecret);
     const instanceId = crypto.randomUUID();
     await registerClient(socket, broker.machineId, instanceId, "a".repeat(64), telegramConfig());
     const route = createRouteKey({
@@ -440,6 +577,51 @@ describe("local broker", () => {
     await waitUntil(() => sent.length === 2);
     expect(sent[1]?.text).toBe("Your response was delivered.");
   });
+
+  test("waits for in-flight Telegram delivery before closing state", async () => {
+    const api = new DeferredTelegramBotApi();
+    const { adminSecret, broker, secret } = await createBroker({
+      telegramApiFactory: () => api,
+      telegramPollLongPollSeconds: 1,
+    });
+    const socket = await connectClient(broker.port, secret, adminSecret);
+    const instanceId = crypto.randomUUID();
+    await registerClient(socket, broker.machineId, instanceId, "a".repeat(64), telegramConfig());
+    const route = createRouteKey({
+      machineId: broker.machineId,
+      instanceId,
+      projectId: "shutdown-project",
+      sessionId: "shutdown-session",
+    });
+    await registerRoute(socket, route, "shutdown", "Delivery");
+    socket.send(
+      JSON.stringify({
+        ...envelope("notification.publish"),
+        payload: {
+          notification: {
+            kind: "session.completed",
+            eventId: "event_shutdown",
+            route,
+            locale: "en",
+            projectLabel: "shutdown",
+            sessionLabel: "Delivery",
+            occurredAt: new Date(1_000).toISOString(),
+          },
+        },
+      }),
+    );
+    await api.started;
+
+    let stopped = false;
+    const stopping = broker.stop().then(() => {
+      stopped = true;
+    });
+    await Bun.sleep(10);
+    expect(stopped).toBe(false);
+    api.release();
+    await stopping;
+    expect(stopped).toBe(true);
+  });
 });
 
 async function createBroker(
@@ -447,17 +629,28 @@ async function createBroker(
     StartBrokerOptions,
     "telegramApiFactory" | "telegramPollLongPollSeconds" | "telegramDeliveryIntervalMs"
   > = {},
-): Promise<{ broker: BrokerServer; secret: string }> {
+): Promise<{ broker: BrokerServer; secret: string; adminSecret: string }> {
   const stateDirectory = await createTemporaryDirectory();
   const broker = await startBroker({ stateDirectory, port: 0, ...options });
   brokers.push(broker);
   const identity = await loadOrCreateStateIdentity(stateDirectory);
-  return { broker, secret: identity.brokerSecret };
+  return {
+    broker,
+    secret: identity.gatewaySecret,
+    adminSecret: identity.brokerSecret,
+  };
 }
 
-async function connectClient(port: number, secret: string): Promise<WebSocket> {
+async function connectClient(
+  port: number,
+  secret: string,
+  adminSecret?: string,
+): Promise<WebSocket> {
   const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/connect`, {
-    headers: { authorization: `Bearer ${secret}` },
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(adminSecret ? { "x-opencode-telegram-admin": `Bearer ${adminSecret}` } : {}),
+    },
   });
   sockets.push(socket);
   await new Promise<void>((resolve, reject) => {
@@ -551,6 +744,51 @@ class FakeTelegramBotApi extends TelegramBotApi {
   ): Promise<{ messageId: number; chatId: string }> {
     this.#sent.push(input);
     return { messageId: this.#nextMessageId++, chatId: input.chatId };
+  }
+}
+
+class AuthenticationFailureTelegramApi extends TelegramBotApi {
+  constructor() {
+    super({ token: TOKEN, baseUrl: "https://telegram.invalid" });
+  }
+
+  override async getMe(): Promise<TelegramBot> {
+    throw new TelegramApiError({
+      method: "getMe",
+      statusCode: 401,
+      errorCode: 401,
+      description: "Unauthorized",
+      retryable: false,
+    });
+  }
+}
+
+class DeferredTelegramBotApi extends FakeTelegramBotApi {
+  readonly started: Promise<void>;
+  #markStarted!: () => void;
+  #release!: () => void;
+  readonly #released: Promise<void>;
+
+  constructor() {
+    super([], []);
+    this.started = new Promise((resolve) => {
+      this.#markStarted = resolve;
+    });
+    this.#released = new Promise((resolve) => {
+      this.#release = resolve;
+    });
+  }
+
+  release(): void {
+    this.#release();
+  }
+
+  override async sendMessage(
+    input: SendMessageInput,
+  ): Promise<{ messageId: number; chatId: string }> {
+    this.#markStarted();
+    await this.#released;
+    return await super.sendMessage(input);
   }
 }
 

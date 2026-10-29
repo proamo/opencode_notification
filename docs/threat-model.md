@@ -8,7 +8,8 @@ Protected assets:
 
 - Telegram bot token.
 - Pinned Telegram `userId` and private `chatId`.
-- Broker bearer secret.
+- Local administrator bearer secret (`broker-secret`).
+- Node WebSocket bearer secret (`gateway-secret`).
 - Machine identity and route salt.
 - Opaque route keys that bind Telegram messages to OpenCode instances, projects, sessions, and route generations.
 - Local SQLite state, including redacted outbound payloads, update offsets, route bindings, callback tokens, and idempotency records.
@@ -26,8 +27,10 @@ Data intentionally minimized:
 V1 trusts these boundaries:
 
 - The current operating-system user account.
-- Loopback-only host networking for native broker mode.
+- Loopback networking by default for native broker mode.
+- Explicit private overlay interfaces such as ZeroTier or NetBird, whose membership and encryption are administered separately.
 - A Docker port published specifically to `127.0.0.1` when container mode is used.
+- TLS termination and network access controls when the broker is reachable through a public address.
 - Telegram private chat identity pinned during setup.
 - OpenCode plugin APIs within the documented compatibility range.
 
@@ -52,6 +55,9 @@ V1 does not trust these inputs:
 | Telegram `getUpdates` conflicts with another consumer | The poller treats `409 Conflict` as terminal and diagnostics report the unsupported configuration. |
 | Telegram retry or duplicate delivery repeats an update | The update offset and inbound update table provide idempotency. |
 | Package upgrade changes protocol behavior | Protocol major negotiation fails closed; incompatible brokers/plugins require restart. |
+| A Node credential is used against dashboard/control APIs | WebSocket nodes authenticate with `gateway-secret`; dashboard, settings, dispatch, and stop APIs require the separate `broker-secret`. |
+| Credentials are exposed in URL logs | Current clients send WebSocket credentials in the `Authorization` header. During RC.8 migration only, URL query credentials remain accepted from loopback or private source addresses until the Node credential is rotated. |
+| A public endpoint carries plaintext credentials | Clients reject `ws://` URLs with public IPs. Public access must terminate TLS and use `wss://`. |
 
 ## Out Of Scope
 
@@ -60,8 +66,8 @@ Not protected by V1:
 - A malicious process running as the same OS user. It may read local config or state and impersonate the plugin.
 - A compromised Telegram account, Telegram client, BotFather session, or Telegram infrastructure.
 - A compromised OpenCode process or plugin host.
-- Multi-computer use with one bot token.
-- LAN or internet access to the broker.
+- Security of the configured ZeroTier, NetBird, Tailscale, firewall, DNS, or TLS infrastructure.
+- Direct public exposure through `0.0.0.0` without a firewall and TLS reverse proxy.
 - Telegram-based permission approval or rejection.
 - End-to-end secrecy from Telegram for message text that the user enables for notification or reply.
 
@@ -79,4 +85,4 @@ The implementation must reject rather than guess when:
 
 ## Operational Guidance
 
-Use one bot token on one computer. Keep token files private, prefer native loopback mode, publish Docker ports only as `127.0.0.1:42617:42617`, and run `opencode-telegram-broker doctor` after setup, update, credential rotation, or unexpected delivery failures.
+Use one bot token on one Gateway. Keep token files private and prefer native loopback mode. For ZeroTier or NetBird, bind the Gateway to that interface's IP instead of `0.0.0.0`. For public access, keep the broker behind an HTTPS/WSS reverse proxy with firewall rules and rate limiting. Publish Docker ports only as `127.0.0.1:42617:42617`. Run `opencode-telegram-broker doctor` after setup, update, credential rotation, or unexpected delivery failures.

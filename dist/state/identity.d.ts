@@ -3,11 +3,13 @@ export type StateIdentity = {
     stateDirectory: string;
     machineId: string;
     brokerSecret: string;
+    gatewaySecret: string;
     routeSalt: string;
 };
 export declare function defaultStateDirectory(environment?: NodeJS.ProcessEnv): string;
 export declare function loadOrCreateStateIdentity(stateDirectory?: string): Promise<StateIdentity>;
 export declare function createInstanceId(): string;
+export declare function rotateGatewaySecret(stateDirectory?: string): Promise<string>;
 export declare function createRouteGeneration(): string;
 export declare function deriveProjectId(projectPath: string, routeSalt: string): Promise<string>;
 export declare function createRouteKey(input: {

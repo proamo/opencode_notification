@@ -3,6 +3,42 @@ import { randomUUID } from "node:crypto";
 import { RouteRegistry } from "../src/broker/registry";
 
 describe("Route Security & Strict Resolution", () => {
+  test("excludes inactive routes from active views while preserving exact routing", () => {
+    const registry = new RouteRegistry();
+    const connectionId = randomUUID();
+    const machineId = randomUUID();
+    const instanceId = randomUUID();
+    const socket = {
+      data: { connectionId },
+      send: () => {},
+      close: () => {},
+    } as unknown as Parameters<typeof registry.registerConnection>[0];
+    registry.registerConnection(socket, instanceId, machineId, "Node-A", "Project-A");
+    const route = {
+      machineId,
+      instanceId,
+      projectId: "proj_alpha_1234567890",
+      sessionId: "ses_idle_123",
+      routeGeneration: randomUUID(),
+    };
+    registry.registerRoute(connectionId, {
+      route,
+      projectLabel: "Project-A",
+      sessionLabel: "Idle task",
+      active: false,
+    });
+
+    expect(registry.routeCount).toBe(1);
+    expect(registry.resolve(route)).toBeDefined();
+    expect(registry.resolve({ ...route, routeGeneration: randomUUID() })).toBeUndefined();
+    expect(registry.listActiveSessions()).toEqual([]);
+    expect(registry.listMachines()[0]).toMatchObject({
+      connectionsCount: 1,
+      totalRoutesCount: 1,
+      projects: [{ projectLabel: "Project-A" }],
+    });
+  });
+
   test("never routes cross-project even if sessionId matches on same machine", () => {
     const registry = new RouteRegistry();
     const conn1 = randomUUID();

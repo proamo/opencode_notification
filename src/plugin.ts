@@ -5,7 +5,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { computeNotifierConfigFingerprint, readNotifierBotToken, readVoiceApiKey } from "./config";
 import { resolveLocale } from "./i18n";
 import { loadResolvedNotifierConfig, OpenCodeEventBridge } from "./opencode";
-import { BrokerClient } from "./plugin/client";
+import { BrokerClient, derivePluginInstanceId } from "./plugin/client";
 import { runOpenCodeCommand } from "./plugin/commands";
 import { deriveProjectId, loadOrCreateStateIdentity } from "./state/identity";
 import { PACKAGE_VERSION } from "./version";
@@ -55,8 +55,21 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
   if (systemLocale) localeInput.system = systemLocale;
   const locale = resolveLocale(localeInput);
   const voiceApiKey = await readVoiceApiKey(configData);
+  const identity = await loadOrCreateStateIdentity().catch(async (error) => {
+    await client.app.log({
+      body: {
+        service: "opencode-telegram-link",
+        level: "error",
+        message: `Plugin identity could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    });
+    return undefined;
+  });
+  if (!identity) return {};
 
   const broker = new BrokerClient({
+    instanceId: derivePluginInstanceId(directory, identity.machineId),
+    host: configData.broker.host,
     port: configData.broker.port,
     hostLabel: configData.hostLabel,
     projectLabel: basename(directory),
@@ -99,7 +112,6 @@ const TelegramLinkPlugin = (async ({ client, directory }, options) => {
     trace("Starting BrokerClient...");
     await broker.start();
     trace("BrokerClient started successfully!");
-    const identity = await loadOrCreateStateIdentity();
     const projectId = await deriveProjectId(directory, identity.routeSalt);
     const fetchSummary = async (sessionId: string): Promise<string | undefined> => {
       try {

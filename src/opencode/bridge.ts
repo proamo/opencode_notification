@@ -10,7 +10,7 @@ type RouteClient = {
   activeRoute(projectId: string, sessionId: string): RouteKey | undefined;
 };
 
-type SessionState = { title: string; parentId?: string };
+type SessionState = { title: string; parentId?: string; active: boolean };
 
 type NotificationFilters = {
   completion: boolean;
@@ -92,6 +92,7 @@ export class OpenCodeEventBridge {
   readonly #onNotification: OpenCodeEventBridgeOptions["onNotification"];
   readonly #onDiagnostic: NonNullable<OpenCodeEventBridgeOptions["onDiagnostic"]>;
   readonly #sessions = new Map<string, SessionState>();
+  readonly #deletedSessions = new Set<string>();
   readonly #fallbackEventIds = new Map<string, string>();
   readonly #dedupe = new Map<string, number>();
   readonly #pendingCompletions = new Map<string, PendingCompletion>();
@@ -152,11 +153,22 @@ export class OpenCodeEventBridge {
     }
     if (result.status === "session") {
       if (result.event.kind === "session.busy") {
+        if (this.#deletedSessions.has(result.event.sessionId)) return;
         this.#cancelCompletion(result.event.sessionId);
+        let session = this.#sessions.get(result.event.sessionId);
+        if (!session) {
+          session = { title: "OpenCode Session", active: true };
+          this.#sessions.set(result.event.sessionId, session);
+          await this.#upsertSessionRoute(result.event.sessionId, session);
+        } else if (!session.active) {
+          session.active = true;
+          await this.#upsertSessionRoute(result.event.sessionId, session);
+        }
         return;
       }
       if (result.event.kind === "session.delete") {
         this.#sessions.delete(result.event.sessionId);
+        this.#deletedSessions.add(result.event.sessionId);
         this.#cancelCompletion(result.event.sessionId);
         this.#deleteFallbackTransitions(result.event.sessionId);
         this.#removeBufferedSources(result.event.sessionId);
@@ -164,21 +176,43 @@ export class OpenCodeEventBridge {
         return;
       }
       this.#deleteFallbackTransitions(result.event.sessionId);
-      this.#sessions.set(result.event.sessionId, {
+      this.#deletedSessions.delete(result.event.sessionId);
+      const previous = this.#sessions.get(result.event.sessionId);
+      const session = {
         title: result.event.title,
         ...(result.event.parentId ? { parentId: result.event.parentId } : {}),
-      });
-      await this.#broker.upsertRoute({
-        projectId: this.#projectId,
-        sessionId: result.event.sessionId,
-        projectLabel: this.#projectLabel,
-        sessionLabel: result.event.title,
-      });
+        active: previous?.active ?? false,
+      };
+      this.#sessions.set(result.event.sessionId, session);
+      await this.#upsertSessionRoute(result.event.sessionId, session);
       this.#scheduleSourceFlush(0);
       return;
     }
 
+    if (result.event.kind === "session.completed" || result.event.kind === "session.error") {
+      if (this.#deletedSessions.has(result.event.sessionId)) return;
+      let session = this.#sessions.get(result.event.sessionId);
+      if (!session) {
+        session = { title: "OpenCode Session", active: false };
+        this.#sessions.set(result.event.sessionId, session);
+        await this.#upsertSessionRoute(result.event.sessionId, session);
+      } else if (session.active) {
+        session.active = false;
+        await this.#upsertSessionRoute(result.event.sessionId, session);
+      }
+    }
+
     this.#handleSourceEvent(result.event, this.#now());
+  }
+
+  async #upsertSessionRoute(sessionId: string, session: SessionState): Promise<void> {
+    await this.#broker.upsertRoute({
+      projectId: this.#projectId,
+      sessionId,
+      projectLabel: this.#projectLabel,
+      sessionLabel: session.title,
+      active: session.active,
+    });
   }
 
   #handleSourceEvent(event: NotificationSourceEvent, occurredAt: Date): void {
@@ -201,6 +235,7 @@ export class OpenCodeEventBridge {
         summary = await this.#fetchSummary(event.sessionId);
       } catch {}
     }
+    if (this.#deletedSessions.has(event.sessionId)) return true;
     const result = this.#createNotification(event, occurredAt, summary);
     if (result.status === "drop") return true;
     if (result.status === "retry") {
@@ -217,15 +252,20 @@ export class OpenCodeEventBridge {
     occurredAt: Date,
     summary?: string,
   ): NotificationResult {
+    if (this.#deletedSessions.has(event.sessionId)) return { status: "drop" };
     let session = this.#sessions.get(event.sessionId);
     if (!session) {
-      session = { title: "OpenCode Session" };
+      session = {
+        title: "OpenCode Session",
+        active: event.kind !== "session.completed" && event.kind !== "session.error",
+      };
       this.#sessions.set(event.sessionId, session);
       void this.#broker.upsertRoute({
         projectId: this.#projectId,
         sessionId: event.sessionId,
         projectLabel: this.#projectLabel,
         sessionLabel: session.title,
+        active: session.active,
       });
       return { status: "retry" };
     }
@@ -236,6 +276,7 @@ export class OpenCodeEventBridge {
         sessionId: event.sessionId,
         projectLabel: this.#projectLabel,
         sessionLabel: session.title,
+        active: session.active,
       });
       return { status: "retry" };
     }

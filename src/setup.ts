@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { isIP } from "node:net";
 import { hostname, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "./config";
@@ -11,7 +12,7 @@ import {
   injectOpenCodeConfig,
 } from "./opencode";
 import { installSystemdService, isSystemdAvailable } from "./service";
-import { defaultStateDirectory } from "./state";
+import { defaultStateDirectory, loadOrCreateStateIdentity } from "./state";
 import { type TelegramBot, TelegramBotApi, type TelegramUpdate } from "./telegram/api";
 
 export function resolveDockerComposeContext(
@@ -115,6 +116,15 @@ export type InteractiveSetupOptions = {
   stateDirectory?: string | undefined;
   cwd?: string | undefined;
   now?: (() => number) | undefined;
+  systemdAvailable?: (() => boolean) | undefined;
+  installSystemd?: typeof installSystemdService | undefined;
+  uninstallSystemd?: typeof import("./service").uninstallSystemdService | undefined;
+  dockerSpawnSync?:
+    | ((
+        command: string[],
+        options?: { cwd?: string; timeout?: number; env?: Record<string, string | undefined> },
+      ) => { exitCode: number; stdout?: Uint8Array; stderr?: Uint8Array })
+    | undefined;
 };
 
 export class SetupError extends Error {
@@ -233,6 +243,13 @@ export async function runGuidedSetup(options: GuidedSetupOptions): Promise<Guide
   }
 
   await writePrivateTokenFile(stateDirectory, tokenFile, options.botToken);
+  await persistGatewayConfig(stateDirectory, parsed.data);
+  await writePrivateJsonFile(join(stateDirectory, "deployment.json"), {
+    mode: "native",
+    bindHost: parsed.data.broker.host,
+    port: parsed.data.broker.port,
+  });
+  await loadOrCreateStateIdentity(stateDirectory);
 
   return {
     status: "ready",
@@ -251,7 +268,8 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
   const reader = new AsyncPromptReader(options.stdin ?? process.stdin);
   try {
     const now = options.now ?? Date.now;
-    const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+    const env = options.env ?? process.env;
+    const stateDirectory = options.stateDirectory ?? defaultStateDirectory(env);
     const cwd = options.cwd ?? process.cwd();
 
     stdout.write("\n┌  OpenCode Telegram Notifier — Setup Wizard\n│\n");
@@ -295,6 +313,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
 
     let configData: NotifierConfig;
     let isDocker = false;
+    let nativeBindHost = "127.0.0.1";
     let pairing: PairingCandidate | undefined;
     let api: TelegramBotApi | undefined;
     let botInfo: TelegramBot | undefined;
@@ -319,6 +338,14 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           : "◇  Enter Gateway Secret Token:\n│  (Press Enter if no secret required)\n",
       );
       const gatewaySecret = await reader.ask("│  Secret: ", stdout, "");
+      if (!gatewaySecret) {
+        stderr.write(
+          isZh
+            ? "✖ Node 模式需要 gateway-secret 連線金鑰。\n"
+            : "✖ Node mode requires the gateway-secret credential.\n",
+        );
+        return 1;
+      }
 
       configData = {
         mode: "local",
@@ -327,7 +354,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
         locale,
         gateway: {
           url: gatewayUrl,
-          secret: gatewaySecret || "default-secret",
+          secret: gatewaySecret,
         },
         notifications: {
           completion: true,
@@ -362,6 +389,38 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
         "1",
       );
       isDocker = modeChoice === "2" || modeChoice.toLowerCase().includes("docker");
+
+      if (!isDocker) {
+        stdout.write("│\n");
+        stdout.write(
+          isZh
+            ? "◇  Gateway 監聽 IP：\n│  本機限定請保留 127.0.0.1；ZeroTier/NetBird 請填該介面的 IP。\n│  只有搭配防火牆或 TLS reverse proxy 時才使用 0.0.0.0。\n"
+            : "◇  Gateway bind IP:\n│  Keep 127.0.0.1 for local-only access, or enter the ZeroTier/NetBird interface IP.\n│  Use 0.0.0.0 only with a firewall or TLS reverse proxy.\n",
+        );
+        nativeBindHost = await reader.ask(
+          isZh ? "│  監聽 IP [127.0.0.1]: " : "│  Bind IP [127.0.0.1]: ",
+          stdout,
+          "127.0.0.1",
+        );
+        if (isIP(nativeBindHost) === 0) {
+          stderr.write(
+            isZh ? "✖ 監聽位址必須是有效 IP。\n" : "✖ Bind address must be a valid IP.\n",
+          );
+          return 1;
+        }
+        if (nativeBindHost === "0.0.0.0" || nativeBindHost === "::") {
+          const confirmation = await reader.ask(
+            isZh
+              ? "│  此設定會暴露到所有網卡。輸入 EXPOSE 確認: "
+              : "│  This exposes every interface. Type EXPOSE to confirm: ",
+            stdout,
+          );
+          if (confirmation !== "EXPOSE") {
+            stderr.write(isZh ? "✖ 已取消公開監聽。\n" : "✖ Wildcard binding cancelled.\n");
+            return 1;
+          }
+        }
+      }
 
       // BotFather Token
       let botToken = "";
@@ -474,12 +533,6 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       // Write secure token file
       const tokenFile = join(stateDirectory, "telegram-bot-token");
       await writePrivateTokenFile(stateDirectory, tokenFile, botToken);
-      const identityFile = join(stateDirectory, "telegram-identity.json");
-      await writeFile(
-        identityFile,
-        `${JSON.stringify({ userId: pairing.userId, chatId: pairing.chatId, tokenFile, locale }, null, 2)}\n`,
-        "utf8",
-      );
       stdout.write(
         isZh
           ? `│  ✔ 安全 Token 檔案已儲存 (${tokenFile})\n`
@@ -506,7 +559,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           pluginBufferSize: 100,
         },
         broker: {
-          host: "0.0.0.0",
+          host: isDocker ? "0.0.0.0" : nativeBindHost,
           port: 42617,
         },
         interaction: {
@@ -514,6 +567,78 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
           questionTtlMinutes: 30,
         },
       };
+    }
+
+    const validatedConfig = NotifierConfigSchema.safeParse(configData);
+    if (!validatedConfig.success) {
+      stderr.write(
+        `${isZh ? "✖ 設定無效" : "✖ Invalid configuration"}: ${sanitizedConfigError(validatedConfig.error.issues)}\n`,
+      );
+      return 1;
+    }
+    configData = validatedConfig.data;
+    const dockerComposeContext = isDocker ? resolveDockerComposeContext(cwd) : undefined;
+    if (isDocker && !dockerComposeContext) {
+      stderr.write(
+        isZh
+          ? "✖ 找不到 Docker Compose 設定，無法建立可安全移除的部署紀錄。\n"
+          : "✖ Docker Compose configuration was not found; cannot create a safely removable deployment record.\n",
+      );
+      return 1;
+    }
+
+    if (isNode) {
+      const deploymentPath = join(stateDirectory, "deployment.json");
+      if (existsSync(deploymentPath)) {
+        const existing = JSON.parse(await readFile(deploymentPath, "utf8")) as { mode?: unknown };
+        if (existing.mode !== "node") {
+          stderr.write(
+            isZh
+              ? "✖ 此狀態目錄屬於 Gateway；Node setup必須使用獨立的 --state-dir。\n"
+              : "✖ This state directory belongs to a Gateway; Node setup requires a separate --state-dir.\n",
+          );
+          return 1;
+        }
+      } else {
+        const gatewayArtifacts = [
+          "broker-secret",
+          "telegram-bot-token",
+          "opencode-notifier.json",
+          "telegram-identity.json",
+          "state.sqlite",
+        ];
+        if (gatewayArtifacts.some((name) => existsSync(join(stateDirectory, name)))) {
+          stderr.write(
+            isZh
+              ? "✖ 此無標記狀態目錄包含Gateway資產；Node setup必須使用獨立的 --state-dir。\n"
+              : "✖ This unmarked state directory contains Gateway assets; Node setup requires a separate --state-dir.\n",
+          );
+          return 1;
+        }
+      }
+      await writePrivateJsonFile(join(stateDirectory, "deployment.json"), { mode: "node" });
+    } else {
+      await persistGatewayConfig(
+        stateDirectory,
+        configData,
+        isDocker ? "/state/telegram-bot-token" : undefined,
+      );
+      await writePrivateJsonFile(join(stateDirectory, "deployment.json"), {
+        mode: isDocker ? "docker" : "native",
+        ...(!isDocker ? { bindHost: configData.broker.host, port: configData.broker.port } : {}),
+        ...(dockerComposeContext
+          ? {
+              composeFile: resolve(dockerComposeContext.composeFile),
+              projectDir: resolve(dockerComposeContext.projectDir),
+            }
+          : {}),
+      });
+      await loadOrCreateStateIdentity(stateDirectory);
+      stdout.write(
+        isZh
+          ? `│  ✔ Node 連線憑證位於 ${join(stateDirectory, "gateway-secret")}（請勿公開）\n`
+          : `│  ✔ Node credential stored at ${join(stateDirectory, "gateway-secret")} (keep it private)\n`,
+      );
     }
 
     // Step 5: OpenCode config detection & injection
@@ -567,10 +692,18 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
             : "│  Please add the following configuration to your opencode.json:\n",
         );
         stdout.write(`│\n${generatePluginConfigSnippet(configData)}\n│\n`);
+        if (configData.role === "node") {
+          stdout.write(
+            isZh
+              ? "│  請在寫入檔案前，以私密取得的Node憑證取代 REPLACE_WITH_GATEWAY_SECRET。\n"
+              : "│  Replace REPLACE_WITH_GATEWAY_SECRET with the privately obtained Node credential before writing the file.\n",
+          );
+        }
       }
     }
 
     let dockerFailed = false;
+    let serviceFailed = false;
     if (isDocker) {
       stdout.write("│\n");
       const autoStartDocker = await reader.ask(
@@ -588,12 +721,22 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
         );
         try {
           const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-          const composeCtx = resolveDockerComposeContext(cwd);
+          const composeCtx = dockerComposeContext;
           if (!composeCtx) {
             throw new Error("Could not find docker-compose.yml in project or package directory");
           }
 
-          const result = Bun.spawnSync(
+          const dockerSpawnSync =
+            options.dockerSpawnSync ??
+            ((
+              command: string[],
+              spawnOptions?: {
+                cwd?: string;
+                timeout?: number;
+                env?: Record<string, string | undefined>;
+              },
+            ) => Bun.spawnSync(command, spawnOptions));
+          const result = dockerSpawnSync(
             [
               dockerCmd,
               "compose",
@@ -608,8 +751,9 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
             {
               cwd: composeCtx.projectDir,
               env: {
-                ...process.env,
-                HOME: process.env.HOME || process.env.USERPROFILE || "",
+                ...env,
+                HOME: env.HOME || env.USERPROFILE || "",
+                OPENCODE_TELEGRAM_HOST_STATE_DIR: stateDirectory,
               },
             },
           );
@@ -651,7 +795,8 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
       }
     } else {
       stdout.write("│\n");
-      if (!isNode && isSystemdAvailable()) {
+      const systemdAvailable = options.systemdAvailable ?? isSystemdAvailable;
+      if (!isNode && systemdAvailable()) {
         const autoSystemd = await reader.ask(
           isZh
             ? "◇  是否將 Gateway 註冊為 Systemd 系統開機自動啟動服務？ [Y/n]: "
@@ -665,7 +810,11 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
               ? "│  ⠋ 正在註冊並啟用 Systemd 服務 (opencode-gateway.service)...\n"
               : "│  ⠋ Registering and enabling systemd service (opencode-gateway.service)...\n",
           );
-          const serviceResult = await installSystemdService();
+          const installService = options.installSystemd ?? installSystemdService;
+          const serviceResult = await installService({
+            stateDirectory,
+            bindHost: nativeBindHost,
+          });
           if (serviceResult.success) {
             stdout.write(
               isZh
@@ -673,6 +822,7 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
                 : "│  ✔ Systemd service created and enabled! Will auto-start on boot.\n",
             );
           } else {
+            serviceFailed = true;
             stdout.write(
               isZh
                 ? `│  ✖ Systemd 服務註冊失敗: ${serviceResult.error}（您可於稍後手動啟動: npx opencode-telegram-link start）\n`
@@ -735,11 +885,11 @@ export async function runInteractiveSetup(options: InteractiveSetupOptions = {})
     }
 
     stdout.write("│\n");
-    if (dockerFailed) {
+    if (dockerFailed || serviceFailed) {
       stdout.write(
         isZh
-          ? "└  ⚠ 設定檔已寫入，但 Docker 容器啟動失敗。請確認 Docker 服務運行後手動啟動容器。\n\n"
-          : "└  ⚠ Configuration written, but Docker container failed to start. Please ensure Docker is running and start the container manually.\n\n",
+          ? "└  ⚠ 設定已寫入，但背景服務啟動失敗。修正上述問題後重新執行 setup。\n\n"
+          : "└  ⚠ Configuration was written, but the background service failed. Fix the error above and rerun setup.\n\n",
       );
       return 1;
     }
@@ -903,6 +1053,40 @@ async function writePrivateTokenFile(
     await rm(temporaryPath, { force: true });
     throw error;
   }
+}
+
+async function persistGatewayConfig(
+  stateDirectory: string,
+  config: NotifierConfig,
+  daemonTokenFile?: string,
+): Promise<void> {
+  if (config.role !== "gateway" || !config.telegram) return;
+  await writePrivateJsonFile(join(stateDirectory, "telegram-identity.json"), {
+    userId: config.telegram.userId,
+    chatId: config.telegram.chatId,
+    tokenFile: config.telegram.tokenFile,
+    locale: config.locale,
+  });
+  await writePrivateJsonFile(join(stateDirectory, "opencode-notifier.json"), {
+    ...config,
+    telegram: {
+      ...config.telegram,
+      tokenFile: daemonTokenFile ?? config.telegram.tokenFile,
+    },
+  });
+}
+
+async function writePrivateJsonFile(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
+  await chmod(temporaryPath, 0o600);
+  await rename(temporaryPath, path);
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {

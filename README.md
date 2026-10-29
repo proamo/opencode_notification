@@ -2,14 +2,14 @@
 
 OpenCode Telegram Notifier is a privacy-first OpenCode plugin and multi-host management gateway for asynchronous notifications, interactive inline buttons, safe remote replies, and proactive remote task dispatching. It is designed for developers who run OpenCode across multiple projects and multiple computers (dev machine, laptop, VPS) while routing every Telegram and Web interaction to the exact originating host, process, and workspace window.
 
-> Version: **v1.0.0-rc.8** (OpenCode Commander Web Dashboard, Proactive Remote Dispatch, Multi-Engine Voice STT, Multi-Host Gateway & Node Agent Architecture).
-> Status: Release Candidate 8. Install from a release tarball or source checkout until the first public npm package is published.
+> Version: **v1.0.0-rc.9** (OpenCode Commander Web Dashboard, Proactive Remote Dispatch, Multi-Engine Voice STT, Multi-Host Gateway & Node Agent Architecture).
+> Status: Release Candidate 9. Install with `npm install -g opencode-telegram-link@1.0.0-rc.9` after publication, or use a source checkout.
 
 [繁體中文總覽 (Traditional Chinese)](docs/README.zh-TW.md)
 
 ---
 
-## Features & Highlights (v1.0.0-rc.8)
+## Features & Highlights (v1.0.0-rc.9)
 
 - 🖥️ **OpenCode Commander (Web GUI Dashboard)**: Built-in modern Glassmorphism Web Console (`http://<gateway-ip>:42617/dashboard`) providing real-time visibility, live metrics, and centralized cluster management.
 - 🌐 **Cluster Topology & 1-to-1 Window Mapping**: Live cards for all connected computers and OpenCode workspace windows with real-time session indicators and task counters.
@@ -147,7 +147,7 @@ To share the **same Telegram Bot** across multiple computers (e.g. Machine A as 
 
 ### Step 1: Set up Machine A (Central Gateway)
 Run `bun run setup` on Machine A, choose `1) Standalone Gateway Mode`, and pair your Telegram Bot.
-Ensure Machine A's Broker WebSocket port (`42617`) is accessible by Machine B (e.g., via LAN, Tailscale VPN, or reverse proxy).
+Choose Machine A's ZeroTier/NetBird interface IP as the bind address. For a public IP, keep the broker on loopback and expose it through an HTTPS/WSS reverse proxy.
 
 ### Step 2: Set up Machine B (Node Agent)
 On Machine B (e.g., your laptop or another server):
@@ -155,13 +155,14 @@ On Machine B (e.g., your laptop or another server):
 2. Choose **`2) Node Agent Mode`**.
 3. Enter your machine label (e.g., `MacBook` or `Live-VPS`).
 4. Enter Machine A's Gateway WebSocket URL (e.g., `ws://192.168.1.100:42617`, `ws://100.x.x.x:42617` via Tailscale, or `wss://gateway.example.com`).
-5. Enter Gateway Secret Token (if configured).
+5. Enter the Gateway Node credential from Machine A's `gateway-secret` file.
 
 ### Machine B `opencode.json` Example
 ```json
 {
-  "plugin": {
-    "opencode-telegram-link": {
+  "plugin": [[
+    "opencode-telegram-link",
+    {
       "mode": "local",
       "role": "node",
       "hostLabel": "MacBook",
@@ -176,14 +177,16 @@ On Machine B (e.g., your laptop or another server):
         "permission": true
       }
     }
-  }
+  ]]
 }
 ```
 
 > 💡 **How to get the Gateway Secret Token?**  
 > Run the following command on Machine A (Gateway) to view and copy the secret token:  
-> `cat ~/.local/state/opencode-telegram-link/broker-secret`  
-> (Or on Windows: `type %USERPROFILE%\.local\state\opencode-telegram-link\broker-secret`).
+> `cat ~/.local/state/opencode-telegram-link/gateway-secret`
+> (Or on Windows: `type %USERPROFILE%\.local\state\opencode-telegram-link\gateway-secret`). Never use `broker-secret` on a Node; it grants dashboard and control access.
+
+Public IPs require `wss://`. Plain `ws://` is accepted only for loopback and private/overlay IP ranges. Rotate a leaked Node credential with `opencode-telegram-broker rotate-gateway-secret`, update every Node, and restart the Gateway.
 
 Notifications from Machine B will automatically display `🖥️ [MacBook]` in Telegram, and button clicks or replies from Telegram will automatically route back to Machine B!
 
@@ -435,13 +438,13 @@ The uninstaller will safely:
 
 ## Specifications
 
-- [Proposal](openspec/changes/design-telegram-notifier/proposal.md)
-- [Technical design](openspec/changes/design-telegram-notifier/design.md)
-- [Telegram notifications](openspec/changes/design-telegram-notifier/specs/telegram-notifications/spec.md)
-- [Local instance routing](openspec/changes/design-telegram-notifier/specs/local-instance-routing/spec.md)
-- [Telegram session interaction](openspec/changes/design-telegram-notifier/specs/telegram-session-interaction/spec.md)
-- [Setup and diagnostics](openspec/changes/design-telegram-notifier/specs/setup-and-diagnostics/spec.md)
-- [Implementation tasks](openspec/changes/design-telegram-notifier/tasks.md)
+- [Original proposal](openspec/changes/archive/2026-08-19-design-telegram-notifier/proposal.md)
+- [Original technical design](openspec/changes/archive/2026-08-19-design-telegram-notifier/design.md)
+- [Telegram notifications](openspec/specs/telegram-notifications/spec.md)
+- [Local instance routing](openspec/specs/local-instance-routing/spec.md)
+- [Telegram session interaction](openspec/specs/telegram-session-interaction/spec.md)
+- [Setup and diagnostics](openspec/specs/setup-and-diagnostics/spec.md)
+- [Original implementation tasks](openspec/changes/archive/2026-08-19-design-telegram-notifier/tasks.md)
 - [Future Architecture & Roadmap (V2/V3)](docs/future-architecture-spec.md)
 - [Compatibility policy](docs/compatibility.md)
 - [Local state management](docs/state-management.md)
@@ -458,7 +461,7 @@ The OpenSpec artifacts are the current source of truth. Requirements use RFC 211
 - TypeScript and Bun
 - `@opencode-ai/plugin` and the OpenCode SDK
 - Telegram Bot API with long polling
-- Authenticated loopback WebSocket protocol
+- Authenticated WebSocket protocol between Node Agents and the Central Gateway
 - SQLite for minimal route, delivery, and idempotency state
 
 The project uses the MIT License. `opencode-telegram-link` is the current working npm package name and may be changed before the first public release.

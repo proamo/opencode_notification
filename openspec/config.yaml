@@ -3,9 +3,11 @@ schema: spec-driven
 context: |
   Product: OpenCode Telegram notifier and remote-response plugin.
   Runtime: TypeScript on Bun, using @opencode-ai/plugin and the Telegram Bot API.
-  V1 topology: one computer, one local broker, one user-owned Telegram bot,
-  multiple OpenCode processes, projects, and sessions.
-  Security: local-only broker, fail closed, least privilege, no central service,
+  RC topology: one self-hosted Central Gateway, one user-owned Telegram bot,
+  and multiple local or remote OpenCode Node Agents connected over authenticated
+  WebSockets. The Gateway is the singleton Telegram polling owner.
+  Security: loopback by default, explicit private overlay binding for multi-host
+  use, WSS for public addresses, fail closed, least privilege, no hosted relay,
   and no sensitive session content in notifications by default.
   Documentation and source code use English as the canonical language. A
   Traditional Chinese overview is maintained for the initial audience.
@@ -19,7 +21,7 @@ rules:
     - Distinguish session prompts, question replies, and permission replies.
   specs:
     - Every externally visible behavior must have at least one scenario.
-    - Do not imply multi-computer support in V1.
+    - Preserve the single-user, self-hosted trust boundary and distinguish private overlay transport from public WSS transport.
   tasks:
     - Include automated tests and documentation work.
 

@@ -18,7 +18,7 @@ Inspection returns only schema version, machine identity, update offset, and cou
 
 ## Purge
 
-An explicit operational purge removes message routes, outbox records, inbound updates, deduplication records, and the Telegram update offset. It preserves the database schema and machine identity. Purge is never automatic during uninstall or startup.
+The explicit `purge-state` command removes message routes, outbox records, inbound updates, deduplication records, and the Telegram update offset while preserving the database schema and machine identity. Setup and startup never purge automatically. The uninstaller deletes the complete database only after the user explicitly approves SQLite cleanup and the applicable native or Docker Gateway has been confirmed stopped.
 
 ## Corruption Repair
 

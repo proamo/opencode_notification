@@ -29,5 +29,6 @@ export {
   defaultStateDirectory,
   deriveProjectId,
   loadOrCreateStateIdentity,
+  rotateGatewaySecret,
   type StateIdentity,
 } from "./identity";

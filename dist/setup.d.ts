@@ -1,5 +1,6 @@
 import { type NotifierConfig } from "./config";
 import type { SupportedLocale } from "./i18n";
+import { installSystemdService } from "./service";
 import { type TelegramBot } from "./telegram/api";
 export declare function resolveDockerComposeContext(cwd?: string, explicitComposePath?: string): {
     composeFile: string;
@@ -50,6 +51,18 @@ export type InteractiveSetupOptions = {
     stateDirectory?: string | undefined;
     cwd?: string | undefined;
     now?: (() => number) | undefined;
+    systemdAvailable?: (() => boolean) | undefined;
+    installSystemd?: typeof installSystemdService | undefined;
+    uninstallSystemd?: typeof import("./service").uninstallSystemdService | undefined;
+    dockerSpawnSync?: ((command: string[], options?: {
+        cwd?: string;
+        timeout?: number;
+        env?: Record<string, string | undefined>;
+    }) => {
+        exitCode: number;
+        stdout?: Uint8Array;
+        stderr?: Uint8Array;
+    }) | undefined;
 };
 export declare class SetupError extends Error {
     readonly code: string;

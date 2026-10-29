@@ -10,6 +10,8 @@ if [ "$(id -u)" = "0" ]; then
       if [ "$STATE_GID" != "" ] && [ "$STATE_GID" != "0" ]; then
         groupmod -o -g "$STATE_GID" opencode 2>/dev/null || true
       fi
+    elif [ "$STATE_UID" = "0" ]; then
+      chown opencode:opencode /state
     fi
   fi
   chown -R opencode:opencode /app 2>/dev/null || true

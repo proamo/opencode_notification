@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, realpath } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -7,11 +8,14 @@ import type { RouteKey } from "../protocol";
 
 const UUIDSchema = z.uuid();
 const SECRET_BYTES = 32;
+const IDENTITY_MODE_LEGACY = "2:legacy";
+const IDENTITY_MODE_SEPARATE = "2:separate";
 
 export type StateIdentity = {
   stateDirectory: string;
   machineId: string;
   brokerSecret: string;
+  gatewaySecret: string;
   routeSalt: string;
 };
 
@@ -42,9 +46,28 @@ export async function loadOrCreateStateIdentity(
     () => randomUUID(),
     (value) => UUIDSchema.parse(value),
   );
+  const brokerSecretPath = join(stateDirectory, "broker-secret");
+  const versionPath = join(stateDirectory, "identity-version");
+  const identityMode = await loadOrCreatePrivateValue(
+    versionPath,
+    () => (existsSync(brokerSecretPath) ? IDENTITY_MODE_LEGACY : IDENTITY_MODE_SEPARATE),
+    (value) => {
+      if (value === "2") return IDENTITY_MODE_SEPARATE;
+      if (value !== IDENTITY_MODE_LEGACY && value !== IDENTITY_MODE_SEPARATE) {
+        throw new Error("unsupported state identity version");
+      }
+      return value;
+    },
+  );
+  const legacyIdentity = identityMode === IDENTITY_MODE_LEGACY;
   const brokerSecret = await loadOrCreatePrivateValue(
-    join(stateDirectory, "broker-secret"),
+    brokerSecretPath,
     () => randomBytes(SECRET_BYTES).toString("base64url"),
+    validateSecret,
+  );
+  const gatewaySecret = await loadOrCreatePrivateValue(
+    join(stateDirectory, "gateway-secret"),
+    () => (legacyIdentity ? brokerSecret : randomBytes(SECRET_BYTES).toString("base64url")),
     validateSecret,
   );
   const routeSalt = await loadOrCreatePrivateValue(
@@ -53,11 +76,35 @@ export async function loadOrCreateStateIdentity(
     validateSecret,
   );
 
-  return { stateDirectory, machineId, brokerSecret, routeSalt };
+  return { stateDirectory, machineId, brokerSecret, gatewaySecret, routeSalt };
 }
 
 export function createInstanceId(): string {
   return randomUUID();
+}
+
+export async function rotateGatewaySecret(
+  stateDirectory = defaultStateDirectory(),
+): Promise<string> {
+  await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  await assertPrivatePath(stateDirectory, "directory", 0o700);
+  const secret = randomBytes(SECRET_BYTES).toString("base64url");
+  const path = join(stateDirectory, "gateway-secret");
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${secret}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(temporaryPath, path);
+    await assertPrivatePath(path, "file", 0o600);
+  } catch (error) {
+    await rm(temporaryPath, { force: true });
+    throw error;
+  }
+  return secret;
 }
 
 export function createRouteGeneration(): string {

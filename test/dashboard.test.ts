@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type BrokerServer, startBroker } from "../src/broker/server";
@@ -120,22 +120,34 @@ describe("Web Dashboard", () => {
   });
 
   test("handles test-voice missing credentials validation", async () => {
-    const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/test-voice`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${brokerSecret}`,
-      },
-      body: JSON.stringify({
-        provider: "cloudflare",
-        apiKey: "cfut_test",
-      }),
-    });
+    const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const cfAccountId = process.env.CF_ACCOUNT_ID;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.CF_ACCOUNT_ID;
 
-    expect(res.status).toBe(400);
-    const data = (await res.json()) as { success: boolean; error: string };
-    expect(data.success).toBe(false);
-    expect(data.error).toContain("Account ID");
+    try {
+      const res = await fetch(`http://127.0.0.1:${broker.port}/v1/api/dashboard/test-voice`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${brokerSecret}`,
+        },
+        body: JSON.stringify({
+          provider: "cloudflare",
+          apiKey: "cfut_test",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as { success: boolean; error: string };
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("Account ID");
+    } finally {
+      if (cloudflareAccountId === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+      else process.env.CLOUDFLARE_ACCOUNT_ID = cloudflareAccountId;
+      if (cfAccountId === undefined) delete process.env.CF_ACCOUNT_ID;
+      else process.env.CF_ACCOUNT_ID = cfAccountId;
+    }
   });
 
   test("saves settings via /v1/api/dashboard/settings", async () => {
@@ -195,6 +207,9 @@ describe("Web Dashboard", () => {
 
       // Verify the raw json file on disk does NOT contain the environment variable key
       const diskPath = join(stateDirectory, "dashboard-settings.json");
+      if (process.platform !== "win32") {
+        expect((await stat(diskPath)).mode & 0o777).toBe(0o600);
+      }
       const diskRaw = await readFile(diskPath, "utf8");
       const diskParsed = JSON.parse(diskRaw);
       expect(diskParsed.sessionPromptTtlMinutes).toBe(1440);
@@ -206,6 +221,33 @@ describe("Web Dashboard", () => {
       } else {
         delete process.env.GROQ_API_KEY;
       }
+    }
+  });
+
+  test("does not synthesize a voice provider when saving unrelated settings", async () => {
+    const isolatedState = await mkdtemp(join(tmpdir(), "opencode-dashboard-voice-test-"));
+    const identity = await loadOrCreateStateIdentity(isolatedState);
+    const isolatedBroker = await startBroker({ stateDirectory: isolatedState, port: 0 });
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${isolatedBroker.port}/v1/api/dashboard/settings`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${identity.brokerSecret}`,
+          },
+          body: JSON.stringify({ sessionPromptTtlMinutes: 1440 }),
+        },
+      );
+      expect(response.status).toBe(200);
+      const persisted = JSON.parse(
+        await readFile(join(isolatedState, "dashboard-settings.json"), "utf8"),
+      );
+      expect(persisted.voiceConfigured).toBe(false);
+    } finally {
+      await isolatedBroker.stop();
+      await rm(isolatedState, { recursive: true, force: true });
     }
   });
 

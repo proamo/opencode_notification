@@ -2,14 +2,14 @@
 
 OpenCode Telegram Notifier 是一個注重隱私、支援多主機集中控制與遠端主動派工的 OpenCode 外掛與控制中樞（Gateway）。它專為同時執行多個專案、多台電腦（開發主機、筆電、線上 VPS）的開發者設計，能將任務完成、錯誤、詢問等通知即時推送到 Telegram，並提供全新 **Web 控制台 (OpenCode Commander)**、**遠端主動派工**、**多核心語音辨識**、**一鍵權限審批**與**多主機標籤識別**，確保使用者無論在 Telegram 或是網頁看板上的每一次操作都能精準送回目標主機、專案與工作視窗。
 
-> 目前版本：**v1.0.0-rc.8**（OpenCode Commander Web 控制台、遠端主動派工、多核心語音 STT、多主機 Hub-and-Spoke Gateway、節點 Agent、Telegram 互動按鈕與 AI 執行結論）。
-> 目前狀態：Release Candidate 8，尚未發布 npm 公開版本。
+> 目前版本：**v1.0.0-rc.9**（OpenCode Commander Web 控制台、遠端主動派工、多核心語音 STT、多主機 Hub-and-Spoke Gateway、節點 Agent、Telegram 互動按鈕與 AI 執行結論）。
+> 目前狀態：Release Candidate 9。發布後可使用 `npm install -g opencode-telegram-link@1.0.0-rc.9` 安裝，亦可使用原始碼版本。
 
 [English Documentation](../README.md)
 
 ---
 
-## 核心功能與特色 (v1.0.0-rc.8)
+## 核心功能與特色 (v1.0.0-rc.9)
 
 - 🖥️ **OpenCode Commander（Web 視覺化控制台）**：內建現代化毛玻璃質感網頁控制台（預設 `http://<gateway-ip>:42617/dashboard`），即時掌握叢集狀態與運行指標。
 - 🌐 **叢集拓撲總覽 (Cluster Topology)**：1 對 1 精準對齊所有連線電腦與 VS Code 工作區視窗，即時呈現多任務進度與待命狀態。
@@ -163,13 +163,14 @@ http://<gateway-ip>:42617/dashboard
 2. 選擇 **`2) 節點 Agent 模式 (Node Agent Mode)`**。
 3. 輸入主機標籤（例如 `MacBook` 或 `Live-VPS`）。
 4. 輸入主機 A 的 Gateway WebSocket 位址（例如 `ws://192.168.1.100:42617`、`ws://100.x.x.x:42617` (Tailscale) 或 `wss://gateway.yourdomain.com`）。
-5. 輸入 Gateway 連線金鑰（若無設定可直接按 Enter）。
+5. 輸入主機 A 的 `gateway-secret` Node 連線金鑰。
 
 ### 主機 B 的 `opencode.json` 設定範例
 ```json
 {
-  "plugin": {
-    "opencode-telegram-link": {
+  "plugin": [[
+    "opencode-telegram-link",
+    {
       "mode": "local",
       "role": "node",
       "hostLabel": "MacBook",
@@ -184,14 +185,14 @@ http://<gateway-ip>:42617/dashboard
         "permission": true
       }
     }
-  }
+  ]]
 }
 ```
 
 > 💡 **如何取得主機 A (Gateway) 的連線金鑰？**  
 > 在主機 A 上執行以下指令即可查閱並複製金鑰：  
-> `cat ~/.local/state/opencode-telegram-link/broker-secret`  
-> （若主機 A 與主機 B 在安全的私有內網/Tailscale 且未設定密鑰，此欄位亦可為預設值）。
+> `cat ~/.local/state/opencode-telegram-link/gateway-secret`
+> 請勿將 `broker-secret` 提供給 Node；該金鑰可操作 Dashboard 與控制 API。公網位址必須使用 `wss://`，ZeroTier、NetBird 等私有 overlay IP 才可直接使用 `ws://`。
 
 設定完成後，主機 B 發出的通知會在 Telegram 頂部標註 `🖥️ [MacBook]`，而您在 Telegram 手機端點擊按鈕或回覆時，指令會自動精準轉發回主機 B！
 
@@ -456,13 +457,13 @@ opencode-telegram-broker uninstall
 
 ## 規格文件
 
-- [提案](../openspec/changes/design-telegram-notifier/proposal.md)
-- [技術設計](../openspec/changes/design-telegram-notifier/design.md)
-- [Telegram 通知規格](../openspec/changes/design-telegram-notifier/specs/telegram-notifications/spec.md)
-- [本機實例路由規格](../openspec/changes/design-telegram-notifier/specs/local-instance-routing/spec.md)
-- [Telegram 互動規格](../openspec/changes/design-telegram-notifier/specs/telegram-session-interaction/spec.md)
-- [安裝與診斷規格](../openspec/changes/design-telegram-notifier/specs/setup-and-diagnostics/spec.md)
-- [實作工作清單](../openspec/changes/design-telegram-notifier/tasks.md)
+- [原始提案](../openspec/changes/archive/2026-08-19-design-telegram-notifier/proposal.md)
+- [原始技術設計](../openspec/changes/archive/2026-08-19-design-telegram-notifier/design.md)
+- [Telegram 通知規格](../openspec/specs/telegram-notifications/spec.md)
+- [本機實例路由規格](../openspec/specs/local-instance-routing/spec.md)
+- [Telegram 互動規格](../openspec/specs/telegram-session-interaction/spec.md)
+- [安裝與診斷規格](../openspec/specs/setup-and-diagnostics/spec.md)
+- [原始實作工作清單](../openspec/changes/archive/2026-08-19-design-telegram-notifier/tasks.md)
 - [未來架構與演進規格書 (V2/V3 Roadmap)](future-architecture-spec.md)
 - [相容性政策](compatibility.md)
 - [本機狀態管理](state-management.md)

@@ -1,4 +1,9 @@
-import { fetchBrokerStatus, probeBroker, type StartBrokerOptions } from "./broker/server";
+import {
+  brokerHttpUrl,
+  fetchBrokerStatus,
+  probeBroker,
+  type StartBrokerOptions,
+} from "./broker/server";
 import {
   type NotifierConfig,
   NotifierConfigSchema,
@@ -7,6 +12,7 @@ import {
   sanitizeConfigError,
 } from "./config";
 import { translate } from "./i18n";
+import { parseGatewayWebSocketUrl } from "./network";
 import { loadResolvedNotifierConfig } from "./opencode";
 import { loadOrCreateStateIdentity } from "./state";
 import { TelegramBotApi } from "./telegram";
@@ -29,8 +35,10 @@ export type DoctorOptions = {
   rawConfig?: unknown;
   stateDirectory?: string;
   port?: number;
+  bindHost?: string;
   fetch?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  cwd?: string;
 };
 
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorReport> {
@@ -41,15 +49,38 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
     configInput = options.rawConfig;
   } else {
     const envConfig = configFromEnvironment(env);
-    configInput = envConfig ?? (await loadResolvedNotifierConfig(undefined, process.cwd()));
+    configInput =
+      envConfig ?? (await loadResolvedNotifierConfig(undefined, options.cwd ?? process.cwd()));
   }
-  const configResult = parseDoctorConfig(configInput);
+  let configResult = parseDoctorConfig(configInput);
+  if (configResult.config && !configFromEnvironment(env)) {
+    const config = configResult.config;
+    const locale = env.OPENCODE_TELEGRAM_LOCALE ?? config.locale;
+    const portValue = env.OPENCODE_TELEGRAM_BROKER_PORT;
+    const port = portValue ? Number(portValue) : undefined;
+    let gateway = config.gateway;
+    if (config.role === "node" && gateway && port) {
+      const gatewayUrl = parseGatewayWebSocketUrl(gateway.url);
+      gatewayUrl.port = String(port);
+      gateway = { ...gateway, url: gatewayUrl.toString() };
+    }
+    configResult = parseDoctorConfig({
+      ...config,
+      locale,
+      broker: { ...config.broker, ...(port ? { port } : {}) },
+      ...(gateway ? { gateway } : {}),
+    });
+  }
   checks.push(configResult.check);
 
-  let token: string | undefined;
-  if (configResult.config) {
+  const config = configResult.config;
+  if (config?.role === "node") {
+    checks.push(pass("gateway-credential", "Node Gateway credential is configured."));
+    checks.push(await checkNodeGateway(config.gateway?.url, options.fetch));
+  } else if (config) {
+    let token: string | undefined;
     try {
-      token = await readNotifierBotToken(configResult.config);
+      token = await readNotifierBotToken(config);
       checks.push(pass("secret-file", "Credential source is present and access-restricted."));
     } catch (error) {
       checks.push(
@@ -60,28 +91,85 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
         ),
       );
     }
+    const bindHost = options.bindHost ?? config.broker.host;
+    const port = options.port ?? config.broker.port;
+    try {
+      const broker = await checkBroker({
+        ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
+        port,
+        bindHost,
+      });
+      checks.push(...broker.checks);
+    } catch (error) {
+      checks.push(
+        fail(
+          "broker-reachability",
+          sanitizeConfigError(error),
+          "Use loopback or a private overlay address for lifecycle control.",
+        ),
+      );
+    }
+
+    if (token) checks.push(await checkTelegram(token, options.fetch));
+    else
+      checks.push(
+        fail(
+          "telegram-api",
+          "Telegram credential was unavailable.",
+          "Fix credential configuration.",
+        ),
+      );
   } else {
     checks.push(
       fail("secret-file", "Credential source could not be checked.", "Fix configuration first."),
     );
-  }
-
-  const broker = await checkBroker({
-    ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
-    ...(options.port ? { port: options.port } : {}),
-  });
-  checks.push(...broker.checks);
-
-  if (token) checks.push(await checkTelegram(token, options.fetch));
-  else
     checks.push(
       fail("telegram-api", "Telegram credential was unavailable.", "Fix credential configuration."),
     );
+    const bindHost = options.bindHost;
+    try {
+      const broker = await checkBroker({
+        ...(options.stateDirectory ? { stateDirectory: options.stateDirectory } : {}),
+        ...(options.port ? { port: options.port } : {}),
+        ...(bindHost ? { bindHost } : {}),
+      });
+      checks.push(...broker.checks);
+    } catch (error) {
+      checks.push(fail("broker-reachability", sanitizeConfigError(error)));
+    }
+  }
 
   checks.push(checkCatalogs());
   checks.push(checkOpenCodeCompatibility(env));
 
   return { ready: checks.every((check) => check.status === "pass"), checks };
+}
+
+async function checkNodeGateway(
+  gatewayUrl: string | undefined,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<DoctorCheck> {
+  if (!gatewayUrl) {
+    return fail("gateway-reachability", "Node Gateway URL is unavailable.", "Fix configuration.");
+  }
+  try {
+    const url = parseGatewayWebSocketUrl(gatewayUrl);
+    url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    url.pathname = "/v1/health";
+    url.search = "";
+    url.hash = "";
+    const response = await fetchImplementation(url, { signal: AbortSignal.timeout(1_000) });
+    if (response.status !== 401 && !response.ok) {
+      throw new Error(`Gateway health endpoint returned HTTP ${response.status}`);
+    }
+    return pass("gateway-reachability", `Gateway is reachable at ${url.host}.`);
+  } catch (error) {
+    return fail(
+      "gateway-reachability",
+      sanitizeConfigError(error),
+      "Verify the Gateway URL, private network, TLS, and firewall.",
+    );
+  }
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
@@ -115,9 +203,11 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
   const checks: DoctorCheck[] = [];
   const state = await loadOrCreateStateIdentity(options.stateDirectory);
   const port = options.port ?? 42617;
-  const health = await probeBroker(port, state.brokerSecret);
+  const bindHost = options.bindHost ?? "127.0.0.1";
+  brokerHttpUrl(port, "/v1/health", bindHost);
+  const health = await probeBroker(port, state.brokerSecret, bindHost);
   if (!health) {
-    if (await isPortOccupiedByNonBroker(port)) {
+    if (await isPortOccupiedByNonBroker(port, bindHost)) {
       checks.push(
         fail(
           "broker-singleton",
@@ -144,12 +234,12 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
         "Start OpenCode with the plugin enabled.",
       ),
     );
-    checks.push(pass("loopback-binding", "V1 control checks use loopback-only endpoints."));
+    checks.push(pass("loopback-binding", `Control checks use ${bindHost}:${port}.`));
     return { checks };
   }
 
-  checks.push(pass("broker-reachability", `Broker is reachable on 127.0.0.1:${port}.`));
-  const status = await fetchBrokerStatus(port, state.brokerSecret);
+  checks.push(pass("broker-reachability", `Broker is reachable on ${bindHost}:${port}.`));
+  const status = await fetchBrokerStatus(port, state.brokerSecret, bindHost);
   if (!status) {
     checks.push(
       warn("plugin-registration", "Broker status endpoint did not return registration details."),
@@ -157,14 +247,20 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
     checks.push(warn("loopback-binding", "Broker binding could not be verified."));
     return { checks };
   }
-  if (status.bindHost === "127.0.0.1" || status.bindHost === "0.0.0.0") {
+  if (status.bindHost === "127.0.0.1" || status.bindHost === "::1") {
     checks.push(pass("loopback-binding", `Broker is bound to ${status.bindHost}.`));
+  } else if (status.bindHost === "0.0.0.0" || status.bindHost === "::") {
+    checks.push(
+      warn(
+        "loopback-binding",
+        `Broker is exposed on every interface (${status.bindHost}); require a firewall or TLS reverse proxy.`,
+      ),
+    );
   } else {
     checks.push(
-      fail(
+      pass(
         "loopback-binding",
-        "Broker is not bound to 127.0.0.1.",
-        "Stop it and restart in local mode.",
+        `Broker is bound to the explicitly configured interface ${status.bindHost}.`,
       ),
     );
   }
@@ -181,12 +277,24 @@ async function checkBroker(options: StartBrokerOptions): Promise<{ checks: Docto
       ),
     );
   }
+  if (status.telegram === "degraded") {
+    checks.push(
+      warn(
+        "telegram-runtime",
+        "Telegram polling stopped after a terminal API failure. Check for a 409 polling conflict or invalid bot token, then restart the broker.",
+      ),
+    );
+  } else if (status.telegram === "active") {
+    checks.push(pass("telegram-runtime", "Telegram polling is active."));
+  } else {
+    checks.push(warn("telegram-runtime", "Telegram polling is not configured in broker state."));
+  }
   return { checks };
 }
 
-async function isPortOccupiedByNonBroker(port: number): Promise<boolean> {
+async function isPortOccupiedByNonBroker(port: number, bindHost: string): Promise<boolean> {
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+    const response = await fetch(brokerHttpUrl(port, "/v1/health", bindHost), {
       signal: AbortSignal.timeout(500),
     });
     return response.status !== 401;
@@ -245,6 +353,13 @@ function checkOpenCodeCompatibility(env: NodeJS.ProcessEnv): DoctorCheck {
 }
 
 function configFromEnvironment(env: NodeJS.ProcessEnv): unknown {
+  const hasNotifierEnvironment = [
+    "OPENCODE_TELEGRAM_BOT_TOKEN",
+    "OPENCODE_TELEGRAM_BOT_TOKEN_FILE",
+    "OPENCODE_TELEGRAM_USER_ID",
+    "OPENCODE_TELEGRAM_CHAT_ID",
+  ].some((key) => env[key] !== undefined);
+  if (!hasNotifierEnvironment) return undefined;
   const telegram: Record<string, string> = {};
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN) telegram.botToken = env.OPENCODE_TELEGRAM_BOT_TOKEN;
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE)

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type BrokerServer, startBroker } from "../src/broker/server";
 import {
   discoverOpenCodeConfigFiles,
   injectOpenCodeConfig,
@@ -14,12 +15,15 @@ import {
   runSetupCli,
   SetupError,
 } from "../src/setup";
+import { loadOrCreateStateIdentity } from "../src/state";
 import { runInteractiveUninstall } from "../src/uninstall";
 
 const TOKEN = "123456789:abcdefghijklmnopqrstuvwxyz_ABCD";
 const temporaryDirectories: string[] = [];
+const brokers: BrokerServer[] = [];
 
 afterEach(async () => {
+  await Promise.all(brokers.splice(0).map((broker) => broker.stop()));
   await Promise.all(
     temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -226,6 +230,7 @@ describe("interactive setup wizard", () => {
       "1\n",
       "codeCenter\n",
       "1\n",
+      "\n", // Keep loopback bind address
       "invalid_token\n",
       `${TOKEN}\n`,
       "Y\n",
@@ -269,6 +274,7 @@ describe("interactive setup wizard", () => {
         }
         return failed(404);
       }) as typeof fetch,
+      systemdAvailable: () => false,
     });
 
     expect(status).toBe(0);
@@ -300,14 +306,27 @@ describe("interactive setup wizard", () => {
         chatId: "987654321",
       },
     });
+    const gatewayIdentity = await loadOrCreateStateIdentity(stateDirectory);
+    expect(gatewayIdentity.gatewaySecret).not.toBe(gatewayIdentity.brokerSecret);
+    expect(JSON.parse(await readFile(join(stateDirectory, "deployment.json"), "utf8"))).toEqual({
+      mode: "native",
+      bindHost: "127.0.0.1",
+      port: 42617,
+    });
+    expect(await Bun.file(join(stateDirectory, "opencode-notifier.json")).exists()).toBe(true);
+    expect(
+      JSON.parse(await readFile(join(stateDirectory, "opencode-notifier.json"), "utf8")),
+    ).toMatchObject({ broker: { host: "127.0.0.1", port: 42617 } });
 
     // Verify backup created
     expect(await Bun.file(`${configFile}.bak`).exists()).toBe(true);
   });
 
   test("runs interactive setup in English and respects skip options", async () => {
-    const stateDirectory = await createTemporaryDirectory();
+    const stateHome = await createTemporaryDirectory();
+    const stateDirectory = join(stateHome, "opencode-telegram-link");
     const workspaceDirectory = await createTemporaryDirectory();
+    let dockerStateDirectory: string | undefined;
 
     let stdout = "";
     let stderr = "";
@@ -320,13 +339,13 @@ describe("interactive setup wizard", () => {
       `${TOKEN}\n`,
       "Y\n", // Confirm pairing
       "n\n", // Skip OpenCode auto-config
-      "n\n", // Skip Docker auto-start
+      "Y\n", // Start Docker
       "n\n", // Skip test notification
     ];
 
     const status = await runInteractiveSetup({
-      stateDirectory,
       cwd: workspaceDirectory,
+      env: { ...process.env, XDG_STATE_HOME: stateHome },
       stdin: inputLines(inputs),
       stdout: {
         write: (chunk) => {
@@ -350,6 +369,11 @@ describe("interactive setup wizard", () => {
         }
         return failed(404);
       }) as typeof fetch,
+      systemdAvailable: () => false,
+      dockerSpawnSync: (_command, options) => {
+        dockerStateDirectory = options?.env?.OPENCODE_TELEGRAM_HOST_STATE_DIR;
+        return { exitCode: 0 };
+      },
     });
 
     expect(status).toBe(0);
@@ -359,6 +383,132 @@ describe("interactive setup wizard", () => {
     expect(stdout).toContain("Received pairing message! Telegram User (ID: 987654321");
     expect(stdout).toContain("Please add the following configuration to your opencode.json");
     expect(stdout).toContain("Setup completed!");
+    expect(dockerStateDirectory).toBe(stateDirectory);
+    expect(
+      JSON.parse(await readFile(join(stateDirectory, "deployment.json"), "utf8")),
+    ).toMatchObject({
+      mode: "docker",
+      composeFile: expect.stringContaining("docker-compose.yml"),
+      projectDir: expect.any(String),
+    });
+    expect(
+      JSON.parse(await readFile(join(stateDirectory, "opencode-notifier.json"), "utf8")),
+    ).toMatchObject({ telegram: { tokenFile: "/state/telegram-bot-token" } });
+  });
+
+  test("rejects a Node setup without the gateway credential", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    let stderr = "";
+
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      stdin: inputLines(["2\n", "2\n", "remote-node\n", "ws://10.147.20.130:42617\n", "\n"]),
+      stdout: { write: () => true },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("requires the gateway-secret credential");
+  });
+
+  test("writes a Node deployment marker", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspaceDirectory = await createTemporaryDirectory();
+    let stdout = "";
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      cwd: workspaceDirectory,
+      stdin: inputLines([
+        "2\n",
+        "2\n",
+        "remote-node\n",
+        "ws://10.147.20.130:42617\n",
+        "gateway-secret\n",
+        "n\n",
+      ]),
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
+        },
+      },
+      stderr: { write: () => true },
+    });
+
+    expect(status).toBe(0);
+    expect(JSON.parse(await readFile(join(stateDirectory, "deployment.json"), "utf8"))).toEqual({
+      mode: "node",
+    });
+    expect(stdout).not.toContain('"secret": "gateway-secret"');
+    expect(stdout).toContain("REPLACE_WITH_GATEWAY_SECRET");
+  });
+
+  test("refuses to overwrite Gateway ownership with a Node deployment marker", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspaceDirectory = await createTemporaryDirectory();
+    const deploymentPath = join(stateDirectory, "deployment.json");
+    await writeFile(deploymentPath, JSON.stringify({ mode: "native" }));
+    let stderr = "";
+
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      cwd: workspaceDirectory,
+      stdin: inputLines([
+        "2\n",
+        "2\n",
+        "remote-node\n",
+        "ws://10.147.20.130:42617\n",
+        "gateway-secret\n",
+      ]),
+      stdout: { write: () => true },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("requires a separate --state-dir");
+    expect(JSON.parse(await readFile(deploymentPath, "utf8"))).toEqual({ mode: "native" });
+  });
+
+  test("refuses to claim markerless Gateway state for a Node deployment", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspaceDirectory = await createTemporaryDirectory();
+    const tokenPath = join(stateDirectory, "telegram-bot-token");
+    await writeFile(tokenPath, "must-remain\n");
+    let stderr = "";
+
+    const status = await runInteractiveSetup({
+      stateDirectory,
+      cwd: workspaceDirectory,
+      stdin: inputLines([
+        "2\n",
+        "2\n",
+        "remote-node\n",
+        "ws://10.147.20.130:42617\n",
+        "gateway-secret\n",
+      ]),
+      stdout: { write: () => true },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("unmarked state directory contains Gateway assets");
+    expect(await readFile(tokenPath, "utf8")).toBe("must-remain\n");
+    expect(await Bun.file(join(stateDirectory, "deployment.json")).exists()).toBe(false);
   });
 });
 
@@ -457,6 +607,7 @@ describe("interactive uninstaller wizard", () => {
     const tokenFile = join(stateDirectory, "telegram-bot-token");
 
     await writeFile(tokenFile, `${TOKEN}\n`, "utf8");
+    await writeFile(join(stateDirectory, "deployment.json"), JSON.stringify({ mode: "native" }));
     await writeFile(
       configFile,
       JSON.stringify({
@@ -465,7 +616,6 @@ describe("interactive uninstaller wizard", () => {
       }),
       "utf8",
     );
-
     let stdout = "";
     let stderr = "";
 
@@ -493,6 +643,10 @@ describe("interactive uninstaller wizard", () => {
           stderr += String(chunk);
           return true;
         },
+      },
+      uninstallSystemd: async () => ({ success: true, removed: false }),
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be inspected for a native deployment");
       },
     });
 
@@ -531,6 +685,11 @@ describe("interactive uninstaller wizard", () => {
       }),
       "utf8",
     );
+    await writeFile(join(stateDirectory, "deployment.json"), JSON.stringify({ mode: "node" }));
+    const sharedToken = join(stateDirectory, "telegram-bot-token");
+    const sharedDatabase = join(stateDirectory, "state.sqlite");
+    await writeFile(sharedToken, "must-remain\n");
+    await writeFile(sharedDatabase, "must-remain\n");
 
     let stdout = "";
     let stderr = "";
@@ -560,6 +719,12 @@ describe("interactive uninstaller wizard", () => {
           return true;
         },
       },
+      uninstallSystemd: async () => {
+        throw new Error("Systemd must not be inspected for a Node deployment");
+      },
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be inspected for a Node deployment");
+      },
     });
 
     expect(status).toBe(0);
@@ -572,6 +737,148 @@ describe("interactive uninstaller wizard", () => {
     const parsed = JSON.parse(await readFile(configFile, "utf8")) as Record<string, unknown>;
     expect(parsed.plugins).toEqual([]);
     expect(parsed.plugin).toEqual({});
+    expect(await readFile(sharedToken, "utf8")).toBe("must-remain\n");
+    expect(await readFile(sharedDatabase, "utf8")).toBe("must-remain\n");
+  });
+
+  test("stops a native broker through its persisted explicit endpoint", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    const bindHost = "127.0.0.2";
+    const broker = await startBroker({ stateDirectory, bindHost, port: 0, idleTimeoutMs: 5_000 });
+    brokers.push(broker);
+    await writeFile(join(stateDirectory, "deployment.json"), JSON.stringify({ mode: "native" }));
+    await writeFile(
+      join(stateDirectory, "opencode-notifier.json"),
+      JSON.stringify({ broker: { host: bindHost, port: broker.port } }),
+      { mode: 0o600 },
+    );
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(["2\n", "Y\n", "n\n", "n\n", "n\n", "n\n"]),
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+      uninstallSystemd: async () => ({ success: true, removed: false }),
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be inspected for a native deployment");
+      },
+    });
+
+    expect(status).toBe(0);
+    await broker.finished;
+    expect(broker.registry.connectionCount).toBe(0);
+  });
+
+  test("uses persisted Docker Compose ownership and verifies shutdown", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    const composeFile = join(workspace, "docker-compose.yml");
+    await writeFile(composeFile, "services:\n  broker:\n    image: test\n");
+    await writeFile(
+      join(stateDirectory, "deployment.json"),
+      JSON.stringify({ mode: "docker", composeFile, projectDir: workspace }),
+    );
+    const commands: string[][] = [];
+    let psCalls = 0;
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(["2\n", "Y\n", "n\n", "n\n", "n\n"]),
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+      uninstallSystemd: async () => {
+        throw new Error("Systemd must not be inspected for a Docker deployment");
+      },
+      dockerSpawnSync: (command) => {
+        commands.push(command);
+        if (command.includes("ps")) {
+          psCalls += 1;
+          return {
+            exitCode: 0,
+            stdout: new TextEncoder().encode(psCalls === 1 ? "container-id\n" : ""),
+          };
+        }
+        return { exitCode: 0 };
+      },
+    });
+
+    expect(status).toBe(0);
+    expect(commands).toHaveLength(3);
+    expect(commands.every((command) => command.includes(composeFile))).toBe(true);
+    expect(commands[1]).toContain("down");
+  });
+
+  test("fails closed for a legacy Docker marker without Compose ownership", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    await writeFile(join(stateDirectory, "deployment.json"), JSON.stringify({ mode: "docker" }));
+    let stderr = "";
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(["2\n", "Y\n"]),
+      stdout: { write: () => true },
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be invoked without persisted ownership");
+      },
+    });
+
+    expect(status).toBe(1);
+    expect(stderr).toContain("Docker Compose configuration was not found");
+    expect(await Bun.file(join(stateDirectory, "deployment.json")).exists()).toBe(true);
+  });
+
+  test("handles a markerless legacy native uninstall without inspecting Docker", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(["2\n", "Y\n", "\n", "n\n", "n\n", "n\n", "n\n"]),
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+      uninstallSystemd: async () => ({ success: true, removed: false }),
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be inspected for a legacy native deployment");
+      },
+    });
+
+    expect(status).toBe(0);
+  });
+
+  test("treats a markerless legacy Node as Node without touching Gateway resources", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const workspace = await createTemporaryDirectory();
+    const tokenFile = join(stateDirectory, "telegram-bot-token");
+    await writeFile(tokenFile, "must-remain\n");
+
+    const status = await runInteractiveUninstall({
+      stateDirectory,
+      cwd: workspace,
+      stdin: inputLines(["2\n", "Y\n", "3\n"]),
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+      uninstallSystemd: async () => {
+        throw new Error("Systemd must not be inspected for a legacy Node deployment");
+      },
+      dockerSpawnSync: () => {
+        throw new Error("Docker must not be inspected for a legacy Node deployment");
+      },
+    });
+
+    expect(status).toBe(0);
+    expect(await readFile(tokenFile, "utf8")).toBe("must-remain\n");
   });
 
   test("resolveDockerComposeContext prioritizes package compose and ignores unrelated foreign compose files", async () => {

@@ -1,10 +1,16 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { platform } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type SupportedLocale, translate } from "../i18n";
-import { discoverOpenCodeConfigFiles, parseJsonc } from "../opencode";
+import {
+  type NotifierConfig,
+  NotifierConfigSchema,
+  readNotifierBotToken,
+  readVoiceApiKey,
+} from "../config";
+import { resolveLocale, type SupportedLocale, translate } from "../i18n";
+import { isPrivateGatewayHost } from "../network";
 import {
   BROKER_CAPABILITIES,
   type BrokerCommand,
@@ -45,8 +51,7 @@ import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
 const LOOPBACK_HOST = "127.0.0.1";
-const DEFAULT_BIND_HOST = "0.0.0.0";
-const CONTAINER_HOST = "0.0.0.0";
+const DEFAULT_BIND_HOST = LOOPBACK_HOST;
 const DEFAULT_PORT = 42617;
 const DEFAULT_REGISTRATION_TIMEOUT_MS = 10_000;
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 45_000;
@@ -57,6 +62,7 @@ const DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS = 2_000;
 const NOTIFICATION_DEDUPE_TTL_MS = 7 * 24 * 60 * 60_000;
 
 export type DashboardSettings = {
+  voiceConfigured?: boolean | undefined;
   activeProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
   cloudflare?:
     | {
@@ -103,14 +109,85 @@ function normalizePersistedSettings(s: DashboardSettings): DashboardSettings {
   const customKey =
     s.custom?.apiKey ?? (s.voiceProvider === "custom" ? s.voiceApiKey : undefined) ?? "";
   const customModel = s.custom?.model ?? s.voiceModel ?? "whisper-large-v3-turbo";
+  const voiceConfigured =
+    s.voiceConfigured ??
+    Boolean(
+      s.voiceProvider ||
+        s.voiceApiKey ||
+        s.voiceAccountId ||
+        s.voiceEndpoint ||
+        s.voiceModel ||
+        s.cloudflare?.accountId ||
+        s.cloudflare?.apiToken ||
+        s.groq?.apiKey ||
+        s.openai?.apiKey ||
+        s.custom?.endpoint ||
+        s.custom?.apiKey ||
+        (s.activeProvider && s.activeProvider !== "cloudflare") ||
+        (s.custom?.model && s.custom.model !== "whisper-large-v3-turbo"),
+    );
 
   return {
+    voiceConfigured,
     activeProvider,
     cloudflare: { accountId: cfAccountId, apiToken: cfApiToken },
     groq: { apiKey: groqKey },
     openai: { apiKey: openaiKey },
     custom: { endpoint: customEndpoint, apiKey: customKey, model: customModel },
     sessionPromptTtlMinutes: s.sessionPromptTtlMinutes ?? 43200,
+  };
+}
+
+async function loadDaemonNotifierConfig(
+  stateDirectory: string,
+): Promise<NotifierConfig | undefined> {
+  const configPath = join(stateDirectory, "opencode-notifier.json");
+  if (await ensurePrivateSettingsFile(configPath)) {
+    try {
+      const parsed = NotifierConfigSchema.safeParse(JSON.parse(await readFile(configPath, "utf8")));
+      if (parsed.success && parsed.data.role === "gateway") return parsed.data;
+    } catch {}
+  }
+
+  try {
+    const identity = JSON.parse(
+      await readFile(join(stateDirectory, "telegram-identity.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const parsed = NotifierConfigSchema.safeParse({
+      mode: "local",
+      role: "gateway",
+      locale: identity.locale ?? "auto",
+      telegram: {
+        tokenFile: identity.tokenFile ?? join(stateDirectory, "telegram-bot-token"),
+        userId: String(identity.userId ?? ""),
+        chatId: String(identity.chatId ?? ""),
+      },
+    });
+    if (parsed.success) return parsed.data;
+  } catch {}
+
+  return undefined;
+}
+
+async function daemonVoiceSettings(config: NotifierConfig, persisted: DashboardSettings) {
+  const provider = persisted.voiceConfigured ? persisted.activeProvider : config.voice?.provider;
+  const persistedKey =
+    provider === "cloudflare"
+      ? persisted.cloudflare?.apiToken
+      : provider === "groq"
+        ? persisted.groq?.apiKey
+        : provider === "openai"
+          ? persisted.openai?.apiKey
+          : persisted.custom?.apiKey;
+  return {
+    provider,
+    apiKey: persistedKey || (await readVoiceApiKey(config)),
+    accountId:
+      (persisted.voiceConfigured ? persisted.cloudflare?.accountId : undefined) ||
+      config.voice?.accountId,
+    model:
+      (persisted.voiceConfigured && provider === "custom" ? persisted.custom?.model : undefined) ||
+      config.voice?.model,
   };
 }
 
@@ -183,6 +260,7 @@ function isMaskedOrEmpty(val?: string | null): boolean {
 
 async function loadDashboardSettings(stateDirectory: string): Promise<DashboardSettings> {
   const filePath = join(stateDirectory, "dashboard-settings.json");
+  if (!(await ensurePrivateSettingsFile(filePath))) return normalizePersistedSettings({});
   try {
     const raw = await readFile(filePath, "utf-8");
     return normalizePersistedSettings(JSON.parse(raw) as DashboardSettings);
@@ -196,7 +274,40 @@ async function saveDashboardSettings(
   settings: DashboardSettings,
 ): Promise<void> {
   const filePath = join(stateDirectory, "dashboard-settings.json");
-  await writeFile(filePath, JSON.stringify(settings, null, 2), "utf-8");
+  await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  let committed = false;
+  try {
+    const handle = await open(temporaryPath, "wx", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(settings, null, 2)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporaryPath, filePath);
+    committed = true;
+    await ensurePrivateSettingsFile(filePath);
+  } finally {
+    if (!committed) await rm(temporaryPath, { force: true });
+  }
+}
+
+async function ensurePrivateSettingsFile(path: string): Promise<boolean> {
+  const stats = await lstat(path).catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!stats) return false;
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error(`${path} must be a regular file`);
+  }
+  if (platform() === "win32" || process.env.OPENCODE_TELEGRAM_CONTAINER === "1") return true;
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new Error(`${path} must be owned by the current user`);
+  }
+  if ((stats.mode & 0o777) !== 0o600) await chmod(path, 0o600);
+  return true;
 }
 
 async function readJsonBody<T>(request: Request): Promise<T> {
@@ -214,14 +325,15 @@ const HealthResponseSchema = z.object({
 });
 
 const BrokerStatusSchema = HealthResponseSchema.extend({
-  bindHost: z.enum([LOOPBACK_HOST, CONTAINER_HOST]),
+  bindHost: z.string().min(1),
   connections: z.number().int().nonnegative(),
   routes: z.number().int().nonnegative(),
+  telegram: z.enum(["active", "degraded", "unconfigured"]),
 });
 
 export type StartBrokerOptions = {
   stateDirectory?: string;
-  bindHost?: typeof LOOPBACK_HOST | typeof CONTAINER_HOST;
+  bindHost?: string;
   port?: number;
   registrationTimeoutMs?: number;
   heartbeatTimeoutMs?: number;
@@ -288,13 +400,13 @@ export class BrokerServer {
     clearInterval(this.#livenessTimer);
     clearInterval(this.#maintenanceTimer);
     failPendingCommands(this.#pendingCommands, "broker stopped");
+    await this.#server.stop(true);
+    this.#connections.clear();
     try {
       await this.#telegramRuntimeRef.value?.stop();
     } catch {
       // Allow shutdown to complete even if telegram runtime failed
     }
-    await this.#server.stop(true);
-    this.#connections.clear();
     await this.#removeDiscovery();
     this.database.close();
     this.#resolveFinished();
@@ -373,13 +485,13 @@ export class BrokerServer {
 export async function startBroker(options: StartBrokerOptions = {}): Promise<BrokerServer> {
   const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
   const state = await loadOrCreateStateIdentity(stateDirectory);
+  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const database = await StateDatabase.open({ stateDirectory, machineId: state.machineId });
   const registry = new RouteRegistry();
   const deliveryIntervalMs =
     options.telegramDeliveryIntervalMs ?? DEFAULT_TELEGRAM_DELIVERY_INTERVAL_MS;
   const now = options.now ?? (() => Date.now());
   const startedAt = Date.now();
-  let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const activeConfigFingerprint: { value: string | undefined } = { value: undefined };
   const telegramRuntimeRef: { value: BrokerTelegramRuntime | undefined } = { value: undefined };
   const bindHost = options.bindHost ?? DEFAULT_BIND_HOST;
@@ -401,10 +513,10 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
   };
 
   const ensureTelegramRuntime = (config: TelegramRuntimeConfig): BrokerTelegramRuntime => {
-    if (telegramRuntimeRef.value) {
+    if (telegramRuntimeRef.value?.active) {
       return telegramRuntimeRef.value;
     }
-    telegramRuntimeRef.value = new BrokerTelegramRuntime({
+    const runtime = new BrokerTelegramRuntime({
       config,
       database,
       registry,
@@ -417,9 +529,15 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
         ? { pollLongPollSeconds: options.telegramPollLongPollSeconds }
         : {}),
       now,
+      onTerminated: () => {
+        if (telegramRuntimeRef.value === runtime && !runtime.active) {
+          activeConfigFingerprint.value = undefined;
+        }
+      },
     });
-    telegramRuntimeRef.value.start();
-    return telegramRuntimeRef.value;
+    telegramRuntimeRef.value = runtime;
+    runtime.start();
+    return runtime;
   };
 
   let broker: BrokerServer | undefined;
@@ -433,7 +551,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
           // Web Dashboard static HTML entrypoint
           if (url.pathname === "/" || url.pathname === "/dashboard") {
-            const isAuthed = verifyDashboardAuth(request, state.brokerSecret);
+            const isAuthed = verifyDashboardAuth(
+              request,
+              state.brokerSecret,
+              isLoopbackRequest(request, bunServer),
+            );
             const tokenParam = url.searchParams.get("token");
             const headers: Record<string, string> = { "Content-Type": "text/html; charset=utf-8" };
             if (tokenParam && isAuthed) {
@@ -746,6 +868,7 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                 const route = registry.resolveBySessionId(
                   body.sessionId.trim(),
                   body.target?.trim(),
+                  true,
                 );
                 if (!route) {
                   return Response.json(
@@ -811,6 +934,8 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
                     : currentCustom.apiKey;
 
                 persistedSettings = normalizePersistedSettings({
+                  voiceConfigured:
+                    persistedSettings.voiceConfigured || dashboardVoiceInputProvided(body),
                   activeProvider:
                     body.activeProvider ?? body.voiceProvider ?? persistedSettings.activeProvider,
                   cloudflare: {
@@ -877,13 +1002,14 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               }
             })();
           }
-          if (
-            !isAuthorized(
-              request.headers.get("authorization"),
-              state.brokerSecret,
-              url.searchParams.get("token"),
-            )
-          ) {
+          const connectionRequest = url.pathname === "/v1/connect";
+          const expectedSecret = connectionRequest ? state.gatewaySecret : state.brokerSecret;
+          const legacyMigrationRequest =
+            connectionRequest &&
+            secretsEqual(state.gatewaySecret, state.brokerSecret) &&
+            isPrivateRequest(request, bunServer);
+          const legacyUrlToken = legacyMigrationRequest ? url.searchParams.get("token") : null;
+          if (!isAuthorized(request.headers.get("authorization"), expectedSecret, legacyUrlToken)) {
             return new Response("Unauthorized", { status: 401 });
           }
           if (url.pathname === "/v1/health") {
@@ -901,6 +1027,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               bindHost,
               connections: registry.connectionCount,
               routes: registry.routeCount,
+              telegram: telegramRuntimeRef.value
+                ? telegramRuntimeRef.value.active
+                  ? "active"
+                  : "degraded"
+                : "unconfigured",
             });
           }
           if (url.pathname === "/v1/control/stop") {
@@ -915,6 +1046,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
               connectionId: randomUUID(),
               connectedAt: Date.now(),
               lastHeartbeatAt: Date.now(),
+              canConfigureTelegram:
+                isAuthorized(
+                  request.headers.get("x-opencode-telegram-admin"),
+                  state.brokerSecret,
+                ) || isAuthorized(null, state.brokerSecret, legacyUrlToken),
             },
           });
           if (!upgraded) return new Response("WebSocket upgrade required", { status: 426 });
@@ -963,7 +1099,11 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
           : socket.data.connectedAt;
         if (now - reference > timeout) socket.close(1008, "connection timed out");
       }
-      if (connections.size === 0 && now - lastNonIdleAt >= idleTimeoutMs) {
+      if (
+        connections.size === 0 &&
+        !telegramRuntimeRef.value &&
+        now - lastNonIdleAt >= idleTimeoutMs
+      ) {
         void broker?.stop();
       }
     },
@@ -1002,74 +1142,30 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
       removeDiscovery: () => removeDiscoveryRecord(state.stateDirectory, discovery.nonce),
     });
 
-    // Auto-start Telegram runtime daemon if credentials exist on disk
+    // The paired state identity is authoritative; config discovery is only a fallback.
     try {
-      const tokenFile = join(state.stateDirectory, "telegram-bot-token");
-      if (existsSync(tokenFile)) {
-        const botToken = (await readFile(tokenFile, "utf8")).trim();
-        if (botToken) {
-          let userId: string | undefined;
-          let chatId: string | undefined;
-          let voiceApiKey = persistedSettings.voiceApiKey;
-          let voiceProvider = persistedSettings.voiceProvider;
-          let voiceAccountId = persistedSettings.voiceAccountId;
-
-          const discovered = await discoverOpenCodeConfigFiles();
-          for (const c of discovered) {
-            if (c.exists) {
-              try {
-                const content = await readFile(c.path, "utf8");
-                const json = parseJsonc<Record<string, unknown>>(content);
-                const pluginEntry = (
-                  Array.isArray(json.plugin)
-                    ? json.plugin.find(
-                        (p: unknown) =>
-                          Array.isArray(p) &&
-                          typeof p[0] === "string" &&
-                          p[0].includes("telegram-link"),
-                      )?.[1]
-                    : json.plugin && typeof json.plugin === "object"
-                      ? (json.plugin as Record<string, unknown>)["opencode-telegram-link"]
-                      : json["opencode-telegram-link"]
-                ) as Record<string, unknown> | undefined;
-
-                const tg = pluginEntry?.telegram as Record<string, unknown> | undefined;
-                if (tg?.userId && tg?.chatId) {
-                  userId = String(tg.userId);
-                  chatId = String(tg.chatId);
-                  const vc = pluginEntry?.voice as Record<string, unknown> | undefined;
-                  if (vc?.apiKey) voiceApiKey = String(vc.apiKey);
-                  if (
-                    vc?.provider === "groq" ||
-                    vc?.provider === "openai" ||
-                    vc?.provider === "cloudflare" ||
-                    vc?.provider === "custom"
-                  ) {
-                    voiceProvider = vc.provider;
-                  }
-                  if (vc?.accountId) voiceAccountId = String(vc.accountId);
-                  break;
-                }
-              } catch {}
-            }
-          }
-
-          if (botToken && userId && chatId) {
-            ensureTelegramRuntime({
-              botToken,
-              userId,
-              chatId,
-              locale: "zh-TW",
-              sessionPromptTtlMinutes: 1440,
-              questionTtlMinutes: 30,
-              ...(voiceApiKey ? { voiceApiKey } : {}),
-              ...(voiceProvider ? { voiceProvider } : {}),
-              ...(voiceAccountId ? { voiceAccountId } : {}),
-            });
-          }
-        }
+      const notifierConfig = await loadDaemonNotifierConfig(state.stateDirectory);
+      if (notifierConfig?.telegram) {
+        const botToken = await readNotifierBotToken(notifierConfig);
+        const voice = await daemonVoiceSettings(notifierConfig, persistedSettings);
+        ensureTelegramRuntime({
+          botToken,
+          userId: notifierConfig.telegram.userId,
+          chatId: notifierConfig.telegram.chatId,
+          locale: resolveLocale({
+            ...(notifierConfig.locale !== "auto" ? { explicit: notifierConfig.locale } : {}),
+          }),
+          sessionPromptTtlMinutes: notifierConfig.interaction.sessionPromptTtlMinutes,
+          questionTtlMinutes: notifierConfig.interaction.questionTtlMinutes,
+          ...(voice.apiKey ? { voiceApiKey: voice.apiKey } : {}),
+          ...(voice.provider ? { voiceProvider: voice.provider } : {}),
+          ...(voice.accountId ? { voiceAccountId: voice.accountId } : {}),
+          ...(voice.model ? { voiceModel: voice.model } : {}),
+        });
       }
-    } catch {}
+    } catch (error) {
+      logTelegramRuntimeError("daemon_config", error);
+    }
 
     return broker;
   } catch (error) {
@@ -1079,6 +1175,24 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
     database.close();
     throw error;
   }
+}
+
+function dashboardVoiceInputProvided(settings: DashboardSettings): boolean {
+  return Boolean(
+    settings.activeProvider ||
+      settings.voiceProvider ||
+      settings.voiceApiKey ||
+      settings.voiceAccountId ||
+      settings.voiceEndpoint ||
+      settings.voiceModel ||
+      settings.cloudflare?.accountId ||
+      settings.cloudflare?.apiToken ||
+      settings.groq?.apiKey ||
+      settings.openai?.apiKey ||
+      settings.custom?.endpoint ||
+      settings.custom?.apiKey ||
+      settings.custom?.model,
+  );
 }
 
 export async function startOrReuseBroker(
@@ -1093,7 +1207,7 @@ export async function startOrReuseBroker(
   const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
   const state = await loadOrCreateStateIdentity(stateDirectory);
   const port = options.port ?? DEFAULT_PORT;
-  const health = await probeBroker(port, state.brokerSecret);
+  const health = await probeBroker(port, state.brokerSecret, options.bindHost);
   if (!health || health.machineId !== state.machineId) {
     throw new BrokerPortConflictError(port);
   }
@@ -1103,9 +1217,10 @@ export async function startOrReuseBroker(
 export async function probeBroker(
   port: number,
   brokerSecret: string,
+  bindHost?: string,
 ): Promise<z.infer<typeof HealthResponseSchema> | undefined> {
   try {
-    const response = await fetch(`http://${LOOPBACK_HOST}:${port}/v1/health`, {
+    const response = await fetch(brokerHttpUrl(port, "/v1/health", bindHost), {
       headers: { authorization: `Bearer ${brokerSecret}` },
       signal: AbortSignal.timeout(2_000),
     });
@@ -1119,9 +1234,10 @@ export async function probeBroker(
 export async function fetchBrokerStatus(
   port: number,
   brokerSecret: string,
+  bindHost?: string,
 ): Promise<z.infer<typeof BrokerStatusSchema> | undefined> {
   try {
-    const response = await fetch(`http://${LOOPBACK_HOST}:${port}/v1/status`, {
+    const response = await fetch(brokerHttpUrl(port, "/v1/status", bindHost), {
       headers: { authorization: `Bearer ${brokerSecret}` },
       signal: AbortSignal.timeout(2_000),
     });
@@ -1130,6 +1246,20 @@ export async function fetchBrokerStatus(
   } catch {
     return undefined;
   }
+}
+
+export function brokerHttpUrl(port: number, path: string, bindHost?: string): string {
+  const configuredHost = bindHost ?? LOOPBACK_HOST;
+  if (
+    configuredHost !== "0.0.0.0" &&
+    configuredHost !== "::" &&
+    !isPrivateGatewayHost(configuredHost)
+  ) {
+    throw new Error("plaintext lifecycle control is restricted to private Gateway addresses");
+  }
+  const host =
+    configuredHost === "0.0.0.0" ? LOOPBACK_HOST : configuredHost === "::" ? "::1" : configuredHost;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${port}${path}`;
 }
 
 export class BrokerPortConflictError extends Error {
@@ -1148,14 +1278,23 @@ class BrokerTelegramRuntime {
   readonly #poller: TelegramPoller;
   readonly #deliveryIntervalMs: number;
   readonly #now: () => number;
+  readonly #onTerminated: () => void;
   readonly #startedAt = Date.now();
   #started = false;
+  #active = false;
+  #stopping = false;
+  #runPromise: Promise<void> | undefined;
   #deliveryTimer: ReturnType<typeof setInterval> | undefined;
+  #deliveryPromise: Promise<void> | undefined;
   #delivering = false;
   #transcriber: VoiceTranscriber | undefined;
 
   setTranscriber(transcriber: VoiceTranscriber | undefined): void {
     this.#transcriber = transcriber;
+  }
+
+  get active(): boolean {
+    return this.#active;
   }
 
   constructor(input: {
@@ -1167,6 +1306,7 @@ class BrokerTelegramRuntime {
     deliveryIntervalMs: number;
     pollLongPollSeconds?: number;
     now: () => number;
+    onTerminated: () => void;
   }) {
     this.#config = input.config;
     this.#database = input.database;
@@ -1174,6 +1314,7 @@ class BrokerTelegramRuntime {
     this.#api = input.api;
     this.#deliveryIntervalMs = input.deliveryIntervalMs;
     this.#now = input.now;
+    this.#onTerminated = input.onTerminated;
     this.#outbox = new TelegramOutboxWorker({ api: input.api, database: input.database });
     const authorizer = new TelegramUpdateAuthorizer({
       userId: input.config.userId,
@@ -1420,13 +1561,29 @@ class BrokerTelegramRuntime {
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    this.#active = true;
+    this.#stopping = false;
     this.#deliveryTimer = setInterval(() => this.#deliverSoon(), this.#deliveryIntervalMs);
     this.#deliveryTimer.unref();
-    void this.#poller.start().catch((error) => logTelegramRuntimeError("poller", error));
+    this.#runPromise = (async () => {
+      try {
+        await this.#poller.start();
+        await this.#poller.finished;
+      } catch (error) {
+        if (!this.#stopping) logTelegramRuntimeError("poller", error);
+      } finally {
+        this.#active = false;
+        if (this.#deliveryTimer) clearInterval(this.#deliveryTimer);
+        this.#deliveryTimer = undefined;
+        this.#onTerminated();
+      }
+    })();
     this.#deliverSoon();
   }
 
   async stop(): Promise<void> {
+    this.#stopping = true;
+    this.#active = false;
     if (this.#deliveryTimer) clearInterval(this.#deliveryTimer);
     this.#deliveryTimer = undefined;
     try {
@@ -1434,6 +1591,8 @@ class BrokerTelegramRuntime {
     } catch {
       // Ignore poller failure rejections during runtime shutdown
     }
+    await this.#runPromise?.catch(() => undefined);
+    await this.#deliveryPromise;
   }
 
   publish(notification: NormalizedNotification): "queued" | "duplicate" {
@@ -1467,11 +1626,13 @@ class BrokerTelegramRuntime {
   #deliverSoon(): void {
     if (this.#delivering) return;
     this.#delivering = true;
-    void this.#outbox
+    this.#deliveryPromise = this.#outbox
       .deliverBatch(this.#now())
+      .then(() => undefined)
       .catch((error) => logTelegramRuntimeError("delivery", error))
       .finally(() => {
         this.#delivering = false;
+        this.#deliveryPromise = undefined;
       });
   }
 
@@ -1653,6 +1814,16 @@ function handleMessage(
             `required capability is missing: ${missingCapability}`,
           );
         }
+        if (
+          envelope.payload.telegram &&
+          !socket.data.canConfigureTelegram &&
+          !currentTelegramRuntime()?.active
+        ) {
+          throw new RouteRegistrationError(
+            "TELEGRAM_LOCAL_ONLY",
+            "Telegram runtime configuration is accepted only from a local plugin",
+          );
+        }
         registry.registerConnection(
           socket,
           envelope.payload.instanceId,
@@ -1660,7 +1831,9 @@ function handleMessage(
           envelope.payload.hostLabel,
           envelope.payload.projectLabel,
         );
-        if (envelope.payload.telegram) ensureTelegramRuntime(envelope.payload.telegram);
+        if (envelope.payload.telegram && socket.data.canConfigureTelegram) {
+          ensureTelegramRuntime(envelope.payload.telegram);
+        }
         activeConfigFingerprint.value ??= envelope.payload.configFingerprint;
         socket.data.lastHeartbeatAt = Date.now();
         send(socket, {
@@ -1815,7 +1988,11 @@ function isAuthorized(
   return timingSafeEqual(supplied, expected);
 }
 
-function verifyDashboardAuth(request: Request, brokerSecret: string): boolean {
+function verifyDashboardAuth(
+  request: Request,
+  brokerSecret: string,
+  allowUrlToken = false,
+): boolean {
   const authHeader = request.headers.get("authorization");
   const cookieHeader = request.headers.get("cookie");
   const url = new URL(request.url);
@@ -1825,7 +2002,7 @@ function verifyDashboardAuth(request: Request, brokerSecret: string): boolean {
     return true;
   }
 
-  if (tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
+  if (allowUrlToken && tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
     return true;
   }
 
@@ -1840,6 +2017,30 @@ function verifyDashboardAuth(request: Request, brokerSecret: string): boolean {
   }
 
   return false;
+}
+
+function isLoopbackRequest(
+  request: Request,
+  server: Pick<Bun.Server<unknown>, "requestIP">,
+): boolean {
+  const address = server.requestIP(request)?.address;
+  return (
+    address === "127.0.0.1" || address === "::1" || address?.startsWith("::ffff:127.") === true
+  );
+}
+
+function isPrivateRequest(
+  request: Request,
+  server: Pick<Bun.Server<unknown>, "requestIP">,
+): boolean {
+  const address = server.requestIP(request)?.address;
+  return Boolean(address && isPrivateGatewayHost(address));
+}
+
+function secretsEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
 function isAddressInUseError(error: unknown): error is NodeJS.ErrnoException {

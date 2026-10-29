@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { type NotifierConfig, NotifierConfigSchema } from "../config";
@@ -9,6 +9,40 @@ export type DiscoveredConfigFile = {
   exists: boolean;
   isWorkspace: boolean;
 };
+
+function isTelegramLinkSpecifier(value: unknown): boolean {
+  const raw =
+    typeof value === "string"
+      ? value
+      : Array.isArray(value) && typeof value[0] === "string"
+        ? value[0]
+        : "";
+  const normalized = raw.replaceAll("\\", "/").replace(/\/$/, "");
+  if (/^opencode-telegram-link(?:@[^/]+)?$/.test(normalized)) return true;
+  return /(?:^|\/)(?:opencode-telegram-link|opencode_notification(?:-master)?)(?:\/dist\/plugin\.js)?$/.test(
+    normalized,
+  );
+}
+
+function mergeRecords(
+  base: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(next)) {
+    const previous = merged[key];
+    merged[key] =
+      previous &&
+      value &&
+      typeof previous === "object" &&
+      typeof value === "object" &&
+      !Array.isArray(previous) &&
+      !Array.isArray(value)
+        ? mergeRecords(previous as Record<string, unknown>, value as Record<string, unknown>)
+        : value;
+  }
+  return merged;
+}
 
 export function parseJsonc<T = Record<string, unknown>>(content: string): T {
   let insideString = false;
@@ -170,6 +204,7 @@ export function generatePluginConfigSnippet(config: NotifierConfig): string {
     role: config.role,
     ...(config.hostLabel ? { hostLabel: config.hostLabel } : {}),
     locale: config.locale,
+    broker: config.broker,
     notifications: {
       completion: config.notifications.completion,
       error: config.notifications.error,
@@ -180,7 +215,7 @@ export function generatePluginConfigSnippet(config: NotifierConfig): string {
   if (config.role === "node" && config.gateway) {
     pluginConfig.gateway = {
       url: config.gateway.url,
-      secret: config.gateway.secret,
+      secret: "REPLACE_WITH_GATEWAY_SECRET",
     };
   } else if (config.telegram) {
     pluginConfig.telegram = {
@@ -190,9 +225,7 @@ export function generatePluginConfigSnippet(config: NotifierConfig): string {
     };
   }
   const snippet = {
-    plugin: {
-      "opencode-telegram-link": pluginConfig,
-    },
+    plugin: [["opencode-telegram-link", pluginConfig]],
   };
   return JSON.stringify(snippet, null, 2);
 }
@@ -201,11 +234,12 @@ export async function loadResolvedNotifierConfig(
   explicitOptions?: unknown,
   cwd?: string,
 ): Promise<NotifierConfig | undefined> {
-  if (explicitOptions && typeof explicitOptions === "object") {
+  if (explicitOptions !== undefined) {
     const directParse = NotifierConfigSchema.safeParse(explicitOptions);
     if (directParse.success) {
       return directParse.data;
     }
+    return undefined;
   }
 
   // Fallback: discover config from workspace and global config files
@@ -217,41 +251,35 @@ export async function loadResolvedNotifierConfig(
       const json = parseJsonc(content) as Record<string, unknown>;
       if (Array.isArray(json.plugin)) {
         for (const entry of json.plugin) {
-          if (Array.isArray(entry) && entry.length >= 2) {
+          if (Array.isArray(entry)) {
             const [key, value] = entry;
-            if (
-              typeof key === "string" &&
-              (key === "opencode-telegram-link" ||
-                key.includes("opencode_notification") ||
-                key.includes("telegram") ||
-                key.includes("plugin"))
-            ) {
+            if (isTelegramLinkSpecifier(key)) {
+              if (entry.length < 2) return undefined;
               const parsed = NotifierConfigSchema.safeParse(value);
               if (parsed.success) return parsed.data;
+              return undefined;
             }
           }
         }
       }
       if (json.plugin && typeof json.plugin === "object") {
         for (const [key, value] of Object.entries(json.plugin)) {
-          if (
-            key === "opencode-telegram-link" ||
-            key.includes("opencode_notification") ||
-            key.includes("telegram") ||
-            key.includes("plugin")
-          ) {
+          if (isTelegramLinkSpecifier(key)) {
             const parsed = NotifierConfigSchema.safeParse(value);
             if (parsed.success) return parsed.data;
+            return undefined;
           }
         }
       }
-      if (json["opencode-telegram-link"]) {
+      if (Object.hasOwn(json, "opencode-telegram-link")) {
         const parsed = NotifierConfigSchema.safeParse(json["opencode-telegram-link"]);
         if (parsed.success) return parsed.data;
+        return undefined;
       }
-      if (json["telegram-link"]) {
+      if (Object.hasOwn(json, "telegram-link")) {
         const parsed = NotifierConfigSchema.safeParse(json["telegram-link"]);
         if (parsed.success) return parsed.data;
+        return undefined;
       }
     } catch {}
   }
@@ -313,6 +341,7 @@ export async function injectOpenCodeConfig(
     // Create backup of existing file
     backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
+    await chmod(backupPath, 0o600);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       // File doesn't exist yet, create its parent directory
@@ -328,6 +357,7 @@ export async function injectOpenCodeConfig(
     role: config.role,
     ...(config.hostLabel ? { hostLabel: config.hostLabel } : {}),
     locale: config.locale,
+    broker: config.broker,
     notifications: {
       completion: config.notifications.completion,
       error: config.notifications.error,
@@ -348,25 +378,46 @@ export async function injectOpenCodeConfig(
     };
   }
 
-  // Strip any invalid/legacy root-level keys to comply with OpenCode schema
+  const optionSources: Record<string, unknown>[] = [];
+  for (const legacyKey of ["opencode-telegram-link", "telegram-link"]) {
+    const legacy = existingJson[legacyKey];
+    if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+      optionSources.push(legacy as Record<string, unknown>);
+    }
+  }
+
+  const retainedPlugins: unknown[] = [];
+  if (Array.isArray(existingJson.plugin)) {
+    for (const entry of existingJson.plugin) {
+      if (isTelegramLinkSpecifier(entry)) {
+        if (Array.isArray(entry) && entry[1] && typeof entry[1] === "object") {
+          optionSources.push(entry[1] as Record<string, unknown>);
+        }
+      } else {
+        retainedPlugins.push(entry);
+      }
+    }
+  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
+    for (const [name, options] of Object.entries(existingJson.plugin as Record<string, unknown>)) {
+      if (isTelegramLinkSpecifier(name)) {
+        if (options && typeof options === "object" && !Array.isArray(options)) {
+          optionSources.push(options as Record<string, unknown>);
+        }
+      } else {
+        retainedPlugins.push([name, options]);
+      }
+    }
+  }
+  if (Array.isArray(existingJson.plugins)) {
+    for (const entry of existingJson.plugins) {
+      if (!isTelegramLinkSpecifier(entry)) retainedPlugins.push(entry);
+    }
+  }
+
+  // Strip invalid/legacy root-level keys after preserving their options.
   delete existingJson["opencode-telegram-link"];
   delete existingJson["telegram-link"];
-
-  const isMatch = (entry: unknown): boolean => {
-    const name =
-      typeof entry === "string"
-        ? entry
-        : Array.isArray(entry) && typeof entry[0] === "string"
-          ? entry[0]
-          : "";
-    return (
-      name === "opencode-telegram-link" ||
-      name.startsWith("opencode-telegram-link") ||
-      name.includes("opencode-telegram-link") ||
-      name.includes("opencode_notification") ||
-      name.includes("telegram-link")
-    );
-  };
+  delete existingJson.plugins;
 
   function mergePluginOptions(
     existing: unknown,
@@ -376,68 +427,67 @@ export async function injectOpenCodeConfig(
       existing && typeof existing === "object" && !Array.isArray(existing)
         ? (existing as Record<string, unknown>)
         : {};
-    const merged: Record<string, unknown> = {
-      ...existingObj,
-      ...updated,
-    };
+    const merged = mergeRecords(existingObj, updated);
 
     // Clean up role-exclusive credentials and options when role changes
     if (updated.role === "node") {
       delete merged.telegram;
+      delete merged.voice;
     } else if (updated.role === "gateway") {
       delete merged.gateway;
-      delete merged.hostLabel;
+      if (!("hostLabel" in updated)) delete merged.hostLabel;
     }
-
-    if (
-      typeof existingObj.notifications === "object" &&
-      existingObj.notifications !== null &&
-      typeof updated.notifications === "object" &&
-      updated.notifications !== null
-    ) {
-      merged.notifications = {
-        ...(existingObj.notifications as Record<string, unknown>),
-        ...(updated.notifications as Record<string, unknown>),
-      };
-    }
-    return merged;
+    return normalizePluginOptions(merged, updated);
   }
 
-  if (Array.isArray(existingJson.plugin)) {
-    // Find any existing options from matching entries
-    const existingEntry = existingJson.plugin.find(isMatch);
-    const existingOptions = Array.isArray(existingEntry) ? existingEntry[1] : undefined;
-    const mergedOptions = mergePluginOptions(existingOptions, pluginConfig);
-
-    // Filter out all old matches (e.g. stale local file paths or multiple aliases)
-    const cleanedPlugins = existingJson.plugin.filter((p) => !isMatch(p));
-    cleanedPlugins.push(["opencode-telegram-link", mergedOptions]);
-    existingJson.plugin = cleanedPlugins;
-  } else if (Array.isArray(existingJson.plugins)) {
-    const plugins = existingJson.plugins as unknown[];
-    existingJson.plugins = [...plugins.filter((p) => !isMatch(p)), "opencode-telegram-link"];
-    const existingPluginMap =
-      existingJson.plugin && typeof existingJson.plugin === "object"
-        ? (existingJson.plugin as Record<string, unknown>)
-        : {};
-    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(
-      existingPluginMap["opencode-telegram-link"],
-      pluginConfig,
-    );
-    existingJson.plugin = existingPluginMap;
-  } else if (existingJson.plugin && typeof existingJson.plugin === "object") {
-    const existingPluginMap = existingJson.plugin as Record<string, unknown>;
-    existingPluginMap["opencode-telegram-link"] = mergePluginOptions(
-      existingPluginMap["opencode-telegram-link"],
-      pluginConfig,
-    );
-  } else {
-    // Standard array tuple format
-    existingJson.plugin = [["opencode-telegram-link", pluginConfig]];
+  function normalizePluginOptions(
+    candidate: Record<string, unknown>,
+    fallback: Record<string, unknown>,
+  ): Record<string, unknown> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const parsed = NotifierConfigSchema.safeParse(candidate);
+      if (parsed.success) return parsed.data as unknown as Record<string, unknown>;
+      let changed = false;
+      for (const issue of parsed.error.issues) {
+        let parent: unknown = candidate;
+        const parentPath =
+          issue.code === "unrecognized_keys" ? issue.path : issue.path.slice(0, -1);
+        for (const segment of parentPath) {
+          if (!parent || typeof parent !== "object" || Array.isArray(parent)) break;
+          parent = (parent as Record<string, unknown>)[String(segment)];
+        }
+        if (!parent || typeof parent !== "object" || Array.isArray(parent)) continue;
+        if (issue.code === "unrecognized_keys") {
+          for (const key of issue.keys) {
+            if (key in (parent as Record<string, unknown>)) {
+              delete (parent as Record<string, unknown>)[key];
+              changed = true;
+            }
+          }
+        } else if (issue.path.length > 0) {
+          delete (parent as Record<string, unknown>)[String(issue.path.at(-1))];
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+    return NotifierConfigSchema.parse(fallback) as unknown as Record<string, unknown>;
   }
+
+  const preservedOptions = optionSources.reduce(
+    (merged, source) => mergeRecords(merged, source),
+    {} as Record<string, unknown>,
+  );
+  existingJson.plugin = [
+    ...retainedPlugins,
+    ["opencode-telegram-link", mergePluginOptions(preservedOptions, pluginConfig)],
+  ];
 
   const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, "utf8");
+  await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await rename(temporaryPath, targetPath);
 
   return backupPath ? { targetPath, backupPath } : { targetPath };
@@ -452,22 +502,6 @@ export async function removeOpenCodeConfig(
 
     let modified = false;
 
-    const isPluginMatch = (entry: unknown): boolean => {
-      const name =
-        typeof entry === "string"
-          ? entry
-          : Array.isArray(entry) && typeof entry[0] === "string"
-            ? entry[0]
-            : "";
-      return (
-        name === "opencode-telegram-link" ||
-        name.startsWith("opencode-telegram-link") ||
-        name.includes("opencode-telegram-link") ||
-        name.includes("opencode_notification") ||
-        name.includes("telegram-link")
-      );
-    };
-
     // Remove from root-level keys if present
     if ("opencode-telegram-link" in existingJson) {
       delete existingJson["opencode-telegram-link"];
@@ -481,7 +515,7 @@ export async function removeOpenCodeConfig(
     // Remove from plugin array
     if (Array.isArray(existingJson.plugin)) {
       const originalLength = existingJson.plugin.length;
-      const filtered = existingJson.plugin.filter((p) => !isPluginMatch(p));
+      const filtered = existingJson.plugin.filter((p) => !isTelegramLinkSpecifier(p));
       if (filtered.length !== originalLength) {
         existingJson.plugin = filtered;
         modified = true;
@@ -491,7 +525,7 @@ export async function removeOpenCodeConfig(
     // Remove from legacy plugins array
     if (Array.isArray(existingJson.plugins)) {
       const originalLength = existingJson.plugins.length;
-      const filtered = existingJson.plugins.filter((p) => !isPluginMatch(p));
+      const filtered = existingJson.plugins.filter((p) => !isTelegramLinkSpecifier(p));
       if (filtered.length !== originalLength) {
         existingJson.plugins = filtered;
         modified = true;
@@ -506,7 +540,7 @@ export async function removeOpenCodeConfig(
     ) {
       const map = existingJson.plugin as Record<string, unknown>;
       for (const key of Object.keys(map)) {
-        if (isPluginMatch(key)) {
+        if (isTelegramLinkSpecifier(key)) {
           delete map[key];
           modified = true;
         }
@@ -520,9 +554,13 @@ export async function removeOpenCodeConfig(
     // Create backup
     const backupPath = `${targetPath}.bak`;
     await copyFile(targetPath, backupPath);
+    await chmod(backupPath, 0o600);
 
     const temporaryPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, "utf8");
+    await writeFile(temporaryPath, `${JSON.stringify(existingJson, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     await rename(temporaryPath, targetPath);
 
     return { modified: true, backupPath };

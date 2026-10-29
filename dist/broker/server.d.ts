@@ -3,9 +3,8 @@ import { type BrokerCommand, type CommandResult, type NormalizedNotification, ty
 import { StateDatabase } from "../state";
 import { TelegramBotApi, VoiceTranscriber } from "../telegram";
 import { type BrokerConnectionData, RouteRegistry } from "./registry";
-declare const LOOPBACK_HOST = "127.0.0.1";
-declare const CONTAINER_HOST = "0.0.0.0";
 export type DashboardSettings = {
+    voiceConfigured?: boolean | undefined;
     activeProvider?: "groq" | "openai" | "cloudflare" | "custom" | undefined;
     cloudflare?: {
         accountId?: string | undefined;
@@ -44,16 +43,18 @@ declare const BrokerStatusSchema: z.ZodObject<{
         major: z.ZodNumber;
         minor: z.ZodNumber;
     }, z.core.$strip>;
-    bindHost: z.ZodEnum<{
-        "127.0.0.1": "127.0.0.1";
-        "0.0.0.0": "0.0.0.0";
-    }>;
+    bindHost: z.ZodString;
     connections: z.ZodNumber;
     routes: z.ZodNumber;
+    telegram: z.ZodEnum<{
+        active: "active";
+        degraded: "degraded";
+        unconfigured: "unconfigured";
+    }>;
 }, z.core.$strip>;
 export type StartBrokerOptions = {
     stateDirectory?: string;
-    bindHost?: typeof LOOPBACK_HOST | typeof CONTAINER_HOST;
+    bindHost?: string;
     port?: number;
     registrationTimeoutMs?: number;
     heartbeatTimeoutMs?: number;
@@ -98,8 +99,9 @@ export declare class BrokerServer {
 }
 export declare function startBroker(options?: StartBrokerOptions): Promise<BrokerServer>;
 export declare function startOrReuseBroker(options?: StartBrokerOptions): Promise<StartOrReuseBrokerResult>;
-export declare function probeBroker(port: number, brokerSecret: string): Promise<z.infer<typeof HealthResponseSchema> | undefined>;
-export declare function fetchBrokerStatus(port: number, brokerSecret: string): Promise<z.infer<typeof BrokerStatusSchema> | undefined>;
+export declare function probeBroker(port: number, brokerSecret: string, bindHost?: string): Promise<z.infer<typeof HealthResponseSchema> | undefined>;
+export declare function fetchBrokerStatus(port: number, brokerSecret: string, bindHost?: string): Promise<z.infer<typeof BrokerStatusSchema> | undefined>;
+export declare function brokerHttpUrl(port: number, path: string, bindHost?: string): string;
 export declare class BrokerPortConflictError extends Error {
     readonly port: number;
     constructor(port: number);
@@ -107,6 +109,7 @@ export declare class BrokerPortConflictError extends Error {
 declare class BrokerTelegramRuntime {
     #private;
     setTranscriber(transcriber: VoiceTranscriber | undefined): void;
+    get active(): boolean;
     constructor(input: {
         config: TelegramRuntimeConfig;
         database: StateDatabase;
@@ -118,6 +121,7 @@ declare class BrokerTelegramRuntime {
         deliveryIntervalMs: number;
         pollLongPollSeconds?: number;
         now: () => number;
+        onTerminated: () => void;
     });
     start(): void;
     stop(): Promise<void>;

@@ -1,12 +1,21 @@
-import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { existsSync, type Stats } from "node:fs";
+import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { assertSecureTokenFile, ConfigValidationError, redactSensitiveText } from "../config";
 import { formatDoctorReport, runDoctor } from "../doctor";
-import { loadOrCreateStateIdentity, StateDatabase } from "../state";
+import { isPrivateGatewayHost } from "../network";
+import {
+  defaultStateDirectory,
+  loadOrCreateStateIdentity,
+  rotateGatewaySecret,
+  StateDatabase,
+} from "../state";
 import { TelegramBotApi } from "../telegram";
 import {
   BrokerPortConflictError,
   type BrokerServer,
+  brokerHttpUrl,
   probeBroker,
   type StartBrokerOptions,
   startOrReuseBroker,
@@ -36,18 +45,20 @@ export async function runBrokerCli(options: BrokerCliOptions = {}): Promise<numb
   const normalizedArgv = argv[0] === "broker" ? argv.slice(1) : argv;
   const command = normalizedArgv[0];
   const flags = parseFlags(normalizedArgv.slice(1));
-  const brokerOptions = brokerOptionsFrom(flags, env);
-
-  if (!command || command === "start" || command === "run") {
-    return await runStartCommand(brokerOptions, streams, options.onStarted);
-  }
 
   try {
+    const brokerOptions = await brokerOptionsFrom(flags, env);
+    if (!command || command === "start" || command === "run") {
+      return await runStartCommand(brokerOptions, env, streams, options.onStarted);
+    }
     if (command === "status") return await runStatusCommand(brokerOptions, streams);
     if (command === "stop") return await runStopCommand(brokerOptions, streams, options.fetch);
     if (command === "purge-state") return await runPurgeStateCommand(brokerOptions, streams);
     if (command === "rotate-credential") {
       return await runRotateCredentialCommand(flags, env, streams);
+    }
+    if (command === "rotate-gateway-secret") {
+      return await runRotateGatewaySecretCommand(flags, env, streams);
     }
     if (command === "test-notification") {
       return await runTestNotificationCommand(flags, env, streams, options.fetch);
@@ -72,7 +83,7 @@ async function runDoctorCommand(
   streams: CommandStreams,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<number> {
-  const brokerOptions = brokerOptionsFrom(flags, env);
+  const brokerOptions = await brokerOptionsFrom(flags, env);
   const report = await runDoctor({
     env,
     fetch: fetchImplementation,
@@ -84,16 +95,22 @@ async function runDoctorCommand(
 
 async function runStartCommand(
   options: StartBrokerOptions,
+  env: NodeJS.ProcessEnv,
   streams: CommandStreams,
   onStarted: BrokerCliOptions["onStarted"],
 ): Promise<number | undefined> {
   try {
+    await assertDeploymentOwnsStartEndpoint(options, env);
     const result = await startOrReuseBroker(options);
     if (result.kind === "existing") {
-      streams.stdout.write(`Broker already running on 127.0.0.1:${result.port}.\n`);
+      streams.stdout.write(
+        `Broker already running on ${options.bindHost ?? "127.0.0.1"}:${result.port}.\n`,
+      );
       return 0;
     }
-    streams.stdout.write(`Broker started on 127.0.0.1:${result.broker.port}.\n`);
+    streams.stdout.write(
+      `Broker started on ${options.bindHost ?? "127.0.0.1"}:${result.broker.port}.\n`,
+    );
     await onStarted?.(result.broker);
     const stop = () => void result.broker.stop();
     process.once("SIGINT", stop);
@@ -106,17 +123,106 @@ async function runStartCommand(
   }
 }
 
+async function assertDeploymentOwnsStartEndpoint(
+  options: StartBrokerOptions,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
+  const ownership = await readDeploymentOwnership(stateDirectory);
+  if (!ownership) return;
+  if (ownership.mode === "docker" && env.OPENCODE_TELEGRAM_CONTAINER === "1") return;
+  if (ownership.mode === "docker" || ownership.mode === "node") {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_MODE_CONFLICT",
+      `${ownership.mode} deployment does not own a host Broker process`,
+    );
+  }
+  const owned = ownership.endpoint ?? (await readPersistedBrokerEndpoint(stateDirectory));
+  if (!owned) {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_ENDPOINT_MISSING",
+      "native deployment ownership endpoint is missing; run setup to migrate deployment state",
+    );
+  }
+  const requestedHost = options.bindHost ?? "127.0.0.1";
+  const requestedPort = options.port ?? 42617;
+  if (owned.bindHost !== requestedHost || owned.port !== requestedPort) {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_ENDPOINT_CONFLICT",
+      `native deployment owns ${owned.bindHost}:${owned.port}; refusing competing Broker endpoint`,
+    );
+  }
+}
+
+type DeploymentOwnership = {
+  mode: "native" | "docker" | "node";
+  endpoint?: { bindHost: string; port: number };
+};
+
+async function readDeploymentOwnership(
+  stateDirectory: string,
+): Promise<DeploymentOwnership | undefined> {
+  const markerPath = join(stateDirectory, "deployment.json");
+  let stats: Stats;
+  try {
+    stats = await lstat(markerPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (
+    !stats.isFile() ||
+    stats.isSymbolicLink() ||
+    (process.platform !== "win32" && (stats.mode & 0o077) !== 0) ||
+    (typeof process.getuid === "function" && stats.uid !== process.getuid())
+  ) {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_MARKER_UNSAFE",
+      "deployment ownership marker is not a private current-user regular file",
+    );
+  }
+  const value = JSON.parse(await readFile(markerPath, "utf8")) as {
+    mode?: unknown;
+    bindHost?: unknown;
+    port?: unknown;
+  };
+  if (value.mode !== "native" && value.mode !== "docker" && value.mode !== "node") {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_MODE_INVALID",
+      "deployment ownership mode is invalid",
+    );
+  }
+  if (value.mode !== "native") return { mode: value.mode };
+  if (value.bindHost === undefined && value.port === undefined) return { mode: "native" };
+  const bindHost = typeof value.bindHost === "string" ? parseBindHost(value.bindHost) : undefined;
+  if (
+    !bindHost ||
+    typeof value.port !== "number" ||
+    !Number.isInteger(value.port) ||
+    value.port < 1 ||
+    value.port > 65_535
+  ) {
+    throw new ConfigValidationError(
+      "DEPLOYMENT_ENDPOINT_INVALID",
+      "native deployment ownership endpoint is invalid",
+    );
+  }
+  return { mode: "native", endpoint: { bindHost, port: value.port } };
+}
+
 async function runStatusCommand(
   options: StartBrokerOptions,
   streams: CommandStreams,
 ): Promise<number> {
   const state = await loadOrCreateStateIdentity(options.stateDirectory);
-  const health = await probeBroker(options.port ?? 42617, state.brokerSecret);
+  const health = await probeBroker(options.port ?? 42617, state.brokerSecret, options.bindHost);
   if (!health) {
     streams.stdout.write("Broker status: stopped or unreachable.\n");
     return 3;
   }
-  streams.stdout.write(`Broker status: running on 127.0.0.1:${options.port ?? 42617}.\n`);
+  streams.stdout.write(
+    `Broker status: running on ${options.bindHost ?? "127.0.0.1"}:${options.port ?? 42617}.\n`,
+  );
   streams.stdout.write(
     `Machine: ${health.machineId}. Protocol: ${health.protocol.major}.${health.protocol.minor}.\n`,
   );
@@ -130,15 +236,18 @@ export async function runStopCommand(
 ): Promise<number> {
   const state = await loadOrCreateStateIdentity(options.stateDirectory);
   const port = options.port ?? 42617;
-  const health = await probeBroker(port, state.brokerSecret);
+  const health = await probeBroker(port, state.brokerSecret, options.bindHost);
   if (!health) {
     streams.stdout.write("Broker is already stopped or unreachable.\n");
     return 3;
   }
-  const response = await fetchImplementation(`http://127.0.0.1:${port}/v1/control/stop`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${state.brokerSecret}` },
-  });
+  const response = await fetchImplementation(
+    brokerHttpUrl(port, "/v1/control/stop", options.bindHost),
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${state.brokerSecret}` },
+    },
+  );
   if (!response.ok) throw new Error("broker rejected the stop command");
   streams.stdout.write("Broker stop requested. OpenCode sessions are not terminated.\n");
   return 0;
@@ -149,7 +258,7 @@ async function runPurgeStateCommand(
   streams: CommandStreams,
 ): Promise<number> {
   const state = await loadOrCreateStateIdentity(options.stateDirectory);
-  if (await probeBroker(options.port ?? 42617, state.brokerSecret)) {
+  if (await probeBroker(options.port ?? 42617, state.brokerSecret, options.bindHost)) {
     streams.stderr.write("Stop the broker before purging state.\n");
     return 1;
   }
@@ -184,6 +293,20 @@ async function runRotateCredentialCommand(
   return 0;
 }
 
+async function runRotateGatewaySecretCommand(
+  flags: Map<string, string | true>,
+  env: NodeJS.ProcessEnv,
+  streams: CommandStreams,
+): Promise<number> {
+  const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
+  const state = await loadOrCreateStateIdentity(stateDirectory);
+  await rotateGatewaySecret(state.stateDirectory);
+  streams.stdout.write(
+    `Gateway credential rotated at ${join(state.stateDirectory, "gateway-secret")}. Update every node and restart the broker.\n`,
+  );
+  return 0;
+}
+
 async function runTestNotificationCommand(
   flags: Map<string, string | true>,
   env: NodeJS.ProcessEnv,
@@ -207,15 +330,34 @@ async function runTestNotificationCommand(
   return 0;
 }
 
-function brokerOptionsFrom(
+async function brokerOptionsFrom(
   flags: Map<string, string | true>,
   env: NodeJS.ProcessEnv,
-): StartBrokerOptions {
+): Promise<StartBrokerOptions> {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
-  const port = parsePositiveInteger(stringFlag(flags, "port") ?? env.OPENCODE_TELEGRAM_BROKER_PORT);
-  const bindHost = parseBindHost(
+  const explicitPort = parsePositiveInteger(
+    stringFlag(flags, "port") ?? env.OPENCODE_TELEGRAM_BROKER_PORT,
+  );
+  const explicitHost = parseBindHost(
     stringFlag(flags, "bind-host") ?? env.OPENCODE_TELEGRAM_BROKER_BIND_HOST,
   );
+  const resolvedStateDirectory = stateDirectory ?? defaultStateDirectory(env);
+  const ownership =
+    explicitHost && explicitPort
+      ? undefined
+      : await readDeploymentOwnership(resolvedStateDirectory);
+  const ownedEndpoint = ownership?.mode === "native" ? ownership.endpoint : undefined;
+  const preferredHost = explicitHost ?? ownedEndpoint?.bindHost;
+  const preferredPort = explicitPort ?? ownedEndpoint?.port;
+  const persisted =
+    preferredHost && preferredPort
+      ? undefined
+      : await readPersistedBrokerEndpoint(resolvedStateDirectory, {
+          ...(preferredHost ? { bindHost: preferredHost } : {}),
+          ...(preferredPort ? { port: preferredPort } : {}),
+        });
+  const port = explicitPort ?? ownedEndpoint?.port ?? persisted?.port;
+  const bindHost = explicitHost ?? ownedEndpoint?.bindHost ?? persisted?.bindHost;
   const idleTimeoutMs = parsePositiveInteger(env.OPENCODE_TELEGRAM_BROKER_IDLE_TIMEOUT_MS);
   return {
     ...(stateDirectory ? { stateDirectory } : {}),
@@ -225,10 +367,66 @@ function brokerOptionsFrom(
   };
 }
 
-function parseBindHost(value: string | undefined): "127.0.0.1" | "0.0.0.0" | undefined {
+function parseBindHost(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  if (value === "127.0.0.1" || value === "0.0.0.0") return value;
-  return undefined;
+  if (isIP(value) === 0) {
+    throw new ConfigValidationError(
+      "BIND_HOST_INVALID",
+      "bind host must be a valid IPv4 or IPv6 address",
+    );
+  }
+  if (value === "0.0.0.0" || value === "::" || isPrivateGatewayHost(value)) return value;
+  throw new ConfigValidationError(
+    "BIND_HOST_INSECURE",
+    "public bind hosts require a TLS reverse proxy and cannot receive plaintext lifecycle credentials",
+  );
+}
+
+export async function readPersistedBrokerEndpoint(
+  stateDirectory: string,
+  overrides: { bindHost?: string; port?: number } = {},
+): Promise<{ bindHost: string; port: number } | undefined> {
+  const path = join(stateDirectory, "opencode-notifier.json");
+  if (!existsSync(path)) return undefined;
+  const stats = await lstat(path);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new ConfigValidationError(
+      "PERSISTED_CONFIG_UNSAFE",
+      "persisted Gateway configuration must be a regular file",
+    );
+  }
+  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
+    throw new ConfigValidationError(
+      "PERSISTED_CONFIG_PERMISSIONS_UNSAFE",
+      "persisted Gateway configuration must not allow group or other access",
+    );
+  }
+  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+    throw new ConfigValidationError(
+      "PERSISTED_CONFIG_OWNER_UNSAFE",
+      "persisted Gateway configuration must be owned by the current user",
+    );
+  }
+  const value = JSON.parse(await readFile(path, "utf8")) as {
+    broker?: { host?: unknown; port?: unknown };
+  };
+  const bindHost =
+    overrides.bindHost ??
+    parseBindHost(typeof value.broker?.host === "string" ? value.broker.host : undefined);
+  const port = overrides.port ?? value.broker?.port;
+  if (
+    !bindHost ||
+    typeof port !== "number" ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65_535
+  ) {
+    throw new ConfigValidationError(
+      "PERSISTED_ENDPOINT_INVALID",
+      "persisted Gateway host or port is missing or invalid",
+    );
+  }
+  return { bindHost, port };
 }
 
 async function readSecretToken(env: NodeJS.ProcessEnv): Promise<string> {
@@ -293,9 +491,9 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 
 function commandHelp(): string {
   return [
-    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential] [options]",
+    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential|rotate-gateway-secret] [options]",
     "",
-    "Common options: --state-dir PATH --port PORT",
+    "Common options: --state-dir PATH --port PORT --bind-host IP",
     "test-notification options: --chat-id ID --locale en|zh-TW",
     "rotate-credential options: --token-file PATH",
     "Secrets are read from OPENCODE_TELEGRAM_BOT_TOKEN_FILE or OPENCODE_TELEGRAM_BOT_TOKEN.",

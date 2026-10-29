@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NotifierConfigSchema } from "../src/config";
 import {
+  generatePluginConfigSnippet,
   injectOpenCodeConfig,
   loadResolvedNotifierConfig,
   parseJsonc,
@@ -75,6 +76,11 @@ describe("JSONC Parsing & Config Injection Security", () => {
 
     await injectOpenCodeConfig(configPath, nodeConfig);
 
+    if (process.platform !== "win32") {
+      expect((await stat(configPath)).mode & 0o777).toBe(0o600);
+      expect((await stat(`${configPath}.bak`)).mode & 0o777).toBe(0o600);
+    }
+
     const writtenContent = await readFile(configPath, "utf8");
     const parsed = JSON.parse(writtenContent);
 
@@ -86,6 +92,7 @@ describe("JSONC Parsing & Config Injection Security", () => {
     );
     expect(injectedTuple).toBeDefined();
     expect(injectedTuple[1].role).toBe("node");
+    expect(injectedTuple[1].broker).toEqual(nodeConfig.broker);
     expect(injectedTuple[1].hostLabel).toBe("GPU-Worker-1");
     expect(injectedTuple[1].gateway.url).toBe("ws://192.168.1.50:42617/v1/connect");
 
@@ -126,7 +133,7 @@ describe("JSONC Parsing & Config Injection Security", () => {
     expect(contentAfter).toBe(badContent);
   });
 
-  test("injectOpenCodeConfig preserves existing custom options when updating plugin tuple", async () => {
+  test("injectOpenCodeConfig preserves supported options and removes invalid legacy keys", async () => {
     const configPath = join(tempDir, "existing-options.json");
     await writeFile(
       configPath,
@@ -187,14 +194,20 @@ describe("JSONC Parsing & Config Injection Security", () => {
     expect(options.gateway.url).toBe("ws://10.0.0.1:42617/v1/connect");
     expect(options.notifications.error).toBe(false);
 
-    // Preserved custom fields
-    expect(options.interaction).toEqual({ allowAll: true });
-    expect(options.voice).toEqual({ model: "whisper-large" });
-    expect(options.broker).toEqual({ idleTimeoutMs: 120000 });
+    // Supported fields survive; unknown fields are removed so the result remains loadable.
+    expect(options.interaction.allowAll).toBeUndefined();
+    expect(options.voice).toBeUndefined();
+    expect(options.broker).toMatchObject({
+      host: "127.0.0.1",
+      port: 42617,
+    });
+    expect(options.broker.idleTimeoutMs).toBeUndefined();
     expect(options.notifications.includeChildLifecycle).toBe(true);
     expect(options.notifications.completionDebounceMs).toBe(5000);
     expect(options.notifications.pluginBufferSize).toBe(50);
-    expect(options.customOption).toBe("preserved-value");
+    expect(options.customOption).toBeUndefined();
+    expect(NotifierConfigSchema.safeParse(options).success).toBe(true);
+    expect((await loadResolvedNotifierConfig(options))?.role).toBe("node");
   });
 
   test("injectOpenCodeConfig removes stale role credentials when switching role from node to gateway", async () => {
@@ -260,8 +273,9 @@ describe("JSONC Parsing & Config Injection Security", () => {
     expect(options.gateway).toBeUndefined();
     expect(options.hostLabel).toBeUndefined();
 
-    // Custom option must remain
-    expect(options.customSetting).toBe("keep-me");
+    // Unknown legacy options are removed to keep the migrated tuple schema-valid.
+    expect(options.customSetting).toBeUndefined();
+    expect(NotifierConfigSchema.safeParse(options).success).toBe(true);
   });
 
   test("injectOpenCodeConfig purges invalid root-level plugin keys and replaces legacy file links", async () => {
@@ -342,5 +356,112 @@ describe("JSONC Parsing & Config Injection Security", () => {
     const parsed = JSON.parse(await readFile(configPath, "utf8"));
     expect(parsed["opencode-telegram-link"]).toBeUndefined();
     expect(parsed.plugin).toEqual(["keep-plugin"]);
+  });
+
+  test("does not remove plugins with similar names", async () => {
+    const configPath = join(tempDir, "near-collision.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ plugin: ["acme-telegram-link-audit", "keep-plugin"] }),
+      "utf8",
+    );
+    const config = NotifierConfigSchema.parse({
+      role: "node",
+      gateway: { url: "wss://gateway.example.test", secret: "node-secret" },
+    });
+
+    await injectOpenCodeConfig(configPath, config);
+    await removeOpenCodeConfig(configPath);
+
+    const parsed = JSON.parse(await readFile(configPath, "utf8"));
+    expect(parsed.plugin).toEqual(["acme-telegram-link-audit", "keep-plugin"]);
+  });
+
+  test("preserves options from configured duplicates when a stale string appears first", async () => {
+    const configPath = join(tempDir, "duplicate-options.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        plugin: [
+          "/old/opencode_notification",
+          [
+            "opencode-telegram-link@next",
+            {
+              voice: { provider: "groq", apiKeyFile: "/private/voice-key" },
+              interaction: { questionTtlMinutes: 99 },
+            },
+          ],
+        ],
+      }),
+      "utf8",
+    );
+    const config = NotifierConfigSchema.parse({
+      role: "node",
+      gateway: { url: "wss://gateway.example.test", secret: "node-secret" },
+    });
+
+    await injectOpenCodeConfig(configPath, config);
+
+    const parsed = JSON.parse(await readFile(configPath, "utf8"));
+    expect(parsed.plugin).toHaveLength(1);
+    expect(parsed.plugin[0][1].voice).toBeUndefined();
+    expect(parsed.plugin[0][1].interaction.questionTtlMinutes).toBe(99);
+    expect(NotifierConfigSchema.safeParse(parsed.plugin[0][1]).success).toBe(true);
+  });
+
+  test("generates a schema-compatible plugin tuple", () => {
+    const config = NotifierConfigSchema.parse({
+      role: "node",
+      gateway: { url: "wss://gateway.example.test", secret: "node-secret" },
+    });
+
+    const snippet = JSON.parse(generatePluginConfigSnippet(config));
+
+    expect(Array.isArray(snippet.plugin)).toBe(true);
+    expect(snippet.plugin[0][0]).toBe("opencode-telegram-link");
+    expect(snippet.plugin[0][1].role).toBe("node");
+    expect(snippet.plugin[0][1].gateway.secret).toBe("REPLACE_WITH_GATEWAY_SECRET");
+    expect(JSON.stringify(snippet)).not.toContain("node-secret");
+  });
+
+  test("does not hide an invalid workspace notifier behind fallback configuration", async () => {
+    const workspace = join(tempDir, "invalid-workspace");
+    await mkdir(workspace);
+    await Bun.write(
+      join(workspace, "opencode.json"),
+      JSON.stringify({ plugin: [["opencode-telegram-link", { role: "node" }]] }),
+    );
+
+    expect(await loadResolvedNotifierConfig(undefined, workspace)).toBeUndefined();
+  });
+
+  for (const invalidValue of [null, false, ""]) {
+    test(`fails closed for falsy legacy root config ${JSON.stringify(invalidValue)}`, async () => {
+      const workspace = join(tempDir, `falsy-${String(invalidValue) || "empty"}`);
+      await mkdir(workspace);
+      await writeFile(
+        join(workspace, "opencode.json"),
+        JSON.stringify({ "opencode-telegram-link": invalidValue }),
+      );
+
+      expect(await loadResolvedNotifierConfig(undefined, workspace)).toBeUndefined();
+    });
+  }
+
+  for (const invalidOptions of [null, false, "", 42]) {
+    test(`fails closed for explicit options ${JSON.stringify(invalidOptions)}`, async () => {
+      expect(await loadResolvedNotifierConfig(invalidOptions, tempDir)).toBeUndefined();
+    });
+  }
+
+  test("fails closed for a notifier tuple missing its options slot", async () => {
+    const workspace = join(tempDir, "missing-tuple-options");
+    await mkdir(workspace);
+    await writeFile(
+      join(workspace, "opencode.json"),
+      JSON.stringify({ plugin: [["opencode-telegram-link"]] }),
+    );
+
+    expect(await loadResolvedNotifierConfig(undefined, workspace)).toBeUndefined();
   });
 });

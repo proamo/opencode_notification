@@ -7,9 +7,14 @@ The notifier stores only local operational state required for routing, delivery,
 | Location | Contents | Sensitive notes |
 |---|---|---|
 | `machine-id` | Stable UUID for this user/computer state. | Not a hardware identifier. |
-| `broker-secret` | Local bearer secret for broker authentication. | Secret; keep file private. |
+| `broker-secret` | Local administrator bearer secret for dashboard and control APIs. | Secret; keep file private. |
+| `gateway-secret` | Node bearer secret for Broker WebSocket connections. | Secret; distribute only to trusted Nodes. |
 | `route-salt` | Secret HMAC key for project ID derivation. | Secret; deleting it changes project IDs. |
 | `telegram-bot-token` | Optional setup-created bot token file. | Secret; not stored in SQLite. |
+| `opencode-notifier.json` | Daemon locale, Telegram identity, token-file path, and runtime settings. | Private; may contain voice credentials when configured inline. |
+| `dashboard-settings.json` | Selected voice provider and provider API credentials. | Secret; atomically stored with mode `0600`. |
+| `deployment.json` | Native, Docker, or Node deployment mode. | Informational only. |
+| `service/opencode-telegram-broker.js` | Stable package bundle used by systemd. | Private managed copy; replaced during setup upgrades. |
 | `broker.json` | Port, pid, nonce, protocol, start timestamp. | Informational only; authenticated probing is authoritative. |
 | `state.sqlite` `meta` | Schema version, machine ID, Telegram update offset, pinned bot ID. | Does not contain bot token. |
 | `state.sqlite` `message_routes` | Telegram chat/message ID, route key, action kind, interaction ID, status, timestamps. | Uses opaque project IDs; no raw reply text. |
@@ -23,7 +28,7 @@ The notifier stores only local operational state required for routing, delivery,
 The implementation must not persist:
 
 - Bot tokens in SQLite.
-- Broker secrets in SQLite.
+- Broker and Gateway secrets in SQLite.
 - Raw Telegram reply text.
 - Full OpenCode transcripts.
 - Source code, tool output, or file contents.

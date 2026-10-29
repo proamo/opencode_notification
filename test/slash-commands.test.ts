@@ -76,6 +76,7 @@ describe("Slash Commands System", () => {
     expect(result).toContain(`v${PACKAGE_VERSION}`);
     expect(result).toContain("2m");
     expect(result).toContain("Memory RSS");
+    expect(result).toContain("Active Routes:</b> <code>0</code>");
   });
 
   test("renders connected nodes list", async () => {
@@ -108,6 +109,8 @@ describe("Slash Commands System", () => {
     });
     expect(populatedResult).toContain("[d009-win10]");
     expect(populatedResult).toContain("Online");
+    expect(populatedResult).toContain("待命中");
+    expect(populatedResult).not.toContain("undefined");
   });
 
   test("renders active sessions and dispatches /cancel command", async () => {
@@ -166,6 +169,20 @@ describe("Slash Commands System", () => {
       type: "session.cancel",
       route,
     });
+
+    registry.registerRoute("conn-1", {
+      route,
+      projectLabel: "MyProject",
+      sessionLabel: "Fix auth bug",
+      active: false,
+    });
+    const inactiveResult = await executeSlashCommand({
+      text: "/cancel ses_task_999",
+      locale: "zh-TW",
+      registry,
+      dispatcher,
+    });
+    expect(inactiveResult).toContain("找不到指定 Session");
 
     // Test /cancel with missing sessionId
     const usageResult = await executeSlashCommand({

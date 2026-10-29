@@ -5,6 +5,7 @@ export type BrokerConnectionData = {
   connectionId: string;
   connectedAt: number;
   lastHeartbeatAt: number;
+  canConfigureTelegram: boolean;
   instanceId?: string;
 };
 
@@ -14,6 +15,7 @@ export type RegisteredRoute = {
   projectLabel: string;
   sessionLabel: string;
   connectionId: string;
+  active: boolean;
 };
 
 type OwnedConnection = {
@@ -93,6 +95,7 @@ export class RouteRegistry {
       hostLabel?: string | undefined;
       projectLabel: string;
       sessionLabel: string;
+      active?: boolean | undefined;
     },
   ): RegisteredRoute {
     const connection = this.#connections.get(connectionId);
@@ -136,6 +139,7 @@ export class RouteRegistry {
       hostLabel: input.hostLabel ?? connection.hostLabel,
       route,
       connectionId,
+      active: input.active ?? true,
     };
     this.#routes.set(key, registered);
     connection.routeKeys.add(key);
@@ -160,6 +164,7 @@ export class RouteRegistry {
     // Hot fallback: match strictly by (machineId, instanceId, projectId, sessionId) across active registered routes (e.g. newer routeGeneration on same instance)
     for (const registered of this.#routes.values()) {
       if (
+        registered.active &&
         registered.route.machineId === parsed.machineId &&
         registered.route.instanceId === parsed.instanceId &&
         registered.route.projectId === parsed.projectId &&
@@ -172,7 +177,11 @@ export class RouteRegistry {
     return undefined;
   }
 
-  lookupSession(sessionIdOrPrefix: string, target?: string): SessionLookupResult {
+  lookupSession(
+    sessionIdOrPrefix: string,
+    target?: string,
+    activeOnly = false,
+  ): SessionLookupResult {
     const trimmed = sessionIdOrPrefix.trim();
     if (!trimmed) return { status: "not_found" };
 
@@ -183,6 +192,7 @@ export class RouteRegistry {
     const prefixMatches: RegisteredRoute[] = [];
 
     for (const registered of this.#routes.values()) {
+      if (activeOnly && !registered.active) continue;
       const sid = registered.route.sessionId;
       const lowerSid = sid.toLowerCase();
 
@@ -254,8 +264,8 @@ export class RouteRegistry {
     };
   }
 
-  resolveBySessionId(sessionId: string, target?: string): RouteKey | undefined {
-    const result = this.lookupSession(sessionId, target);
+  resolveBySessionId(sessionId: string, target?: string, activeOnly = false): RouteKey | undefined {
+    const result = this.lookupSession(sessionId, target, activeOnly);
     return result.status === "found" ? result.route : undefined;
   }
 
@@ -365,7 +375,7 @@ export class RouteRegistry {
 
       for (const routeKey of conn.routeKeys) {
         const reg = this.#routes.get(routeKey);
-        if (reg) {
+        if (reg?.active) {
           if (!primaryProjectLabel) {
             primaryProjectLabel = reg.projectLabel;
           }
@@ -456,6 +466,7 @@ export class RouteRegistry {
   }> {
     const sessions = [];
     for (const registered of this.#routes.values()) {
+      if (!registered.active) continue;
       sessions.push({
         route: registered.route,
         projectLabel: registered.projectLabel,

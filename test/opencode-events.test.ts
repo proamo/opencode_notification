@@ -268,11 +268,53 @@ describe("OpenCodeEventBridge", () => {
       properties: { info: { id: "ses_1", title: "Task" } },
     });
     await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await bridge.handle({
+      type: "session.status",
+      properties: { sessionID: "ses_1", status: { type: "busy" } },
+    });
     await bridge.handle({ type: "session.error", properties: {} });
 
     expect(broker.routes).toHaveLength(0);
     expect(notifications).toHaveLength(0);
     expect(diagnostics).toEqual([["INCOMPATIBLE_EVENT_PAYLOAD", "session.error"]]);
+  });
+
+  test("does not recreate a deleted route when an in-flight completion summary resolves", async () => {
+    const broker = new FakeRouteClient();
+    const notifications: NormalizedNotification[] = [];
+    let releaseSummary: (value: string) => void = () => undefined;
+    let markSummaryStarted: () => void = () => undefined;
+    const summaryStarted = new Promise<void>((resolve) => {
+      markSummaryStarted = resolve;
+    });
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      completionDebounceMs: 0,
+      fetchSummary: async () => {
+        markSummaryStarted();
+        return await new Promise<string>((resolve) => {
+          releaseSummary = resolve;
+        });
+      },
+      onNotification: (notification) => {
+        notifications.push(notification);
+      },
+    });
+    await bridge.handle(sessionCreated("ses_1", "Task"));
+    await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await summaryStarted;
+    await bridge.handle({
+      type: "session.deleted",
+      properties: { info: { id: "ses_1", title: "Task" } },
+    });
+    releaseSummary("Done");
+    await Bun.sleep(5);
+
+    expect(broker.routes).toHaveLength(0);
+    expect(notifications).toHaveLength(0);
   });
 
   test("suppresses child lifecycle notifications while keeping root lifecycle enabled", async () => {
@@ -324,6 +366,79 @@ describe("OpenCodeEventBridge", () => {
     await Bun.sleep(50);
 
     expect(notifications).toHaveLength(0);
+    expect(broker.routes).toContainEqual(
+      expect.objectContaining({ sessionId: "ses_root", active: true }),
+    );
+  });
+
+  test("keeps idle sessions routable without listing them as active", async () => {
+    const broker = new FakeRouteClient();
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      notificationFilters: { completion: false },
+      onNotification: () => undefined,
+    });
+
+    await bridge.handle(sessionCreated("ses_root", "Main task"));
+    expect(broker.routes).toContainEqual(expect.objectContaining({ active: false }));
+
+    await bridge.handle({
+      type: "session.status",
+      properties: { sessionID: "ses_root", status: { type: "busy" } },
+    });
+    expect(broker.routes).toContainEqual(expect.objectContaining({ active: true }));
+
+    await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_root" } });
+    expect(broker.routes).toHaveLength(1);
+    expect(broker.routes).toContainEqual(expect.objectContaining({ active: false }));
+    expect(broker.activeRoute("opaque-project-id", "ses_root")).toBeDefined();
+  });
+
+  test("marks terminal events inactive when session metadata has not arrived", async () => {
+    const broker = new FakeRouteClient();
+    const notifications: NormalizedNotification[] = [];
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      completionDebounceMs: 0,
+      onNotification: (notification) => {
+        notifications.push(notification);
+      },
+    });
+
+    await bridge.handle({ type: "session.idle", properties: { sessionID: "ses_root" } });
+    await waitForNotifications(notifications, 1);
+
+    expect(broker.routes).toContainEqual(
+      expect.objectContaining({ sessionId: "ses_root", active: false }),
+    );
+    expect(notifications[0]).toMatchObject({ kind: "session.completed" });
+  });
+
+  test("marks busy sessions active when session metadata has not arrived", async () => {
+    const broker = new FakeRouteClient();
+    const bridge = new OpenCodeEventBridge({
+      broker,
+      projectId: "opaque-project-id",
+      projectLabel: "backend",
+      locale: "en",
+      onNotification: () => undefined,
+    });
+
+    await bridge.handle({
+      type: "session.status",
+      properties: { sessionID: "ses_root", status: { type: "busy" } },
+    });
+    await bridge.handle(sessionCreated("ses_root", "Main task"));
+
+    expect(broker.routes).toContainEqual(
+      expect.objectContaining({ sessionId: "ses_root", sessionLabel: "Main task", active: true }),
+    );
   });
 
   test("does not cancel debounced completion when session.updated is emitted after session.idle", async () => {

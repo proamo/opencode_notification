@@ -13,8 +13,10 @@ export type DoctorOptions = {
     rawConfig?: unknown;
     stateDirectory?: string;
     port?: number;
+    bindHost?: string;
     fetch?: typeof fetch;
     env?: NodeJS.ProcessEnv;
+    cwd?: string;
 };
 export declare function runDoctor(options?: DoctorOptions): Promise<DoctorReport>;
 export declare function formatDoctorReport(report: DoctorReport): string;

@@ -8,7 +8,13 @@ import {
   type StartBrokerOptions,
   startBroker,
 } from "../src/broker";
-import { BrokerClient, type BrokerClientOptions, brokerRuntimeCommand } from "../src/plugin/client";
+import {
+  BrokerClient,
+  type BrokerClientOptions,
+  brokerRuntimeCommand,
+  derivePluginInstanceId,
+  probeBroker as probePluginBroker,
+} from "../src/plugin/client";
 import type {
   BrokerCommand,
   NormalizedNotification,
@@ -54,6 +60,43 @@ async function safeRemove(directory: string): Promise<void> {
 }
 
 describe("BrokerClient lifecycle", () => {
+  test("derives one stable instance identity per process and project", () => {
+    const machineId = crypto.randomUUID();
+    const first = derivePluginInstanceId(process.cwd(), machineId, 1234);
+    expect(first).toBe(derivePluginInstanceId(`${process.cwd()}/.`, machineId, 1234));
+    expect(first).not.toBe(derivePluginInstanceId(process.cwd(), crypto.randomUUID(), 1234));
+    expect(first).not.toBe(derivePluginInstanceId(process.cwd(), machineId, 5678));
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  test("rejects plaintext WebSocket URLs for public gateway addresses", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const client = new BrokerClient({
+      stateDirectory,
+      packageVersion: "0.0.0",
+      openCodeVersion: "1.18.18",
+      gatewayUrl: "ws://203.0.113.10:42617",
+      gatewaySecret: "secret",
+      startupTimeoutMs: 100,
+      reconnectMinDelayMs: 1,
+      reconnectMaxDelayMs: 1,
+    });
+    clients.push(client);
+
+    await expect(client.start()).rejects.toThrow("public gateway URLs must use wss://");
+  });
+
+  test("rejects public local Broker hosts before probing or connecting", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+
+    expect(() => createClient(stateDirectory, 42617, { host: "8.8.8.8" })).toThrow(
+      "local broker host must be loopback or a private IP address",
+    );
+    await expect(probePluginBroker(42617, "sentinel-admin-secret", "8.8.8.8")).rejects.toThrow(
+      "local broker host must be loopback or a private IP address",
+    );
+  });
+
   test("uses a Bun runtime command for detached broker spawn", () => {
     expect(brokerRuntimeCommand().command).toMatch(/bun|npx/);
   });
@@ -72,6 +115,79 @@ describe("BrokerClient lifecycle", () => {
     expect(brokers[0]?.registry.connectionCount).toBe(1);
     expect(brokers[0]?.registry.routeCount).toBe(1);
     expect(client.activeRoute("opaque-project-id", "ses_123")).toBeDefined();
+  });
+
+  test("does not auto-spawn a Broker for an unavailable private overlay endpoint", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    let spawnCount = 0;
+    const client = createClient(stateDirectory, port, {
+      host: "10.147.20.130",
+      startupTimeoutMs: 100,
+      spawnBroker: async () => {
+        spawnCount += 1;
+      },
+    });
+    clients.push(client);
+
+    await expect(client.start()).rejects.toThrow("timed out waiting for the local broker");
+    expect(spawnCount).toBe(0);
+  });
+
+  test("connects when a managed private Broker becomes available during startup", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    const client = createClient(stateDirectory, port, { host: "10.147.20.130" });
+    clients.push(client);
+    const started = client.start();
+    await Bun.sleep(50);
+    const broker = await startBroker({
+      stateDirectory,
+      bindHost: "10.147.20.130",
+      port,
+      idleTimeoutMs: 5_000,
+    });
+    brokers.push(broker);
+
+    await expect(started).resolves.toBeUndefined();
+    expect(client.connected).toBe(true);
+  });
+
+  test("preserves a wildcard host when auto-spawning a local Broker", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    let spawnedHost = "";
+    const client = createClient(stateDirectory, port, {
+      host: "0.0.0.0",
+      spawnBroker: async (input) => {
+        spawnedHost = input.host;
+        const broker = await startBroker({
+          stateDirectory,
+          bindHost: input.host,
+          port: input.port,
+          idleTimeoutMs: 5_000,
+        });
+        brokers.push(broker);
+      },
+    });
+    clients.push(client);
+
+    await client.start();
+    expect(spawnedHost).toBe("0.0.0.0");
+  });
+
+  test("rejects a duplicate client for the same process-project instance", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const port = await availablePort();
+    const instanceId = derivePluginInstanceId(process.cwd(), crypto.randomUUID(), 1234);
+    const first = createClient(stateDirectory, port, { instanceId });
+    const duplicate = createClient(stateDirectory, port, { instanceId });
+    clients.push(first, duplicate);
+
+    await first.start();
+    await expect(duplicate.start()).rejects.toThrow("INSTANCE_ALREADY_REGISTERED");
+
+    expect(brokers[0]?.registry.connectionCount).toBe(1);
   });
 
   test("reconnects and re-registers routes under a new generation", async () => {
@@ -384,6 +500,18 @@ describe("BrokerClient lifecycle", () => {
     expect(await Bun.file(discoveryRecordPath(stateDirectory)).exists()).toBe(false);
   });
 
+  test("connects to a broker bound to an explicit interface address", async () => {
+    const stateDirectory = await createTemporaryDirectory();
+    const broker = await startBroker({ stateDirectory, bindHost: "127.0.0.2", port: 0 });
+    brokers.push(broker);
+    const client = createClient(stateDirectory, broker.port, { host: "127.0.0.2" });
+    clients.push(client);
+
+    await client.start();
+
+    expect(client.connected).toBe(true);
+  });
+
   test("writes and safely removes the informational discovery record", async () => {
     const stateDirectory = await createTemporaryDirectory();
     const broker = await startBroker({ stateDirectory, port: 0 });
@@ -454,11 +582,14 @@ describe("BrokerClient lifecycle", () => {
 function createClient(
   stateDirectory: string,
   port: number,
-  options: Pick<BrokerClientOptions, "onCommand" | "telegram"> & {
+  options: Pick<
+    BrokerClientOptions,
+    "host" | "instanceId" | "onCommand" | "spawnBroker" | "startupTimeoutMs" | "telegram"
+  > & {
     brokerOptions?: Pick<StartBrokerOptions, "telegramApiFactory">;
   } = {},
 ): BrokerClient {
-  const { brokerOptions, ...clientOptions } = options;
+  const { brokerOptions, spawnBroker, ...clientOptions } = options;
   return new BrokerClient({
     stateDirectory,
     port,
@@ -471,15 +602,17 @@ function createClient(
     reconnectMaxDelayMs: 100,
     random: () => 0,
     ...clientOptions,
-    spawnBroker: async () => {
-      const broker = await startBroker({
-        stateDirectory,
-        port,
-        idleTimeoutMs: 5_000,
-        ...brokerOptions,
-      });
-      brokers.push(broker);
-    },
+    spawnBroker:
+      spawnBroker ??
+      (async () => {
+        const broker = await startBroker({
+          stateDirectory,
+          port,
+          idleTimeoutMs: 5_000,
+          ...brokerOptions,
+        });
+        brokers.push(broker);
+      }),
   });
 }
 

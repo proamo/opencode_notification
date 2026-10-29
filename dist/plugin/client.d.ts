@@ -1,5 +1,5 @@
 import { type BrokerCommand, type CommandResult, type NormalizedNotification, type RouteKey, type TelegramRuntimeConfig } from "../protocol";
-export declare function probeBroker(port: number, brokerSecret: string): Promise<{
+export declare function probeBroker(port: number, brokerSecret: string, host?: string): Promise<{
     status: "ok";
     machineId: string;
 } | undefined>;
@@ -8,14 +8,17 @@ export type RouteIntent = {
     sessionId: string;
     projectLabel: string;
     sessionLabel: string;
+    active?: boolean;
 };
 export type BrokerClientOptions = {
     stateDirectory?: string;
+    host?: string;
     port?: number;
     hostLabel?: string | undefined;
     projectLabel?: string | undefined;
     gatewayUrl?: string | undefined;
     gatewaySecret?: string | undefined;
+    instanceId?: string;
     packageVersion: string;
     openCodeVersion: string;
     startupTimeoutMs?: number;
@@ -26,6 +29,7 @@ export type BrokerClientOptions = {
     configFingerprint?: string;
     spawnBroker?: (input: {
         stateDirectory: string;
+        host: string;
         port: number;
     }) => void | Promise<void>;
     random?: () => number;
@@ -35,7 +39,7 @@ export type BrokerClientOptions = {
 };
 export declare class BrokerClient {
     #private;
-    readonly instanceId: `${string}-${string}-${string}-${string}-${string}`;
+    readonly instanceId: string;
     constructor(options: BrokerClientOptions);
     get connected(): boolean;
     start(): Promise<void>;
@@ -46,8 +50,10 @@ export declare class BrokerClient {
     activeRoute(projectId: string, sessionId: string): RouteKey | undefined;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
 }
+export declare function derivePluginInstanceId(directory: string, machineId: string, pid?: number): string;
 export declare function spawnDetachedBroker(input: {
     stateDirectory: string;
+    host: string;
     port: number;
 }): void;
 export declare function brokerRuntimeCommand(): {

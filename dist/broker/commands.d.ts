@@ -13,5 +13,12 @@ export type BrokerCliOptions = {
 };
 export declare function runBrokerCli(options?: BrokerCliOptions): Promise<number | undefined>;
 export declare function runStopCommand(options: StartBrokerOptions, streams: CommandStreams, fetchImplementation?: typeof fetch): Promise<number>;
+export declare function readPersistedBrokerEndpoint(stateDirectory: string, overrides?: {
+    bindHost?: string;
+    port?: number;
+}): Promise<{
+    bindHost: string;
+    port: number;
+} | undefined>;
 export {};
 //# sourceMappingURL=commands.d.ts.map

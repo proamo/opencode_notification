@@ -99,7 +99,7 @@ function renderGatewayStatus(context: SlashCommandContext, locale: SupportedLoca
   const rssMb = Math.round((memUsage.rss / 1024 / 1024) * 10) / 10;
 
   const nodes = context.registry.listNodes();
-  const totalRoutes = context.registry.routeCount;
+  const activeRoutes = context.registry.listActiveSessions().length;
 
   const lines = [
     translate(locale, "cmd.status.title"),
@@ -108,7 +108,7 @@ function renderGatewayStatus(context: SlashCommandContext, locale: SupportedLoca
     `⏱️ <b>Uptime:</b> <code>${uptimeString}</code>`,
     `💾 <b>Memory RSS:</b> <code>${rssMb} MB</code>`,
     `🌐 <b>Connected Nodes:</b> <code>${nodes.length}</code>`,
-    `🛣️ <b>Active Routes:</b> <code>${totalRoutes}</code>`,
+    `🛣️ <b>Active Routes:</b> <code>${activeRoutes}</code>`,
   ];
   return lines.join("\n");
 }
@@ -131,9 +131,10 @@ function renderConnectedNodes(context: SlashCommandContext, locale: SupportedLoc
     lines.push(`🖥️ <b>[${isLocal}]</b> 🟢 Online (${projectCountText})`);
     lines.push(`  • Machine ID: <code>${m.machineId.slice(0, 8)}...</code>`);
 
-    if (m.projects.length > 0) {
+    const activeProjects = m.projects.filter((project) => project.sessionLabel);
+    if (activeProjects.length > 0) {
       lines.push("  • <b>活躍專案與 Session：</b>");
-      for (const p of m.projects) {
+      for (const p of activeProjects) {
         lines.push(`    📁 <code>${p.projectLabel}</code> - <i>${p.sessionLabel}</i>`);
       }
     } else {
@@ -176,7 +177,7 @@ async function handleCancelCommand(
     return translate(locale, "cmd.cancel.usage");
   }
 
-  const lookup = context.registry.lookupSession(sessionId);
+  const lookup = context.registry.lookupSession(sessionId, undefined, true);
   if (lookup.status === "ambiguous") {
     return translate(locale, "cmd.cancel.ambiguous");
   }

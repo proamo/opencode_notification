@@ -1,8 +1,9 @@
-import { rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { probeBroker } from "./broker";
-import { runStopCommand } from "./broker/commands";
+import { readPersistedBrokerEndpoint, runStopCommand } from "./broker/commands";
 import type { SupportedLocale } from "./i18n";
 import { discoverOpenCodeConfigFiles, removeOpenCodeConfig } from "./opencode";
 import { uninstallSystemdService } from "./service";
@@ -23,6 +24,12 @@ export async function runInteractiveUninstall(
     const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
     const cwd = options.cwd ?? process.cwd();
     const fetchImpl = options.fetch ?? fetch;
+    const dockerSpawnSync =
+      options.dockerSpawnSync ??
+      ((command: string[], spawnOptions?: { cwd?: string; timeout?: number }) =>
+        Bun.spawnSync(command, spawnOptions));
+    const deployment = await readDeploymentRecord(stateDirectory);
+    let deploymentMode = deployment?.mode;
 
     stdout.write("\n┌  OpenCode Telegram Notifier — Uninstaller / 移除精靈\n│\n");
 
@@ -49,6 +56,25 @@ export async function runInteractiveUninstall(
       return 0;
     }
 
+    if (!deploymentMode) {
+      stdout.write(
+        isZh
+          ? "│\n◇  偵測到舊版安裝。原部署模式為何？\n│  1) Native Gateway [預設]\n│  2) Docker Gateway\n│  3) Node Agent\n"
+          : "│\n◇  Legacy installation detected. Which deployment mode was used?\n│  1) Native Gateway [Default]\n│  2) Docker Gateway\n│  3) Node Agent\n",
+      );
+      const legacyMode = await reader.ask(
+        isZh ? "│  請選擇 / Select [1]: " : "│  Select [1]: ",
+        stdout,
+        "1",
+      );
+      deploymentMode =
+        legacyMode === "2" || legacyMode.toLowerCase().includes("docker")
+          ? "docker"
+          : legacyMode === "3" || legacyMode.toLowerCase().includes("node")
+            ? "node"
+            : "native";
+    }
+
     // Step 3: Stop active broker (Native or Docker)
     stdout.write("│\n");
     stdout.write(
@@ -56,54 +82,141 @@ export async function runInteractiveUninstall(
         ? "◇  [1/4] 正在檢查並停止執行中的 Broker (本機程序或 Docker 容器)...\n"
         : "◇  [1/4] Checking and stopping running Broker (native process or Docker container)...\n",
     );
-    const composeContext = resolveDockerComposeContext(cwd);
-    if (composeContext) {
+    const composeContext =
+      deploymentMode === "docker" && deployment?.composeFile && deployment.projectDir
+        ? existsSync(deployment.composeFile) && existsSync(deployment.projectDir)
+          ? { composeFile: deployment.composeFile, projectDir: deployment.projectDir }
+          : undefined
+        : deploymentMode === "docker" && deployment
+          ? undefined
+          : resolveDockerComposeContext(cwd);
+    if (deploymentMode === "docker" && !composeContext) {
+      stderr.write(
+        isZh
+          ? "✖ 找不到 Docker Compose 設定，無法確認 Broker 已停止。\n"
+          : "✖ Docker Compose configuration was not found; cannot confirm Broker shutdown.\n",
+      );
+      return 1;
+    }
+    if (composeContext && deploymentMode === "docker") {
       try {
         const dockerCmd = process.platform === "win32" ? "docker.exe" : "docker";
-        const dockerDown = Bun.spawnSync([dockerCmd, "compose", "down"], {
+        const composeArgs = [
+          dockerCmd,
+          "compose",
+          "-f",
+          composeContext.composeFile,
+          "--project-directory",
+          composeContext.projectDir,
+        ];
+        const dockerPs = dockerSpawnSync([...composeArgs, "ps", "-a", "-q"], {
           cwd: composeContext.projectDir,
-          timeout: 1000,
+          timeout: 10_000,
         });
-        if (dockerDown.exitCode === 0) {
+        if (dockerPs.exitCode !== 0) {
+          const detail = dockerPs.stderr ? new TextDecoder().decode(dockerPs.stderr).trim() : "";
+          stderr.write(
+            `${isZh ? "✖ 無法確認 Docker Broker 狀態" : "✖ Could not inspect Docker Broker"}${detail ? `: ${detail}` : ""}\n`,
+          );
+          return 1;
+        }
+        if (dockerPs.exitCode === 0) {
+          const dockerDown = dockerSpawnSync([...composeArgs, "down"], {
+            cwd: composeContext.projectDir,
+            timeout: 30_000,
+          });
+          if (dockerDown.exitCode !== 0) {
+            const detail = dockerDown.stderr
+              ? new TextDecoder().decode(dockerDown.stderr).trim()
+              : "";
+            stderr.write(
+              `${isZh ? "✖ Docker Broker 停止失敗" : "✖ Failed to stop Docker Broker"}${detail ? `: ${detail}` : ""}\n`,
+            );
+            return 1;
+          }
+          const dockerVerify = dockerSpawnSync([...composeArgs, "ps", "-a", "-q"], {
+            cwd: composeContext.projectDir,
+            timeout: 10_000,
+          });
+          const remainingIds = dockerVerify.stdout
+            ? new TextDecoder().decode(dockerVerify.stdout).trim()
+            : "";
+          if (dockerVerify.exitCode !== 0 || remainingIds) {
+            const detail = dockerVerify.stderr
+              ? new TextDecoder().decode(dockerVerify.stderr).trim()
+              : "";
+            stderr.write(
+              `${isZh ? "✖ 無法確認 Docker Broker 已停止" : "✖ Could not confirm Docker Broker shutdown"}${detail ? `: ${detail}` : ""}\n`,
+            );
+            return 1;
+          }
           stdout.write(
             isZh
               ? "│  ✔ Docker Broker 容器已停止並清理。\n"
               : "│  ✔ Docker Broker container stopped and cleaned up.\n",
           );
         }
-      } catch {
-        // Docker not present or not running
+      } catch (error) {
+        stderr.write(
+          `${isZh ? "✖ Docker Broker 檢查失敗" : "✖ Failed to inspect Docker Broker"}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        return 1;
       }
     }
-    try {
-      const systemdResult = await uninstallSystemdService();
-      if (systemdResult.removed) {
-        stdout.write(
-          isZh
-            ? "│  ✔ Systemd 服務 (opencode-gateway.service) 已停用並移除。\n"
-            : "│  ✔ Systemd service (opencode-gateway.service) stopped and removed.\n",
+    if (deploymentMode === "native") {
+      try {
+        const uninstallService = options.uninstallSystemd ?? uninstallSystemdService;
+        const systemdResult = await uninstallService();
+        if (!systemdResult.success) {
+          stderr.write(
+            `${isZh ? "✖ Systemd 服務停止失敗" : "✖ Failed to stop systemd service"}${systemdResult.error ? `: ${systemdResult.error}` : ""}\n`,
+          );
+          return 1;
+        }
+        if (systemdResult.removed) {
+          stdout.write(
+            isZh
+              ? "│  ✔ Systemd 服務 (opencode-gateway.service) 已停用並移除。\n"
+              : "│  ✔ Systemd service (opencode-gateway.service) stopped and removed.\n",
+          );
+        }
+      } catch (error) {
+        stderr.write(
+          `${isZh ? "✖ Systemd 服務檢查失敗" : "✖ Failed to inspect systemd service"}: ${error instanceof Error ? error.message : String(error)}\n`,
         );
+        return 1;
       }
-    } catch {
-      // Systemd not present or non-linux
-    }
-    try {
-      const identity = await loadOrCreateStateIdentity(stateDirectory);
-      const isRunning = await probeBroker(42617, identity.brokerSecret);
-      if (isRunning) {
-        await runStopCommand({ stateDirectory, port: 42617 }, { stdout, stderr }, fetchImpl);
-        stdout.write(isZh ? "│  ✔ 本機 Broker 已成功停止。\n" : "│  ✔ Local broker stopped.\n");
-      } else {
-        stdout.write(
-          isZh ? "│  ✔ 本機 Broker 未在執行中。\n" : "│  ✔ Local broker is not running.\n",
+      try {
+        const identity = await loadOrCreateStateIdentity(stateDirectory);
+        const endpoint = (await readPersistedBrokerEndpoint(stateDirectory)) ?? {
+          bindHost: "127.0.0.1",
+          port: 42617,
+        };
+        const isRunning = await probeBroker(
+          endpoint.port,
+          identity.brokerSecret,
+          endpoint.bindHost,
         );
+        if (isRunning) {
+          const stopStatus = await runStopCommand(
+            { stateDirectory, port: endpoint.port, bindHost: endpoint.bindHost },
+            { stdout, stderr },
+            fetchImpl,
+          );
+          if (stopStatus !== 0)
+            throw new Error("broker stop command did not complete successfully");
+          stdout.write(isZh ? "│  ✔ 本機 Broker 已成功停止。\n" : "│  ✔ Local broker stopped.\n");
+        } else {
+          stdout.write(
+            isZh ? "│  ✔ 本機 Broker 未在執行中。\n" : "│  ✔ Local broker is not running.\n",
+          );
+        }
+      } catch (error) {
+        stderr.write(
+          `${isZh ? "✖ 無法確認本機 Broker 已停止" : "✖ Could not confirm local broker shutdown"}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        return 1;
       }
-    } catch {
-      stdout.write(
-        isZh
-          ? "│  ✔ 未找到執行中的本機 Broker 或已停止。\n"
-          : "│  ✔ No active local broker found or already stopped.\n",
-      );
     }
 
     // Step 4: Clean OpenCode config files
@@ -161,80 +274,85 @@ export async function runInteractiveUninstall(
       );
     }
 
-    // Step 5: Clean SQLite operational state
-    stdout.write("│\n");
-    const cleanState = await reader.ask(
-      isZh
-        ? "◇  [3/4] 是否清除運作暫存資料庫與訊息路由狀態 (SQLite)？ [Y/n]: "
-        : "◇  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ",
-      stdout,
-      "Y",
-    );
-    if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
-      try {
-        const dbPath = join(stateDirectory, "state.sqlite");
-        await rm(dbPath, { force: true });
-        await rm(`${dbPath}-wal`, { force: true });
-        await rm(`${dbPath}-shm`, { force: true });
-        await rm(discoveryRecordPath(stateDirectory), { force: true });
-        await rm(join(stateDirectory, "dashboard-settings.json"), { force: true });
-        try {
-          await rm(join(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
-        } catch {}
-        stdout.write(
-          isZh
-            ? "│  ✔ 運作暫存資料庫與控制台設定檔 (dashboard-settings.json) 已清除。\n"
-            : "│  ✔ Operational state database & dashboard settings cleared.\n",
-        );
-      } catch {
-        stdout.write(
-          isZh
-            ? "│  - 暫存資料庫不存在或已清理。\n"
-            : "│  - State database not found or already clean.\n",
-        );
-      }
-    }
-
-    // Step 6: Delete Telegram Bot Token file
-    stdout.write("│\n");
-    const cleanToken = await reader.ask(
-      isZh
-        ? "◇  [4/4] 是否刪除儲存的 Telegram Bot Token 檔案？ [y/N]: "
-        : "◇  [4/4] Delete saved Telegram Bot Token file? [y/N]: ",
-      stdout,
-      "N",
-    );
-    if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
-      try {
-        const tokenPath = join(stateDirectory, "telegram-bot-token");
-        await rm(tokenPath, { force: true });
-        stdout.write(
-          isZh ? "│  ✔ Token 檔案已安全刪除。\n" : "│  ✔ Token file securely removed.\n",
-        );
-      } catch {
-        stdout.write(isZh ? "│  - Token 檔案不存在。\n" : "│  - Token file does not exist.\n");
-      }
-
-      // Ask if want to remove entire state directory
-      const cleanAll = await reader.ask(
+    if (deploymentMode !== "node") {
+      // Step 5: Clean SQLite operational state
+      stdout.write("│\n");
+      const cleanState = await reader.ask(
         isZh
-          ? `│  是否連同金鑰目錄 ${stateDirectory} 一併完全刪除？ [y/N]: `
-          : `│  Delete entire state directory (${stateDirectory})? [y/N]: `,
+          ? "◇  [3/4] 是否清除運作暫存資料庫與訊息路由狀態 (SQLite)？ [Y/n]: "
+          : "◇  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ",
+        stdout,
+        "Y",
+      );
+      if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
+        try {
+          const dbPath = join(stateDirectory, "state.sqlite");
+          await rm(dbPath, { force: true });
+          await rm(`${dbPath}-wal`, { force: true });
+          await rm(`${dbPath}-shm`, { force: true });
+          await rm(discoveryRecordPath(stateDirectory), { force: true });
+          await rm(join(stateDirectory, "dashboard-settings.json"), { force: true });
+          try {
+            await rm(join(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+          } catch {}
+          stdout.write(
+            isZh
+              ? "│  ✔ 運作暫存資料庫與控制台設定檔 (dashboard-settings.json) 已清除。\n"
+              : "│  ✔ Operational state database & dashboard settings cleared.\n",
+          );
+        } catch {
+          stdout.write(
+            isZh
+              ? "│  - 暫存資料庫不存在或已清理。\n"
+              : "│  - State database not found or already clean.\n",
+          );
+        }
+      }
+
+      // Step 6: Delete Telegram Bot Token file
+      stdout.write("│\n");
+      const cleanToken = await reader.ask(
+        isZh
+          ? "◇  [4/4] 是否刪除儲存的 Telegram Bot Token 檔案？ [y/N]: "
+          : "◇  [4/4] Delete saved Telegram Bot Token file? [y/N]: ",
         stdout,
         "N",
       );
-      if (cleanAll.toLowerCase() === "y" || cleanAll.toLowerCase() === "yes") {
+      if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
         try {
-          await rm(stateDirectory, { recursive: true, force: true });
+          const tokenPath = join(stateDirectory, "telegram-bot-token");
+          await rm(tokenPath, { force: true });
           stdout.write(
-            isZh
-              ? `│  ✔ 金鑰與狀態目錄已完全移除。\n`
-              : `│  ✔ State directory completely removed.\n`,
+            isZh ? "│  ✔ Token 檔案已安全刪除。\n" : "│  ✔ Token file securely removed.\n",
           );
         } catch {
-          // ignore
+          stdout.write(isZh ? "│  - Token 檔案不存在。\n" : "│  - Token file does not exist.\n");
+        }
+
+        const cleanAll = await reader.ask(
+          isZh
+            ? `│  是否連同金鑰目錄 ${stateDirectory} 一併完全刪除？ [y/N]: `
+            : `│  Delete entire state directory (${stateDirectory})? [y/N]: `,
+          stdout,
+          "N",
+        );
+        if (cleanAll.toLowerCase() === "y" || cleanAll.toLowerCase() === "yes") {
+          try {
+            await rm(stateDirectory, { recursive: true, force: true });
+            stdout.write(
+              isZh
+                ? `│  ✔ 金鑰與狀態目錄已完全移除。\n`
+                : `│  ✔ State directory completely removed.\n`,
+            );
+          } catch {}
         }
       }
+    } else {
+      stdout.write(
+        isZh
+          ? "│  ✔ Node移除不會刪除Gateway資料庫、Token或共享狀態目錄。\n"
+          : "│  ✔ Node uninstall preserves Gateway databases, tokens, and shared state directories.\n",
+      );
     }
 
     stdout.write("│\n");
@@ -265,7 +383,7 @@ export async function runUninstallCli(
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
 
-  if (argv.includes("--help")) {
+  if (argv.includes("--help") || argv.includes("-h")) {
     stdout.write(
       `Usage: opencode-telegram-broker uninstall [options]
 
@@ -280,11 +398,61 @@ Options:
     return 0;
   }
 
+  let stateDirectory: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (flag === "-i" || flag === "--interactive") continue;
+    if (flag === "--state-dir") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        stderr.write("--state-dir requires a path\n");
+        return 2;
+      }
+      stateDirectory = value;
+      index += 1;
+      continue;
+    }
+    stderr.write(`Unknown uninstall option: ${flag}\n`);
+    return 2;
+  }
+
   return await runInteractiveUninstall({
     stdin: options.stdin,
     stdout,
     stderr,
     fetch: options.fetch,
     cwd: options.cwd,
+    stateDirectory,
   });
+}
+
+type DeploymentRecord = {
+  mode: "native" | "docker" | "node";
+  composeFile?: string;
+  projectDir?: string;
+};
+
+async function readDeploymentRecord(stateDirectory: string): Promise<DeploymentRecord | undefined> {
+  const path = join(stateDirectory, "deployment.json");
+  if (!existsSync(path)) return undefined;
+  const parsed = JSON.parse(await readFile(path, "utf8")) as {
+    mode?: unknown;
+    composeFile?: unknown;
+    projectDir?: unknown;
+  };
+  if (parsed.mode !== "native" && parsed.mode !== "docker" && parsed.mode !== "node") {
+    throw new Error("persisted deployment mode is invalid");
+  }
+  if (parsed.mode !== "docker") return { mode: parsed.mode };
+  if (parsed.composeFile === undefined && parsed.projectDir === undefined)
+    return { mode: "docker" };
+  if (
+    typeof parsed.composeFile !== "string" ||
+    typeof parsed.projectDir !== "string" ||
+    !isAbsolute(parsed.composeFile) ||
+    !isAbsolute(parsed.projectDir)
+  ) {
+    throw new Error("persisted Docker Compose ownership is invalid");
+  }
+  return { mode: "docker", composeFile: parsed.composeFile, projectDir: parsed.projectDir };
 }

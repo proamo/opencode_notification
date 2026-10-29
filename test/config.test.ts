@@ -82,6 +82,25 @@ describe("NotifierConfigSchema", () => {
     expect(
       NotifierConfigSchema.safeParse({
         ...validConfig,
+        broker: { host: "8.8.8.8", port: 42617 },
+      }).success,
+    ).toBe(false);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...validConfig,
+        gateway: { url: "ws://127.0.0.1:42617", secret: "node-secret" },
+      }).success,
+    ).toBe(false);
+    expect(
+      NotifierConfigSchema.safeParse({
+        role: "node",
+        gateway: { url: "ws://127.0.0.1:42617", secret: "node-secret" },
+        telegram: validConfig.telegram,
+      }).success,
+    ).toBe(false);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...validConfig,
         notifications: { completionDebounceMs: 60_001 },
       }).success,
     ).toBe(false);
@@ -91,6 +110,41 @@ describe("NotifierConfigSchema", () => {
         notifications: { pluginBufferSize: 0 },
       }).success,
     ).toBe(false);
+  });
+
+  test("allows plaintext overlay IPs but requires TLS for public gateways", () => {
+    const node = { role: "node", gateway: { secret: "node-secret" } };
+
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...node,
+        gateway: { ...node.gateway, url: "ws://10.147.20.130:42617" },
+      }).success,
+    ).toBe(true);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...node,
+        gateway: { ...node.gateway, url: "ws://100.96.1.2:42617" },
+      }).success,
+    ).toBe(true);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...node,
+        gateway: { ...node.gateway, url: "ws://203.0.113.10:42617" },
+      }).success,
+    ).toBe(false);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...node,
+        gateway: { ...node.gateway, url: "ws://fc.example.test:42617" },
+      }).success,
+    ).toBe(false);
+    expect(
+      NotifierConfigSchema.safeParse({
+        ...node,
+        gateway: { ...node.gateway, url: "wss://gateway.example.test" },
+      }).success,
+    ).toBe(true);
   });
 
   test.skipIf(process.platform === "win32")("loads only private regular token files", async () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -29,9 +30,35 @@ describe("state identity", () => {
     if (process.platform !== "win32") {
       expect((await stat(directory)).mode & 0o777).toBe(0o700);
       expect((await stat(join(directory, "broker-secret"))).mode & 0o777).toBe(0o600);
+      expect((await stat(join(directory, "gateway-secret"))).mode & 0o777).toBe(0o600);
     }
     expect(Buffer.from(first.brokerSecret, "base64url")).toHaveLength(32);
+    expect(Buffer.from(first.gatewaySecret, "base64url")).toHaveLength(32);
+    expect(first.gatewaySecret).not.toBe(first.brokerSecret);
     expect(Buffer.from(first.routeSalt, "base64url")).toHaveLength(32);
+  });
+
+  test("migrates an existing broker secret without disconnecting RC.8 nodes", async () => {
+    const directory = await createTemporaryDirectory();
+    const legacySecret = randomBytes(32).toString("base64url");
+    await writeFile(join(directory, "broker-secret"), `${legacySecret}\n`, { mode: 0o600 });
+
+    const identity = await loadOrCreateStateIdentity(directory);
+
+    expect(identity.brokerSecret).toBe(legacySecret);
+    expect(identity.gatewaySecret).toBe(legacySecret);
+  });
+
+  test("keeps fresh Node and administrator credentials separate during concurrent startup", async () => {
+    const directory = await createTemporaryDirectory();
+
+    const identities = await Promise.all(
+      Array.from({ length: 20 }, () => loadOrCreateStateIdentity(directory)),
+    );
+
+    expect(new Set(identities.map((identity) => identity.brokerSecret)).size).toBe(1);
+    expect(new Set(identities.map((identity) => identity.gatewaySecret)).size).toBe(1);
+    expect(identities[0]?.gatewaySecret).not.toBe(identities[0]?.brokerSecret);
   });
 
   test.skipIf(process.platform === "win32")("rejects state exposed to other users", async () => {

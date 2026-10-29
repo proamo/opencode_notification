@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here. Run `bun run release:changelog` before tagging a release.
 
+## 1.0.0-rc.9 - 2026-09-01
+
+- Keep the persisted Telegram poller alive without OpenCode WebSocket clients and report terminal polling failures as degraded.
+- Restore Telegram daemon configuration from private setup state, including Docker deployments that mount only `/state`.
+- Default native Gateways to loopback while supporting explicit ZeroTier, NetBird, Tailscale, and other interface IPs.
+- Require WSS for public Gateway addresses and move WebSocket credentials from URL queries to authorization headers.
+- Separate Node (`gateway-secret`) and administrator (`broker-secret`) credentials with a migration-safe rotation path.
+- Restrict Telegram runtime configuration to locally authenticated plugins, including deployments behind a reverse proxy.
+- Preserve exact OpenCode plugin entries and nested credentials during schema-safe config migration.
+- Install a stable systemd bundle, restart it on upgrades, and fail closed on service or Docker uninstall errors.
+- Store Dashboard and setup credentials atomically in private files and reject symlinked settings.
+- Deduplicate repeated OpenCode plugin factory initialization with one stable instance identity per process and project, so Commander connections match actual OpenCode windows.
+- Separate routable sessions from active execution state so idle sessions remain available for exact continuation without inflating active-session counts.
+- Route lifecycle commands, doctor, and fail-closed uninstall through the configured or persisted Gateway host and port instead of assuming loopback defaults.
+- Reject public plaintext administrator control, isolate stable instance IDs across machines and symlink aliases, and make doctor/uninstall deployment-role aware.
+- Persist exact Docker Compose ownership for verified uninstall and prevent in-flight completions from recreating deleted routes.
+- Preserve Gateway-owned state during Node setup/uninstall, honor custom Docker state roots, and cancel route registrations superseded by deletion.
+- Redact manual Node credentials, harden config backups and role exclusivity, require explicit legacy uninstall ownership, and restrict cancellation to active sessions.
+- Disable legacy URL credentials after Gateway secret rotation, reject markerless Gateway state during Node setup, and make direct Docker startup use a writable named volume.
+- Fail closed on falsy legacy notifier entries instead of silently loading persisted fallback credentials.
+- Drop stale busy events after session deletion and reject missing or malformed explicit plugin options before fallback resolution.
+- Prevent plugins targeting managed private Broker endpoints from spawning competing Telegram pollers during service restarts.
+- Retry managed Broker startup without dropping plugin hooks, preserve wildcard bind hosts, and verify systemd remains active after installation.
+- Enforce persisted deployment ownership at Broker startup so stale clients cannot bind a second endpoint or poll Telegram.
+- Persist native bind ownership directly in deployment state and require migration when legacy ownership has no endpoint source.
+
 ## 1.0.0-rc.8 - 2026-09-01
 
 - Auto-start Telegram Poller daemon on Gateway startup if credentials exist in stateDirectory, allowing 24/7 standalone Telegram bot slash command handling (`/status`, `/help`, etc.) even when no OpenCode client is attached.

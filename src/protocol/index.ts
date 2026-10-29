@@ -79,6 +79,7 @@ export const RouteRegisterEnvelopeSchema = z.object({
     hostLabel: z.string().min(1).max(128).optional(),
     projectLabel: z.string().min(1).max(128),
     sessionLabel: z.string().min(1).max(256),
+    active: z.boolean().optional(),
   }),
 });
 
