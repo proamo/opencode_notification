@@ -271,3 +271,10 @@ The broker protocol SHALL support `session.spawn` and `session.cancel` command t
 #### Scenario: session.cancel command received
 - **WHEN** a connected OpenCode plugin receives a valid `session.cancel` command for an active session
 - **THEN** the plugin SHALL invoke OpenCode session abort/stop APIs and return accepted status
+
+### Requirement: In-place route activity updates
+A client SHALL be able to change an owned route's active state by re-registering the same route generation. The Gateway SHALL update the activity flag without replacing the generation, so message bindings created for earlier notifications of that session remain routable.
+
+#### Scenario: Session goes idle after a question notification
+- **WHEN** a client marks a session route inactive after a question notification was sent for it
+- **THEN** the question's message binding SHALL still resolve to the same route generation
