@@ -5,7 +5,7 @@ import { computeNotifierConfigFingerprint, type NotifierConfig } from "../config
 import { resolveLocale, type SupportedLocale } from "../i18n";
 import { loadResolvedNotifierConfig } from "../opencode";
 import { BrokerClient, derivePluginInstanceId, type RouteIntent } from "../plugin/client";
-import type { NormalizedNotification, RouteKey } from "../protocol";
+import type { NormalizedNotification, NormalizedQuestion, RouteKey } from "../protocol";
 import { deriveProjectId, loadOrCreateStateIdentity } from "../state/identity";
 import { PACKAGE_VERSION } from "../version";
 
@@ -28,16 +28,39 @@ export type OmoSessionManager = {
   getLeafId(): string | null | undefined;
 };
 
-export type OmoContext = { cwd: string; sessionManager: OmoSessionManager };
+export type OmoContext = {
+  cwd: string;
+  sessionManager: OmoSessionManager;
+  isIdle?: () => boolean;
+};
+
+export type UiPromptEvent = { kind?: string; title?: string };
+
+export type AskUserAskedEvent = { ctx?: OmoContext; request?: unknown };
 
 export type OmoExtensionApi = {
   sessionKind?: "interactive" | "worker";
   on(event: "agent_settled", handler: (event: unknown, ctx: OmoContext) => Promise<void>): void;
+  on(
+    event: "ui_prompt_start",
+    handler: (event: UiPromptEvent, ctx: OmoContext) => Promise<void>,
+  ): void;
+  events?: {
+    on(channel: "ask-user:asked", handler: (data: AskUserAskedEvent) => void): unknown;
+  };
 };
 
 export type SettledOutcome =
   | { kind: "session.completed"; summary?: string }
   | { kind: "session.error"; errorCategory: string };
+
+type PendingQuestion = {
+  kind: "question.pending";
+  interactionId: string;
+  questions: NormalizedQuestion[];
+};
+
+type Outcome = SettledOutcome | PendingQuestion;
 
 export type OmoGateway = {
   projectId: string;
@@ -46,6 +69,7 @@ export type OmoGateway = {
   locale: SupportedLocale;
   notifyCompletion: boolean;
   notifyError: boolean;
+  notifyQuestion: boolean;
   broker: {
     upsertRoute(intent: RouteIntent): Promise<RouteKey | undefined>;
     publishNotification(notification: NormalizedNotification): Promise<"queued" | "duplicate">;
@@ -66,22 +90,79 @@ export function resolveSettledOutcome(entries: readonly OmoEntry[]): SettledOutc
   return undefined;
 }
 
+export function normalizeAskUserRequest(request: unknown): PendingQuestion | undefined {
+  if (typeof request !== "object" || request === null) return undefined;
+  const { requestId, questions } = request as { requestId?: unknown; questions?: unknown };
+  if (typeof requestId !== "string" || !requestId || !Array.isArray(questions)) return undefined;
+  const normalized = questions.slice(0, 20).flatMap((raw): NormalizedQuestion[] => {
+    if (typeof raw !== "object" || raw === null) return [];
+    const item = raw as Record<string, unknown>;
+    const question = text(item.question) ?? text(item.header);
+    if (!question) return [];
+    const options = Array.isArray(item.options) ? item.options : [];
+    return [
+      {
+        question: question.slice(0, 4096),
+        header: (text(item.header) ?? question).slice(0, 128),
+        options: options.slice(0, 20).flatMap((option) => {
+          const label = text((option as { label?: unknown } | null)?.label);
+          if (!label) return [];
+          const description = text((option as { description?: unknown }).description) ?? "";
+          return [{ label: label.slice(0, 256), description: description.slice(0, 2048) }];
+        }),
+        multiple: item.multiSelect === true,
+        custom: true,
+      },
+    ];
+  });
+  if (normalized.length === 0) return undefined;
+  return {
+    kind: "question.pending",
+    interactionId: requestId.slice(0, 256),
+    questions: normalized,
+  };
+}
+
+export function uiPromptQuestion(event: UiPromptEvent, interactionId: string): PendingQuestion {
+  const kind = text(event.kind) ?? "input";
+  return {
+    kind: "question.pending",
+    interactionId,
+    questions: [
+      {
+        question: (text(event.title) ?? `OMO is waiting for ${kind}`).slice(0, 4096),
+        header: kind.slice(0, 128),
+        options: [],
+        multiple: false,
+        custom: true,
+      },
+    ],
+  };
+}
+
 export function createOmoExtension(
   connect: (cwd: string) => Promise<OmoGateway | undefined>,
   onDiagnostic: (message: string) => void = trace,
 ): (pi: OmoExtensionApi) => void {
   return (pi) => {
     if (pi.sessionKind === "worker") return;
-    pi.on("agent_settled", async (_event, ctx) => {
+    let uiPromptCount = 0;
+
+    const notify = async (
+      ctx: OmoContext,
+      resolve: () => { outcome: Outcome; eventId: string } | undefined,
+    ): Promise<void> => {
       try {
         const session = ctx.sessionManager;
         if (session.getHeader()?.spawnedBy) return;
-        const outcome = resolveSettledOutcome(session.getBranch());
-        if (!outcome) return;
+        const resolved = resolve();
+        if (!resolved) return;
+        const { outcome } = resolved;
         const gateway = await connect(ctx.cwd);
         if (!gateway) return;
         if (outcome.kind === "session.completed" && !gateway.notifyCompletion) return;
         if (outcome.kind === "session.error" && !gateway.notifyError) return;
+        if (outcome.kind === "question.pending" && !gateway.notifyQuestion) return;
 
         const sessionId = session.getSessionId();
         const sessionLabel = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(
@@ -93,15 +174,14 @@ export function createOmoExtension(
           sessionId,
           projectLabel: gateway.projectLabel,
           sessionLabel,
-          active: false,
+          active: outcome.kind === "question.pending",
         });
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
           return;
         }
-        const leafId = session.getLeafId() ?? String(Date.now());
         const status = await gateway.broker.publishNotification({
-          eventId: `omo:${sessionId}:${leafId}`.slice(0, 256),
+          eventId: resolved.eventId.slice(0, 256),
           route,
           locale: gateway.locale,
           ...(gateway.hostLabel ? { hostLabel: gateway.hostLabel } : {}),
@@ -116,7 +196,34 @@ export function createOmoExtension(
           `OMO notification failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    };
+
+    pi.on("agent_settled", (_event, ctx) =>
+      notify(ctx, () => {
+        const outcome = resolveSettledOutcome(ctx.sessionManager.getBranch());
+        if (!outcome) return undefined;
+        const leafId = ctx.sessionManager.getLeafId() ?? String(Date.now());
+        return { outcome, eventId: `omo:${ctx.sessionManager.getSessionId()}:${leafId}` };
+      }),
+    );
+
+    pi.events?.on("ask-user:asked", (data) => {
+      if (!data.ctx) return;
+      void notify(data.ctx, () => {
+        const outcome = normalizeAskUserRequest(data.request);
+        return outcome && { outcome, eventId: `omo:ask:${outcome.interactionId}` };
+      });
     });
+
+    pi.on("ui_prompt_start", (event, ctx) =>
+      notify(ctx, () => {
+        if (event.kind === "question" || ctx.isIdle?.() !== false) return undefined;
+        uiPromptCount += 1;
+        const sessionId = ctx.sessionManager.getSessionId();
+        const interactionId = `ui:${sessionId}:${Date.now()}:${uiPromptCount}`;
+        return { outcome: uiPromptQuestion(event, interactionId), eventId: `omo:${interactionId}` };
+      }),
+    );
   };
 }
 
@@ -166,6 +273,7 @@ async function connectGateway(cwd: string): Promise<OmoGateway | undefined> {
     locale: localeFor(config),
     notifyCompletion: config.notifications.completion,
     notifyError: config.notifications.error,
+    notifyQuestion: config.notifications.question,
     broker,
   };
 }
@@ -194,6 +302,10 @@ function summarize(content: unknown): string | undefined {
     .trim();
   if (!text) return undefined;
   return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT - 3)}...` : text;
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function categorizeError(message: string | undefined): string {

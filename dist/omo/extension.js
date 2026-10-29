@@ -16788,24 +16788,82 @@ function resolveSettledOutcome(entries) {
   }
   return;
 }
+function normalizeAskUserRequest(request) {
+  if (typeof request !== "object" || request === null)
+    return;
+  const { requestId, questions } = request;
+  if (typeof requestId !== "string" || !requestId || !Array.isArray(questions))
+    return;
+  const normalized = questions.slice(0, 20).flatMap((raw) => {
+    if (typeof raw !== "object" || raw === null)
+      return [];
+    const item = raw;
+    const question = text(item.question) ?? text(item.header);
+    if (!question)
+      return [];
+    const options = Array.isArray(item.options) ? item.options : [];
+    return [
+      {
+        question: question.slice(0, 4096),
+        header: (text(item.header) ?? question).slice(0, 128),
+        options: options.slice(0, 20).flatMap((option) => {
+          const label = text(option?.label);
+          if (!label)
+            return [];
+          const description = text(option.description) ?? "";
+          return [{ label: label.slice(0, 256), description: description.slice(0, 2048) }];
+        }),
+        multiple: item.multiSelect === true,
+        custom: true
+      }
+    ];
+  });
+  if (normalized.length === 0)
+    return;
+  return {
+    kind: "question.pending",
+    interactionId: requestId.slice(0, 256),
+    questions: normalized
+  };
+}
+function uiPromptQuestion(event, interactionId) {
+  const kind = text(event.kind) ?? "input";
+  return {
+    kind: "question.pending",
+    interactionId,
+    questions: [
+      {
+        question: (text(event.title) ?? `OMO is waiting for ${kind}`).slice(0, 4096),
+        header: kind.slice(0, 128),
+        options: [],
+        multiple: false,
+        custom: true
+      }
+    ]
+  };
+}
 function createOmoExtension(connect, onDiagnostic = trace) {
   return (pi) => {
     if (pi.sessionKind === "worker")
       return;
-    pi.on("agent_settled", async (_event, ctx) => {
+    let uiPromptCount = 0;
+    const notify = async (ctx, resolve2) => {
       try {
         const session = ctx.sessionManager;
         if (session.getHeader()?.spawnedBy)
           return;
-        const outcome = resolveSettledOutcome(session.getBranch());
-        if (!outcome)
+        const resolved = resolve2();
+        if (!resolved)
           return;
+        const { outcome } = resolved;
         const gateway = await connect(ctx.cwd);
         if (!gateway)
           return;
         if (outcome.kind === "session.completed" && !gateway.notifyCompletion)
           return;
         if (outcome.kind === "session.error" && !gateway.notifyError)
+          return;
+        if (outcome.kind === "question.pending" && !gateway.notifyQuestion)
           return;
         const sessionId = session.getSessionId();
         const sessionLabel = `OMO: ${session.getSessionName() || sessionId.slice(0, 8)}`.slice(0, 256);
@@ -16814,15 +16872,14 @@ function createOmoExtension(connect, onDiagnostic = trace) {
           sessionId,
           projectLabel: gateway.projectLabel,
           sessionLabel,
-          active: false
+          active: outcome.kind === "question.pending"
         });
         if (!route) {
           onDiagnostic(`route was not registered for OMO session ${sessionId}`);
           return;
         }
-        const leafId = session.getLeafId() ?? String(Date.now());
         const status = await gateway.broker.publishNotification({
-          eventId: `omo:${sessionId}:${leafId}`.slice(0, 256),
+          eventId: resolved.eventId.slice(0, 256),
           route,
           locale: gateway.locale,
           ...gateway.hostLabel ? { hostLabel: gateway.hostLabel } : {},
@@ -16835,7 +16892,30 @@ function createOmoExtension(connect, onDiagnostic = trace) {
       } catch (error51) {
         onDiagnostic(`OMO notification failed: ${error51 instanceof Error ? error51.message : String(error51)}`);
       }
+    };
+    pi.on("agent_settled", (_event, ctx) => notify(ctx, () => {
+      const outcome = resolveSettledOutcome(ctx.sessionManager.getBranch());
+      if (!outcome)
+        return;
+      const leafId = ctx.sessionManager.getLeafId() ?? String(Date.now());
+      return { outcome, eventId: `omo:${ctx.sessionManager.getSessionId()}:${leafId}` };
+    }));
+    pi.events?.on("ask-user:asked", (data) => {
+      if (!data.ctx)
+        return;
+      notify(data.ctx, () => {
+        const outcome = normalizeAskUserRequest(data.request);
+        return outcome && { outcome, eventId: `omo:ask:${outcome.interactionId}` };
+      });
     });
+    pi.on("ui_prompt_start", (event, ctx) => notify(ctx, () => {
+      if (event.kind === "question" || ctx.isIdle?.() !== false)
+        return;
+      uiPromptCount += 1;
+      const sessionId = ctx.sessionManager.getSessionId();
+      const interactionId = `ui:${sessionId}:${Date.now()}:${uiPromptCount}`;
+      return { outcome: uiPromptQuestion(event, interactionId), eventId: `omo:${interactionId}` };
+    }));
   };
 }
 var gateways = new Map;
@@ -16883,6 +16963,7 @@ async function connectGateway(cwd) {
     locale: localeFor(config2),
     notifyCompletion: config2.notifications.completion,
     notifyError: config2.notifications.error,
+    notifyQuestion: config2.notifications.question,
     broker
   };
 }
@@ -16905,6 +16986,9 @@ function summarize(content) {
     return;
   return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT - 3)}...` : text;
 }
+function text(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 function categorizeError(message) {
   if (!message)
     return "unknown";
@@ -16926,9 +17010,11 @@ function trace(message) {
 }
 var extension_default = createOmoExtension(connectOnce);
 export {
+  uiPromptQuestion,
   resolveSettledOutcome,
+  normalizeAskUserRequest,
   extension_default as default,
   createOmoExtension
 };
 
-//# debugId=D93F7AD4121D825664756E2164756E21
+//# debugId=642EDFE140DBFFCD64756E2164756E21

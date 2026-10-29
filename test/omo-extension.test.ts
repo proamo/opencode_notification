@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   createOmoExtension,
+  normalizeAskUserRequest,
   type OmoContext,
   type OmoEntry,
   type OmoExtensionApi,
   type OmoGateway,
   resolveSettledOutcome,
+  type UiPromptEvent,
 } from "../src/omo/extension";
 import type { NormalizedNotification, RouteKey } from "../src/protocol";
 import { RouteKeySchema } from "../src/protocol";
@@ -27,8 +29,11 @@ function harness(options: {
   sessionKind?: "interactive" | "worker";
   spawnedBy?: unknown;
   notifyCompletion?: boolean;
+  notifyQuestion?: boolean;
+  idle?: boolean;
 }) {
   const published: NormalizedNotification[] = [];
+  const settled = Promise.withResolvers<void>();
   let connects = 0;
   const gateway: OmoGateway = {
     projectId: ROUTE.projectId,
@@ -37,19 +42,27 @@ function harness(options: {
     locale: "zh-TW",
     notifyCompletion: options.notifyCompletion ?? true,
     notifyError: true,
+    notifyQuestion: options.notifyQuestion ?? true,
     broker: {
       upsertRoute: async () => ROUTE,
       publishNotification: async (notification) => {
         published.push(notification);
+        settled.resolve();
         return "queued";
       },
     },
   };
-  let handler: ((event: unknown, ctx: OmoContext) => Promise<void>) | undefined;
+  const handlers = new Map<string, (event: never, ctx: OmoContext) => Promise<void>>();
+  let askUser: ((data: { ctx?: OmoContext; request?: unknown }) => void) | undefined;
   const pi: OmoExtensionApi = {
     ...(options.sessionKind ? { sessionKind: options.sessionKind } : {}),
-    on: (_event, registered) => {
-      handler = registered;
+    on: (event: string, registered: (event: never, ctx: OmoContext) => Promise<void>) => {
+      handlers.set(event, registered);
+    },
+    events: {
+      on: (_channel, registered) => {
+        askUser = registered;
+      },
     },
   };
   const diagnostics: string[] = [];
@@ -58,7 +71,10 @@ function harness(options: {
       connects += 1;
       return gateway;
     },
-    (message) => diagnostics.push(message),
+    (message) => {
+      diagnostics.push(message);
+      settled.resolve();
+    },
   )(pi);
   const ctx: OmoContext = {
     cwd: "/tmp/demo",
@@ -69,13 +85,20 @@ function harness(options: {
       getBranch: () => options.entries,
       getLeafId: () => "leaf-1",
     },
+    isIdle: () => options.idle ?? false,
   };
   return {
-    settle: async () => handler?.({}, ctx),
+    settle: async () => handlers.get("agent_settled")?.({} as never, ctx),
+    uiPrompt: async (event: UiPromptEvent) =>
+      handlers.get("ui_prompt_start")?.(event as never, ctx),
+    askUser: async (request: unknown) => {
+      askUser?.({ ctx, request });
+      await settled.promise;
+    },
     published,
     diagnostics,
     connects: () => connects,
-    registered: () => handler !== undefined,
+    registered: () => handlers.size > 0,
   };
 }
 
@@ -105,6 +128,12 @@ describe("resolveSettledOutcome", () => {
   test("ignores user-aborted runs and sessions without an assistant reply", () => {
     expect(resolveSettledOutcome([assistant({ stopReason: "aborted" })])).toBeUndefined();
     expect(resolveSettledOutcome([])).toBeUndefined();
+  });
+
+  test("rejects malformed ask_user requests", () => {
+    expect(normalizeAskUserRequest(undefined)).toBeUndefined();
+    expect(normalizeAskUserRequest({ requestId: "r", questions: [{}] })).toBeUndefined();
+    expect(normalizeAskUserRequest({ questions: [{ question: "q" }] })).toBeUndefined();
   });
 
   test("truncates long summaries", () => {
@@ -146,6 +175,60 @@ describe("createOmoExtension", () => {
     await run.settle();
     expect(run.published).toHaveLength(0);
     expect(run.connects()).toBe(0);
+  });
+
+  test("publishes an ask_user question with its options as a pending question", async () => {
+    const run = harness({ entries: [] });
+    await run.askUser({
+      requestId: "toolu_1|item_2",
+      questions: [
+        {
+          id: "q1",
+          header: "Color",
+          question: "Pick a color",
+          options: [{ label: "red" }, { label: "blue", description: "cool" }],
+          multiSelect: false,
+        },
+      ],
+    });
+    expect(run.published).toHaveLength(1);
+    expect(run.published[0]).toMatchObject({
+      kind: "question.pending",
+      eventId: "omo:ask:toolu_1|item_2",
+      interactionId: "toolu_1|item_2",
+      questions: [
+        {
+          header: "Color",
+          question: "Pick a color",
+          options: [
+            { label: "red", description: "" },
+            { label: "blue", description: "cool" },
+          ],
+          multiple: false,
+        },
+      ],
+    });
+  });
+
+  test("notifies agent-initiated dialogs but not question dialogs or idle user commands", async () => {
+    const busy = harness({ entries: [] });
+    await busy.uiPrompt({ kind: "question", title: "Color" });
+    expect(busy.published).toHaveLength(0);
+    await busy.uiPrompt({ kind: "confirm", title: "Delete files?" });
+    expect(busy.published[0]).toMatchObject({
+      kind: "question.pending",
+      questions: [{ header: "confirm", question: "Delete files?", options: [] }],
+    });
+
+    const idle = harness({ entries: [], idle: true });
+    await idle.uiPrompt({ kind: "select", title: "Pick a model" });
+    expect(idle.published).toHaveLength(0);
+  });
+
+  test("honors the question notification filter", async () => {
+    const run = harness({ entries: [], notifyQuestion: false });
+    await run.uiPrompt({ kind: "confirm", title: "Continue?" });
+    expect(run.published).toHaveLength(0);
   });
 
   test("honors the completion notification filter", async () => {
