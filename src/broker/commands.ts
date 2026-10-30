@@ -12,6 +12,7 @@ import {
   StateDatabase,
 } from "../state";
 import { TelegramBotApi } from "../telegram";
+import { setDashboardPassword } from "./dashboard-auth";
 import {
   BrokerPortConflictError,
   type BrokerServer,
@@ -32,6 +33,7 @@ export type BrokerCliOptions = {
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
   fetch?: typeof fetch;
+  stdin?: NodeJS.ReadableStream;
   onStarted?: (broker: BrokerServer) => void | Promise<void>;
 };
 
@@ -59,6 +61,9 @@ export async function runBrokerCli(options: BrokerCliOptions = {}): Promise<numb
     }
     if (command === "rotate-gateway-secret") {
       return await runRotateGatewaySecretCommand(flags, env, streams);
+    }
+    if (command === "set-dashboard-password") {
+      return await runSetDashboardPasswordCommand(flags, env, streams, options.stdin);
     }
     if (command === "test-notification") {
       return await runTestNotificationCommand(flags, env, streams, options.fetch);
@@ -293,6 +298,36 @@ async function runRotateCredentialCommand(
   return 0;
 }
 
+async function runSetDashboardPasswordCommand(
+  flags: Map<string, string | true>,
+  env: NodeJS.ProcessEnv,
+  streams: CommandStreams,
+  stdin: NodeJS.ReadableStream = process.stdin,
+): Promise<number> {
+  const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
+  const state = await loadOrCreateStateIdentity(stateDirectory);
+  let password = env.OPENCODE_TELEGRAM_DASHBOARD_PASSWORD;
+  if (password === undefined) {
+    streams.stdout.write("New dashboard password (at least 8 characters): ");
+    password = await readLine(stdin);
+  }
+  await setDashboardPassword(state.stateDirectory, password.replace(/\r?\n$/, ""));
+  streams.stdout.write(
+    "Dashboard password updated. Existing dashboard sessions are signed out; log in with the new password.\n",
+  );
+  return 0;
+}
+
+async function readLine(stream: NodeJS.ReadableStream): Promise<string> {
+  let buffer = "";
+  for await (const chunk of stream) {
+    buffer += String(chunk);
+    const end = buffer.indexOf("\n");
+    if (end >= 0) return buffer.slice(0, end);
+  }
+  return buffer;
+}
+
 async function runRotateGatewaySecretCommand(
   flags: Map<string, string | true>,
   env: NodeJS.ProcessEnv,
@@ -491,7 +526,7 @@ function parsePositiveInteger(value: string | undefined): number | undefined {
 
 function commandHelp(): string {
   return [
-    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential|rotate-gateway-secret] [options]",
+    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential|rotate-gateway-secret|set-dashboard-password] [options]",
     "",
     "Common options: --state-dir PATH --port PORT --bind-host IP",
     "test-notification options: --chat-id ID --locale en|zh-TW",

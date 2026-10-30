@@ -500,28 +500,28 @@ export function renderDashboardHtml(): string {
     }
 
     async function promptAuthToken() {
-      const currentToken = sessionStorage.getItem('opencode_token') || '';
-      const input = prompt('🔒 請輸入 Gateway 存取金鑰 (Broker Secret) 以解鎖控制台：', currentToken);
-      if (input != null && input.trim() !== '') {
-        const secret = input.trim();
-        try {
-          const res = await fetch('/v1/api/dashboard/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: secret })
-          });
-          const data = await res.json();
-          if (data.success) {
-            sessionStorage.setItem('opencode_token', secret);
-            showToast('✔ 登入成功！', 'success');
-            fetchSummary();
-          } else {
-            showToast('❌ 金鑰驗證失敗', 'error');
-          }
-        } catch {
-          sessionStorage.setItem('opencode_token', secret);
+      if (window.__loginOpen) return;
+      window.__loginOpen = true;
+      try {
+        const input = prompt('🔒 請輸入控制台密碼：');
+        if (input == null || input === '') return;
+        const res = await fetch('/v1/api/dashboard/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: input, token: input.trim() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          sessionStorage.removeItem('opencode_token');
+          showToast('✔ 登入成功！', 'success');
           fetchSummary();
+        } else if (res.status === 429) {
+          showToast('❌ 失敗次數過多，請稍後再試', 'error');
+        } else {
+          showToast('❌ 密碼錯誤', 'error');
         }
+      } finally {
+        window.__loginOpen = false;
       }
     }
 

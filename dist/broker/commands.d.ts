@@ -9,6 +9,7 @@ export type BrokerCliOptions = {
     stdout?: Pick<NodeJS.WriteStream, "write">;
     stderr?: Pick<NodeJS.WriteStream, "write">;
     fetch?: typeof fetch;
+    stdin?: NodeJS.ReadableStream;
     onStarted?: (broker: BrokerServer) => void | Promise<void>;
 };
 export declare function runBrokerCli(options?: BrokerCliOptions): Promise<number | undefined>;

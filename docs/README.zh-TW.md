@@ -112,6 +112,16 @@ http://localhost:42617/dashboard
 http://<gateway-ip>:42617/dashboard
 ```
 
+請先在 Gateway 上設定控制台密碼，再用密碼登入：
+
+```sh
+opencode-telegram-broker set-dashboard-password
+# 或非互動方式：
+OPENCODE_TELEGRAM_DASHBOARD_PASSWORD='你的密碼' opencode-telegram-broker set-dashboard-password
+```
+
+密碼至少 8 個字元，以 argon2id 雜湊存放於狀態目錄的 `dashboard-password`。登入後會發給有簽章、有效 30 天的 HttpOnly session cookie，cookie 不含 Broker Secret；變更密碼會讓所有已登入的 session 失效，同一位址 5 分鐘內失敗 5 次會暫時封鎖。尚未設定密碼前，仍可用 Broker Secret 登入。腳本可繼續用 `Authorization: Bearer <broker-secret>` 呼叫 API。
+
 ### 看板四大功能分頁：
 1. 🖥️ **拓撲總覽 (Nodes)**：
    - 1 對 1 精準顯示所有連線主機與 VS Code 工作區視窗。

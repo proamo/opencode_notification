@@ -18113,9 +18113,9 @@ function publicBot(bot) {
 
 // src/uninstall.ts
 import { existsSync as existsSync6 } from "fs";
-import { readFile as readFile9, rm as rm8 } from "fs/promises";
+import { readFile as readFile10, rm as rm8 } from "fs/promises";
 import { homedir as homedir5, tmpdir } from "os";
-import { isAbsolute, join as join10 } from "path";
+import { isAbsolute, join as join11 } from "path";
 
 // src/broker/registry.ts
 class RouteRegistry {
@@ -18427,10 +18427,11 @@ function sameSessionRoute(left, right) {
   return left.machineId === right.machineId && left.instanceId === right.instanceId && left.projectId === right.projectId && left.sessionId === right.sessionId;
 }
 // src/broker/server.ts
-import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual } from "crypto";
-import { chmod as chmod6, lstat as lstat6, mkdir as mkdir6, open as open3, readFile as readFile7, rename as rename7, rm as rm6 } from "fs/promises";
+import { createHash as createHash5, randomUUID as randomUUID6, timingSafeEqual as timingSafeEqual2 } from "crypto";
+import { readFileSync as readFileSync2 } from "fs";
+import { chmod as chmod7, lstat as lstat6, mkdir as mkdir6, open as open3, readFile as readFile8, rename as rename8, rm as rm6 } from "fs/promises";
 import { platform as platform6 } from "os";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 
 // src/i18n/catalogs.ts
 var en = {
@@ -19710,6 +19711,74 @@ class VoiceTranscriber {
     return parsed.data.text.trim();
   }
 }
+// src/broker/dashboard-auth.ts
+import { createHmac as createHmac2, timingSafeEqual } from "crypto";
+import { chmod as chmod6, readFile as readFile7, rename as rename7, writeFile as writeFile5 } from "fs/promises";
+import { join as join8 } from "path";
+var DASHBOARD_SESSION_COOKIE = "opencode_session";
+var SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+var MIN_PASSWORD_LENGTH = 8;
+function dashboardPasswordPath(stateDirectory) {
+  return join8(stateDirectory, "dashboard-password");
+}
+async function setDashboardPassword(stateDirectory, password) {
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`dashboard password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  const hash2 = await Bun.password.hash(password, { algorithm: "argon2id" });
+  const path = dashboardPasswordPath(stateDirectory);
+  const temporary = `${path}.${process.pid}.tmp`;
+  await writeFile5(temporary, `${hash2}
+`, { mode: 384 });
+  await chmod6(temporary, 384);
+  await rename7(temporary, path);
+}
+async function verifyDashboardPassword(hash2, password) {
+  return await Bun.password.verify(password, hash2).catch(() => false);
+}
+function issueDashboardSession(brokerSecret, passwordHash, now = Date.now()) {
+  const expiresAt = now + SESSION_TTL_MS;
+  return `v1.${expiresAt}.${sign(brokerSecret, passwordHash, expiresAt)}`;
+}
+function verifyDashboardSession(value, brokerSecret, passwordHash, now = Date.now()) {
+  const [version2, expiry, signature] = value.split(".");
+  const expiresAt = Number(expiry);
+  if (version2 !== "v1" || !signature || !Number.isSafeInteger(expiresAt) || expiresAt <= now) {
+    return false;
+  }
+  const expected = Buffer.from(sign(brokerSecret, passwordHash, expiresAt));
+  const received = Buffer.from(signature);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+function dashboardSessionCookie(value, maxAgeSeconds = SESSION_TTL_MS / 1000) {
+  return `${DASHBOARD_SESSION_COOKIE}=${value}; Path=/; SameSite=Strict; HttpOnly; Max-Age=${maxAgeSeconds}`;
+}
+
+class LoginRateLimiter {
+  limit;
+  windowMs;
+  #failures = new Map;
+  constructor(limit = 5, windowMs = 5 * 60 * 1000) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+  }
+  blocked(key, now = Date.now()) {
+    return this.#recent(key, now).length >= this.limit;
+  }
+  fail(key, now = Date.now()) {
+    this.#failures.set(key, [...this.#recent(key, now), now]);
+  }
+  reset(key) {
+    this.#failures.delete(key);
+  }
+  #recent(key, now) {
+    return (this.#failures.get(key) ?? []).filter((at) => now - at < this.windowMs);
+  }
+}
+function sign(brokerSecret, passwordHash, expiresAt) {
+  return createHmac2("sha256", `${brokerSecret}\x00${passwordHash}`).update(`dashboard-session\x00${expiresAt}`).digest("base64url");
+}
+
 // src/broker/dashboard-html.ts
 function renderDashboardHtml() {
   return `<!DOCTYPE html>
@@ -20211,28 +20280,28 @@ function renderDashboardHtml() {
     }
 
     async function promptAuthToken() {
-      const currentToken = sessionStorage.getItem('opencode_token') || '';
-      const input = prompt('\uD83D\uDD12 \u8ACB\u8F38\u5165 Gateway \u5B58\u53D6\u91D1\u9470 (Broker Secret) \u4EE5\u89E3\u9396\u63A7\u5236\u53F0\uFF1A', currentToken);
-      if (input != null && input.trim() !== '') {
-        const secret = input.trim();
-        try {
-          const res = await fetch('/v1/api/dashboard/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: secret })
-          });
-          const data = await res.json();
-          if (data.success) {
-            sessionStorage.setItem('opencode_token', secret);
-            showToast('\u2714 \u767B\u5165\u6210\u529F\uFF01', 'success');
-            fetchSummary();
-          } else {
-            showToast('\u274C \u91D1\u9470\u9A57\u8B49\u5931\u6557', 'error');
-          }
-        } catch {
-          sessionStorage.setItem('opencode_token', secret);
+      if (window.__loginOpen) return;
+      window.__loginOpen = true;
+      try {
+        const input = prompt('\uD83D\uDD12 \u8ACB\u8F38\u5165\u63A7\u5236\u53F0\u5BC6\u78BC\uFF1A');
+        if (input == null || input === '') return;
+        const res = await fetch('/v1/api/dashboard/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: input, token: input.trim() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          sessionStorage.removeItem('opencode_token');
+          showToast('\u2714 \u767B\u5165\u6210\u529F\uFF01', 'success');
           fetchSummary();
+        } else if (res.status === 429) {
+          showToast('\u274C \u5931\u6557\u6B21\u6578\u904E\u591A\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66', 'error');
+        } else {
+          showToast('\u274C \u5BC6\u78BC\u932F\u8AA4', 'error');
         }
+      } finally {
+        window.__loginOpen = false;
       }
     }
 
@@ -20666,22 +20735,22 @@ function normalizePersistedSettings(s) {
   };
 }
 async function loadDaemonNotifierConfig(stateDirectory) {
-  const configPath = join8(stateDirectory, "opencode-notifier.json");
+  const configPath = join9(stateDirectory, "opencode-notifier.json");
   if (await ensurePrivateSettingsFile(configPath)) {
     try {
-      const parsed = NotifierConfigSchema.safeParse(JSON.parse(await readFile7(configPath, "utf8")));
+      const parsed = NotifierConfigSchema.safeParse(JSON.parse(await readFile8(configPath, "utf8")));
       if (parsed.success && parsed.data.role === "gateway")
         return parsed.data;
     } catch {}
   }
   try {
-    const identity = JSON.parse(await readFile7(join8(stateDirectory, "telegram-identity.json"), "utf8"));
+    const identity = JSON.parse(await readFile8(join9(stateDirectory, "telegram-identity.json"), "utf8"));
     const parsed = NotifierConfigSchema.safeParse({
       mode: "local",
       role: "gateway",
       locale: identity.locale ?? "auto",
       telegram: {
-        tokenFile: identity.tokenFile ?? join8(stateDirectory, "telegram-bot-token"),
+        tokenFile: identity.tokenFile ?? join9(stateDirectory, "telegram-bot-token"),
         userId: String(identity.userId ?? ""),
         chatId: String(identity.chatId ?? "")
       }
@@ -20759,18 +20828,18 @@ function isMaskedOrEmpty(val) {
   return !trimmed || trimmed.includes("\u2022\u2022") || trimmed.includes("\u25CF\u25CF") || trimmed.includes("****");
 }
 async function loadDashboardSettings(stateDirectory) {
-  const filePath = join8(stateDirectory, "dashboard-settings.json");
+  const filePath = join9(stateDirectory, "dashboard-settings.json");
   if (!await ensurePrivateSettingsFile(filePath))
     return normalizePersistedSettings({});
   try {
-    const raw = await readFile7(filePath, "utf-8");
+    const raw = await readFile8(filePath, "utf-8");
     return normalizePersistedSettings(JSON.parse(raw));
   } catch {
     return normalizePersistedSettings({});
   }
 }
 async function saveDashboardSettings(stateDirectory, settings) {
-  const filePath = join8(stateDirectory, "dashboard-settings.json");
+  const filePath = join9(stateDirectory, "dashboard-settings.json");
   await mkdir6(stateDirectory, { recursive: true, mode: 448 });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID6()}.tmp`;
   let committed = false;
@@ -20783,7 +20852,7 @@ async function saveDashboardSettings(stateDirectory, settings) {
     } finally {
       await handle.close();
     }
-    await rename7(temporaryPath, filePath);
+    await rename8(temporaryPath, filePath);
     committed = true;
     await ensurePrivateSettingsFile(filePath);
   } finally {
@@ -20808,7 +20877,7 @@ async function ensurePrivateSettingsFile(path) {
     throw new Error(`${path} must be owned by the current user`);
   }
   if ((stats.mode & 511) !== 384)
-    await chmod6(path, 384);
+    await chmod7(path, 384);
   return true;
 }
 async function readJsonBody(request) {
@@ -20942,6 +21011,14 @@ class BrokerServer {
 async function startBroker(options = {}) {
   const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
   const state = await loadOrCreateStateIdentity(stateDirectory);
+  const loginLimiter = new LoginRateLimiter;
+  const currentPasswordHash = () => {
+    try {
+      return readFileSync2(dashboardPasswordPath(stateDirectory), "utf8").trim() || undefined;
+    } catch {
+      return;
+    }
+  };
   let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const database = await StateDatabase.open({ stateDirectory, machineId: state.machineId });
   const registry2 = new RouteRegistry;
@@ -20998,11 +21075,12 @@ async function startBroker(options = {}) {
         fetch(request, bunServer) {
           const url2 = new URL(request.url);
           if (url2.pathname === "/" || url2.pathname === "/dashboard") {
-            const isAuthed = verifyDashboardAuth(request, state.brokerSecret, isLoopbackRequest(request, bunServer));
+            const passwordHash = currentPasswordHash();
+            const isAuthed = verifyDashboardAuth(request, state.brokerSecret, passwordHash, isLoopbackRequest(request, bunServer));
             const tokenParam = url2.searchParams.get("token");
             const headers = { "Content-Type": "text/html; charset=utf-8" };
             if (tokenParam && isAuthed) {
-              headers["Set-Cookie"] = `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`;
+              headers["Set-Cookie"] = dashboardSessionCookie(issueDashboardSession(state.brokerSecret, passwordHash ?? ""));
             }
             return new Response(renderDashboardHtml(), { headers });
           }
@@ -21012,13 +21090,24 @@ async function startBroker(options = {}) {
             }
             return (async () => {
               try {
-                const body = await readJsonBody(request);
-                const token = body.token?.trim();
-                if (!token || !isAuthorized(null, state.brokerSecret, token)) {
-                  return Response.json({ success: false, error: "Invalid dashboard token" }, { status: 401 });
+                const client = bunServer.requestIP(request)?.address ?? "unknown";
+                if (loginLimiter.blocked(client)) {
+                  return Response.json({ success: false, error: "Too many failed attempts; try again later" }, { status: 429 });
                 }
+                const body = await readJsonBody(request);
+                const passwordHash = currentPasswordHash();
+                const token = body.token?.trim();
+                const accepted = passwordHash ? Boolean(body.password) && await verifyDashboardPassword(passwordHash, body.password ?? "") : Boolean(token) && isAuthorized(null, state.brokerSecret, token);
+                if (!accepted) {
+                  loginLimiter.fail(client);
+                  return Response.json({
+                    success: false,
+                    error: passwordHash ? "Invalid dashboard password" : "Invalid dashboard token"
+                  }, { status: 401 });
+                }
+                loginLimiter.reset(client);
                 const headers = {
-                  "Set-Cookie": `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`
+                  "Set-Cookie": dashboardSessionCookie(issueDashboardSession(state.brokerSecret, passwordHash ?? ""))
                 };
                 return Response.json({ success: true }, { headers });
               } catch (err) {
@@ -21030,13 +21119,13 @@ async function startBroker(options = {}) {
             if (request.method !== "POST") {
               return new Response("Method not allowed", { status: 405 });
             }
-            const headers = {
-              "Set-Cookie": "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0"
-            };
+            const headers = new Headers;
+            headers.append("Set-Cookie", dashboardSessionCookie("", 0));
+            headers.append("Set-Cookie", "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0");
             return Response.json({ success: true }, { headers });
           }
           if (url2.pathname.startsWith("/v1/api/dashboard/")) {
-            if (!verifyDashboardAuth(request, state.brokerSecret)) {
+            if (!verifyDashboardAuth(request, state.brokerSecret, currentPasswordHash())) {
               return Response.json({
                 error: "Unauthorized",
                 reason: "Invalid or missing dashboard authentication token"
@@ -22079,36 +22168,36 @@ function isAuthorized(authorization, brokerSecret, urlToken) {
   if (urlToken) {
     const supplied2 = createHash5("sha256").update(urlToken).digest();
     const expected2 = createHash5("sha256").update(brokerSecret).digest();
-    if (timingSafeEqual(supplied2, expected2))
+    if (timingSafeEqual2(supplied2, expected2))
       return true;
   }
   if (!authorization?.startsWith("Bearer "))
     return false;
   const supplied = createHash5("sha256").update(authorization.slice(7)).digest();
   const expected = createHash5("sha256").update(brokerSecret).digest();
-  return timingSafeEqual(supplied, expected);
+  return timingSafeEqual2(supplied, expected);
 }
-function verifyDashboardAuth(request, brokerSecret, allowUrlToken = false) {
+function verifyDashboardAuth(request, brokerSecret, passwordHash, allowUrlToken = false) {
   const authHeader = request.headers.get("authorization");
-  const cookieHeader = request.headers.get("cookie");
-  const url2 = new URL(request.url);
-  const tokenParam = url2.searchParams.get("token");
-  if (authHeader && isAuthorized(authHeader, brokerSecret)) {
+  if (authHeader && isAuthorized(authHeader, brokerSecret))
     return true;
-  }
-  if (allowUrlToken && tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
+  const tokenParam = new URL(request.url).searchParams.get("token");
+  if (allowUrlToken && tokenParam && isAuthorized(null, brokerSecret, tokenParam))
     return true;
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const session = cookieValue(cookieHeader, DASHBOARD_SESSION_COOKIE);
+  if (session && verifyDashboardSession(session, brokerSecret, passwordHash ?? ""))
+    return true;
+  const legacy = passwordHash ? undefined : cookieValue(cookieHeader, "opencode_token");
+  return Boolean(legacy && isAuthorized(null, brokerSecret, legacy));
+}
+function cookieValue(cookieHeader, name) {
+  for (const part of cookieHeader.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name)
+      return decodeURIComponent(rest.join("=")).trim() || undefined;
   }
-  if (cookieHeader) {
-    const match = cookieHeader.match(/(?:^|;\s*)opencode_token=([^;]+)/);
-    if (match?.[1]) {
-      const cookieVal = decodeURIComponent(match[1]).trim();
-      if (cookieVal && isAuthorized(null, brokerSecret, cookieVal)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return;
 }
 function isLoopbackRequest(request, server) {
   const address = server.requestIP(request)?.address;
@@ -22121,16 +22210,16 @@ function isPrivateRequest(request, server) {
 function secretsEqual(left, right) {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+  return leftBytes.length === rightBytes.length && timingSafeEqual2(leftBytes, rightBytes);
 }
 function isAddressInUseError(error51) {
   return error51 instanceof Error && "code" in error51 && error51.code === "EADDRINUSE";
 }
 // src/broker/commands.ts
 import { existsSync as existsSync5 } from "fs";
-import { chmod as chmod7, lstat as lstat7, mkdir as mkdir7, open as open4, readFile as readFile8, rename as rename8, rm as rm7 } from "fs/promises";
+import { chmod as chmod8, lstat as lstat7, mkdir as mkdir7, open as open4, readFile as readFile9, rename as rename9, rm as rm7 } from "fs/promises";
 import { isIP as isIP3 } from "net";
-import { dirname as dirname4, join as join9 } from "path";
+import { dirname as dirname4, join as join10 } from "path";
 
 // src/doctor.ts
 async function runDoctor(options = {}) {
@@ -22415,6 +22504,9 @@ async function runBrokerCli(options = {}) {
     if (command === "rotate-gateway-secret") {
       return await runRotateGatewaySecretCommand(flags, env, streams);
     }
+    if (command === "set-dashboard-password") {
+      return await runSetDashboardPasswordCommand(flags, env, streams, options.stdin);
+    }
     if (command === "test-notification") {
       return await runTestNotificationCommand(flags, env, streams, options.fetch);
     }
@@ -22488,7 +22580,7 @@ async function assertDeploymentOwnsStartEndpoint(options, env) {
   }
 }
 async function readDeploymentOwnership(stateDirectory) {
-  const markerPath = join9(stateDirectory, "deployment.json");
+  const markerPath = join10(stateDirectory, "deployment.json");
   let stats;
   try {
     stats = await lstat7(markerPath);
@@ -22500,7 +22592,7 @@ async function readDeploymentOwnership(stateDirectory) {
   if (!stats.isFile() || stats.isSymbolicLink() || process.platform !== "win32" && (stats.mode & 63) !== 0 || typeof process.getuid === "function" && stats.uid !== process.getuid()) {
     throw new ConfigValidationError("DEPLOYMENT_MARKER_UNSAFE", "deployment ownership marker is not a private current-user regular file");
   }
-  const value = JSON.parse(await readFile8(markerPath, "utf8"));
+  const value = JSON.parse(await readFile9(markerPath, "utf8"));
   if (value.mode !== "native" && value.mode !== "docker" && value.mode !== "node") {
     throw new ConfigValidationError("DEPLOYMENT_MODE_INVALID", "deployment ownership mode is invalid");
   }
@@ -22571,18 +22663,42 @@ async function runPurgeStateCommand(options, streams) {
 async function runRotateCredentialCommand(flags, env, streams) {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const state = await loadOrCreateStateIdentity(stateDirectory);
-  const tokenFile = stringFlag(flags, "token-file") ?? join9(state.stateDirectory, "telegram-bot-token");
+  const tokenFile = stringFlag(flags, "token-file") ?? join10(state.stateDirectory, "telegram-bot-token");
   const token = await readSecretToken(env);
   await writePrivateTokenFile2(tokenFile, token);
   streams.stdout.write(`Credential rotated at ${tokenFile}. Restart the broker to use it.
 `);
   return 0;
 }
+async function runSetDashboardPasswordCommand(flags, env, streams, stdin = process.stdin) {
+  const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
+  const state = await loadOrCreateStateIdentity(stateDirectory);
+  let password = env.OPENCODE_TELEGRAM_DASHBOARD_PASSWORD;
+  if (password === undefined) {
+    streams.stdout.write("New dashboard password (at least 8 characters): ");
+    password = await readLine(stdin);
+  }
+  await setDashboardPassword(state.stateDirectory, password.replace(/\r?\n$/, ""));
+  streams.stdout.write(`Dashboard password updated. Existing dashboard sessions are signed out; log in with the new password.
+`);
+  return 0;
+}
+async function readLine(stream) {
+  let buffer = "";
+  for await (const chunk of stream) {
+    buffer += String(chunk);
+    const end = buffer.indexOf(`
+`);
+    if (end >= 0)
+      return buffer.slice(0, end);
+  }
+  return buffer;
+}
 async function runRotateGatewaySecretCommand(flags, env, streams) {
   const stateDirectory = stringFlag(flags, "state-dir") ?? env.OPENCODE_TELEGRAM_BROKER_STATE_DIR;
   const state = await loadOrCreateStateIdentity(stateDirectory);
   await rotateGatewaySecret(state.stateDirectory);
-  streams.stdout.write(`Gateway credential rotated at ${join9(state.stateDirectory, "gateway-secret")}. Update every node and restart the broker.
+  streams.stdout.write(`Gateway credential rotated at ${join10(state.stateDirectory, "gateway-secret")}. Update every node and restart the broker.
 `);
   return 0;
 }
@@ -22635,7 +22751,7 @@ function parseBindHost(value) {
   throw new ConfigValidationError("BIND_HOST_INSECURE", "public bind hosts require a TLS reverse proxy and cannot receive plaintext lifecycle credentials");
 }
 async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
-  const path = join9(stateDirectory, "opencode-notifier.json");
+  const path = join10(stateDirectory, "opencode-notifier.json");
   if (!existsSync5(path))
     return;
   const stats = await lstat7(path);
@@ -22648,7 +22764,7 @@ async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
     throw new ConfigValidationError("PERSISTED_CONFIG_OWNER_UNSAFE", "persisted Gateway configuration must be owned by the current user");
   }
-  const value = JSON.parse(await readFile8(path, "utf8"));
+  const value = JSON.parse(await readFile9(path, "utf8"));
   const bindHost = overrides.bindHost ?? parseBindHost(typeof value.broker?.host === "string" ? value.broker.host : undefined);
   const port = overrides.port ?? value.broker?.port;
   if (!bindHost || typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -22659,7 +22775,7 @@ async function readPersistedBrokerEndpoint(stateDirectory, overrides = {}) {
 async function readSecretToken(env) {
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE) {
     await assertSecureTokenFile(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE);
-    return (await readFile8(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
+    return (await readFile9(env.OPENCODE_TELEGRAM_BOT_TOKEN_FILE, "utf8")).trim();
   }
   if (env.OPENCODE_TELEGRAM_BOT_TOKEN)
     return env.OPENCODE_TELEGRAM_BOT_TOKEN.trim();
@@ -22676,9 +22792,9 @@ async function writePrivateTokenFile2(path, token) {
   } finally {
     await handle.close();
   }
-  await chmod7(temporaryPath, 384);
+  await chmod8(temporaryPath, 384);
   try {
-    await rename8(temporaryPath, path);
+    await rename9(temporaryPath, path);
     await assertSecureTokenFile(path);
   } catch (error51) {
     await rm7(temporaryPath, { force: true });
@@ -22714,7 +22830,7 @@ function parsePositiveInteger(value) {
 }
 function commandHelp() {
   return [
-    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential|rotate-gateway-secret] [options]",
+    "Usage: opencode-telegram-broker [start|status|stop|doctor|test-notification|purge-state|rotate-credential|rotate-gateway-secret|set-dashboard-password] [options]",
     "",
     "Common options: --state-dir PATH --port PORT --bind-host IP",
     "test-notification options: --chat-id ID --locale en|zh-TW",
@@ -22918,9 +23034,9 @@ async function runInteractiveUninstall(options = {}) {
         }
       }
       const symlinkLocations = [
-        join10(cwd, "node_modules", "opencode-telegram-link"),
-        join10(homedir5(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
-        join10(homedir5(), ".opencode", "node_modules", "opencode-telegram-link")
+        join11(cwd, "node_modules", "opencode-telegram-link"),
+        join11(homedir5(), ".config", "opencode", "node_modules", "opencode-telegram-link"),
+        join11(homedir5(), ".opencode", "node_modules", "opencode-telegram-link")
       ];
       for (const symlink of symlinkLocations) {
         try {
@@ -22948,14 +23064,14 @@ async function runInteractiveUninstall(options = {}) {
       const cleanState = await reader.ask(isZh ? "\u25C7  [3/4] \u662F\u5426\u6E05\u9664\u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u8A0A\u606F\u8DEF\u7531\u72C0\u614B (SQLite)\uFF1F [Y/n]: " : "\u25C7  [3/4] Remove operational database & message routing state (SQLite)? [Y/n]: ", stdout, "Y");
       if (cleanState.toLowerCase() !== "n" && cleanState.toLowerCase() !== "no") {
         try {
-          const dbPath = join10(stateDirectory, "state.sqlite");
+          const dbPath = join11(stateDirectory, "state.sqlite");
           await rm8(dbPath, { force: true });
           await rm8(`${dbPath}-wal`, { force: true });
           await rm8(`${dbPath}-shm`, { force: true });
           await rm8(discoveryRecordPath(stateDirectory), { force: true });
-          await rm8(join10(stateDirectory, "dashboard-settings.json"), { force: true });
+          await rm8(join11(stateDirectory, "dashboard-settings.json"), { force: true });
           try {
-            await rm8(join10(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
+            await rm8(join11(tmpdir(), "opencode_telegram_plugin.log"), { force: true });
           } catch {}
           stdout.write(isZh ? `\u2502  \u2714 \u904B\u4F5C\u66AB\u5B58\u8CC7\u6599\u5EAB\u8207\u63A7\u5236\u53F0\u8A2D\u5B9A\u6A94 (dashboard-settings.json) \u5DF2\u6E05\u9664\u3002
 ` : `\u2502  \u2714 Operational state database & dashboard settings cleared.
@@ -22971,7 +23087,7 @@ async function runInteractiveUninstall(options = {}) {
       const cleanToken = await reader.ask(isZh ? "\u25C7  [4/4] \u662F\u5426\u522A\u9664\u5132\u5B58\u7684 Telegram Bot Token \u6A94\u6848\uFF1F [y/N]: " : "\u25C7  [4/4] Delete saved Telegram Bot Token file? [y/N]: ", stdout, "N");
       if (cleanToken.toLowerCase() === "y" || cleanToken.toLowerCase() === "yes") {
         try {
-          const tokenPath = join10(stateDirectory, "telegram-bot-token");
+          const tokenPath = join11(stateDirectory, "telegram-bot-token");
           await rm8(tokenPath, { force: true });
           stdout.write(isZh ? `\u2502  \u2714 Token \u6A94\u6848\u5DF2\u5B89\u5168\u522A\u9664\u3002
 ` : `\u2502  \u2714 Token file securely removed.
@@ -23054,10 +23170,10 @@ Options:
   });
 }
 async function readDeploymentRecord(stateDirectory) {
-  const path = join10(stateDirectory, "deployment.json");
+  const path = join11(stateDirectory, "deployment.json");
   if (!existsSync6(path))
     return;
-  const parsed = JSON.parse(await readFile9(path, "utf8"));
+  const parsed = JSON.parse(await readFile10(path, "utf8"));
   if (parsed.mode !== "native" && parsed.mode !== "docker" && parsed.mode !== "node") {
     throw new Error("persisted deployment mode is invalid");
   }
@@ -23094,4 +23210,4 @@ export {
   runBroker
 };
 
-//# debugId=4F3CBB4821E3F5C164756E2164756E21
+//# debugId=DEFA3E972F87891B64756E2164756E21

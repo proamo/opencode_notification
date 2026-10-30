@@ -4,6 +4,7 @@ All notable changes to this project are documented here. Run `bun run release:ch
 
 ## Unreleased
 
+- Add dashboard password login (`set-dashboard-password`) with signed, revocable session cookies that no longer contain the Broker Secret, and rate-limit failed logins.
 - Add an OMO Native extension that shares the Gateway: completion, final error, and waiting-for-answer notifications; Telegram replies continue the exact session; option buttons answer non-blocking questions; `/cancel` interrupts a running turn.
 - Install the OMO extension from setup when an OMO agent directory is detected, and remove it on uninstall only when setup installed it.
 - Follow the native deployment endpoint when a Gateway plugin's configured loopback host is stale, instead of failing to connect.

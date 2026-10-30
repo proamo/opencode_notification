@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { platform } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,15 @@ import {
   VoiceTranscriber,
 } from "../telegram";
 import { PACKAGE_VERSION } from "../version";
+import {
+  DASHBOARD_SESSION_COOKIE,
+  dashboardPasswordPath,
+  dashboardSessionCookie,
+  issueDashboardSession,
+  LoginRateLimiter,
+  verifyDashboardPassword,
+  verifyDashboardSession,
+} from "./dashboard-auth";
 import { renderDashboardHtml } from "./dashboard-html";
 import { type BrokerConnectionData, RouteRegistrationError, RouteRegistry } from "./registry";
 
@@ -485,6 +495,14 @@ export class BrokerServer {
 export async function startBroker(options: StartBrokerOptions = {}): Promise<BrokerServer> {
   const stateDirectory = options.stateDirectory ?? defaultStateDirectory();
   const state = await loadOrCreateStateIdentity(stateDirectory);
+  const loginLimiter = new LoginRateLimiter();
+  const currentPasswordHash = (): string | undefined => {
+    try {
+      return readFileSync(dashboardPasswordPath(stateDirectory), "utf8").trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  };
   let persistedSettings = await loadDashboardSettings(state.stateDirectory);
   const database = await StateDatabase.open({ stateDirectory, machineId: state.machineId });
   const registry = new RouteRegistry();
@@ -551,16 +569,19 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
 
           // Web Dashboard static HTML entrypoint
           if (url.pathname === "/" || url.pathname === "/dashboard") {
+            const passwordHash = currentPasswordHash();
             const isAuthed = verifyDashboardAuth(
               request,
               state.brokerSecret,
+              passwordHash,
               isLoopbackRequest(request, bunServer),
             );
             const tokenParam = url.searchParams.get("token");
             const headers: Record<string, string> = { "Content-Type": "text/html; charset=utf-8" };
             if (tokenParam && isAuthed) {
-              headers["Set-Cookie"] =
-                `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`;
+              headers["Set-Cookie"] = dashboardSessionCookie(
+                issueDashboardSession(state.brokerSecret, passwordHash ?? ""),
+              );
             }
             return new Response(renderDashboardHtml(), { headers });
           }
@@ -571,16 +592,37 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             }
             return (async () => {
               try {
-                const body = await readJsonBody<{ token?: string }>(request);
-                const token = body.token?.trim();
-                if (!token || !isAuthorized(null, state.brokerSecret, token)) {
+                const client = bunServer.requestIP(request)?.address ?? "unknown";
+                if (loginLimiter.blocked(client)) {
                   return Response.json(
-                    { success: false, error: "Invalid dashboard token" },
+                    { success: false, error: "Too many failed attempts; try again later" },
+                    { status: 429 },
+                  );
+                }
+                const body = await readJsonBody<{ password?: string; token?: string }>(request);
+                const passwordHash = currentPasswordHash();
+                const token = body.token?.trim();
+                const accepted = passwordHash
+                  ? Boolean(body.password) &&
+                    (await verifyDashboardPassword(passwordHash, body.password ?? ""))
+                  : Boolean(token) && isAuthorized(null, state.brokerSecret, token);
+                if (!accepted) {
+                  loginLimiter.fail(client);
+                  return Response.json(
+                    {
+                      success: false,
+                      error: passwordHash
+                        ? "Invalid dashboard password"
+                        : "Invalid dashboard token",
+                    },
                     { status: 401 },
                   );
                 }
+                loginLimiter.reset(client);
                 const headers = {
-                  "Set-Cookie": `opencode_token=${encodeURIComponent(state.brokerSecret)}; Path=/; SameSite=Strict; HttpOnly; Max-Age=2592000`,
+                  "Set-Cookie": dashboardSessionCookie(
+                    issueDashboardSession(state.brokerSecret, passwordHash ?? ""),
+                  ),
                 };
                 return Response.json({ success: true }, { headers });
               } catch (err) {
@@ -596,15 +638,18 @@ export async function startBroker(options: StartBrokerOptions = {}): Promise<Bro
             if (request.method !== "POST") {
               return new Response("Method not allowed", { status: 405 });
             }
-            const headers = {
-              "Set-Cookie": "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0",
-            };
+            const headers = new Headers();
+            headers.append("Set-Cookie", dashboardSessionCookie("", 0));
+            headers.append(
+              "Set-Cookie",
+              "opencode_token=; Path=/; SameSite=Strict; HttpOnly; Max-Age=0",
+            );
             return Response.json({ success: true }, { headers });
           }
 
           // Protected Dashboard API Endpoints
           if (url.pathname.startsWith("/v1/api/dashboard/")) {
-            if (!verifyDashboardAuth(request, state.brokerSecret)) {
+            if (!verifyDashboardAuth(request, state.brokerSecret, currentPasswordHash())) {
               return Response.json(
                 {
                   error: "Unauthorized",
@@ -1991,32 +2036,29 @@ function isAuthorized(
 function verifyDashboardAuth(
   request: Request,
   brokerSecret: string,
+  passwordHash: string | undefined,
   allowUrlToken = false,
 ): boolean {
   const authHeader = request.headers.get("authorization");
-  const cookieHeader = request.headers.get("cookie");
-  const url = new URL(request.url);
-  const tokenParam = url.searchParams.get("token");
+  if (authHeader && isAuthorized(authHeader, brokerSecret)) return true;
 
-  if (authHeader && isAuthorized(authHeader, brokerSecret)) {
-    return true;
+  const tokenParam = new URL(request.url).searchParams.get("token");
+  if (allowUrlToken && tokenParam && isAuthorized(null, brokerSecret, tokenParam)) return true;
+
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const session = cookieValue(cookieHeader, DASHBOARD_SESSION_COOKIE);
+  if (session && verifyDashboardSession(session, brokerSecret, passwordHash ?? "")) return true;
+
+  const legacy = passwordHash ? undefined : cookieValue(cookieHeader, "opencode_token");
+  return Boolean(legacy && isAuthorized(null, brokerSecret, legacy));
+}
+
+function cookieValue(cookieHeader: string, name: string): string | undefined {
+  for (const part of cookieHeader.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(rest.join("=")).trim() || undefined;
   }
-
-  if (allowUrlToken && tokenParam && isAuthorized(null, brokerSecret, tokenParam)) {
-    return true;
-  }
-
-  if (cookieHeader) {
-    const match = cookieHeader.match(/(?:^|;\s*)opencode_token=([^;]+)/);
-    if (match?.[1]) {
-      const cookieVal = decodeURIComponent(match[1]).trim();
-      if (cookieVal && isAuthorized(null, brokerSecret, cookieVal)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return undefined;
 }
 
 function isLoopbackRequest(

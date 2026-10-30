@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dashboardPasswordPath, setDashboardPassword } from "../src/broker/dashboard-auth";
 import { type BrokerServer, startBroker } from "../src/broker/server";
 import { loadOrCreateStateIdentity } from "../src/state";
 import { PACKAGE_VERSION } from "../src/version";
@@ -269,7 +270,8 @@ describe("Web Dashboard", () => {
     expect(loginRes.status).toBe(200);
     const setCookie = loginRes.headers.get("set-cookie");
     expect(setCookie).toBeDefined();
-    expect(setCookie).toContain("opencode_token=");
+    expect(setCookie).toContain("opencode_session=");
+    expect(setCookie).not.toContain(brokerSecret);
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=Strict");
 
@@ -287,6 +289,41 @@ describe("Web Dashboard", () => {
     expect(logoutRes.status).toBe(200);
     const logoutCookie = logoutRes.headers.get("set-cookie");
     expect(logoutCookie).toContain("Max-Age=0");
+  });
+
+  test("requires the dashboard password once one is set and signs out old sessions on change", async () => {
+    const base = `http://127.0.0.1:${broker.port}`;
+    const login = (body: Record<string, string>) =>
+      fetch(`${base}/v1/api/dashboard/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const summary = (cookie: string) =>
+      fetch(`${base}/v1/api/dashboard/summary`, { headers: { Cookie: cookie } });
+    await setDashboardPassword(stateDirectory, "correct horse battery");
+    try {
+      expect((await login({ token: brokerSecret })).status).toBe(401);
+      expect((await login({ password: "wrong password" })).status).toBe(401);
+      expect((await summary(`opencode_token=${brokerSecret}`)).status).toBe(401);
+
+      const accepted = await login({ password: "correct horse battery" });
+      expect(accepted.status).toBe(200);
+      const cookie = accepted.headers.get("set-cookie")?.split(";")[0] ?? "";
+      expect((await summary(cookie)).status).toBe(200);
+      expect(
+        (
+          await fetch(`${base}/v1/api/dashboard/summary`, {
+            headers: { Authorization: `Bearer ${brokerSecret}` },
+          })
+        ).status,
+      ).toBe(200);
+
+      await setDashboardPassword(stateDirectory, "another long password");
+      expect((await summary(cookie)).status).toBe(401);
+    } finally {
+      await rm(dashboardPasswordPath(stateDirectory), { force: true });
+    }
   });
 
   test("dashboard HTML contains cleanUrlToken and logout button", async () => {

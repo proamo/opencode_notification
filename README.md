@@ -104,6 +104,16 @@ http://localhost:42617/dashboard
 http://<gateway-ip>:42617/dashboard
 ```
 
+Set a dashboard password on the Gateway, then log in with it:
+
+```sh
+opencode-telegram-broker set-dashboard-password
+# Or non-interactively:
+OPENCODE_TELEGRAM_DASHBOARD_PASSWORD='your password' opencode-telegram-broker set-dashboard-password
+```
+
+The password (at least 8 characters) is stored as an argon2id hash in `dashboard-password` in the state directory. Login issues a signed 30-day HttpOnly session cookie that never contains the Broker Secret; changing the password signs out every session, and 5 failed logins from one address within 5 minutes are blocked. Until a password is set, the Broker Secret still works as the login key. Scripts can keep calling the API with `Authorization: Bearer <broker-secret>`.
+
 ### Dashboard Tabs & Capabilities:
 1. **🖥️ Cluster Topology (Nodes)**:
    - Live overview of all connected machines and OpenCode workspace windows (1-to-1 live mapping).
